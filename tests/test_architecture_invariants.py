@@ -91,11 +91,12 @@ def test_budget_frontend_uses_backend_status_and_target_capabilities() -> None:
     assert '$("budget-category").innerHTML = snapshot.accounts.filter' not in text
 
 
-def test_forecast_is_read_only_and_reuses_scheduled_recurrence_owner() -> None:
+def test_forecast_is_read_only_and_reuses_canonical_domain_policies() -> None:
     forecast = (CORE / "forecast_service.py").read_text(encoding="utf-8")
     scheduled = (CORE / "scheduled_transaction_service.py").read_text(encoding="utf-8")
     assert "ScheduledTransactionService" in forecast
     assert ".project_occurrences(" in forecast
+    assert "PostingPolicy.book_cash_flow_direction" in forecast
     assert "LedgerService" not in forecast
     assert "Database" not in forecast
     assert "INSERT INTO " not in forecast

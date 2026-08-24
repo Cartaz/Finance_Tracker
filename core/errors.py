@@ -97,3 +97,11 @@ class FxRateMissingError(FxRateError):
 
 class ReportingError(ValidationError):
     """Raised when reporting input is invalid."""
+
+
+class ReconciliationError(ValidationError):
+    """Raised when CSV import or reconciliation input is invalid."""
+
+
+class ReconciliationAmbiguousError(ReconciliationError):
+    """Raised when a reconciliation identity is not uniquely resolvable."""

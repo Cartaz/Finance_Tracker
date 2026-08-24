@@ -66,8 +66,10 @@ class AppController:
             account_service,
             CategoryService(database, account_service),
         )
-        self._forecast = forecast_service or ForecastService(self._scheduled, self._fx)
         self._loans = loan_service or LoanService(database, account_service, ledger_service)
+        self._forecast = forecast_service or ForecastService(
+            self._scheduled, self._fx, self._loans
+        )
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -159,6 +161,9 @@ class AppController:
             principal_minor=principal_minor,
             funding_account_id=funding_account_id,
             start_date=start_date,
+            rate_type=str(payload.get("rateType", "FIXED")),
+            amortization_type=str(payload.get("amortizationType", "FRENCH")),
+            recast_strategy=str(payload.get("recastStrategy", "REDUCE_PAYMENT")),
         )
         return TransportSerializer.serialize(self._loans.status(book.id, loan.id))
 
@@ -184,11 +189,53 @@ class AppController:
             )
         )
 
+    def loan_rate_revisions(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._loans.list_rate_revisions(
+                book.id,
+                self._positive_id(payload.get("loanId")),
+            )
+        )
+
+    def set_loan_variable_rate(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._loans.set_variable_rate(
+                book_id=book.id,
+                loan_id=self._positive_id(payload.get("loanId")),
+                effective_date=str(payload.get("effectiveDate", "")),
+                annual_rate_bps=parse_annual_rate_bps(payload.get("annualRate", "")),
+            )
+        )
+
     def post_next_loan_payment(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
         payment = self._loans.post_next_payment(
             book_id=book.id,
             loan_id=self._positive_id(payload.get("loanId")),
+        )
+        return {
+            "payment": TransportSerializer.serialize(payment),
+            "state": self.snapshot(),
+        }
+
+    def post_custom_loan_payment(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        loan_id = self._positive_id(payload.get("loanId"))
+        loan = self._loans.get_loan(book.id, loan_id)
+        amount = parse_money_magnitude(
+            payload.get("amount", ""), self._database.currency(loan.currency_code)
+        )
+        payment = self._loans.post_custom_payment(
+            book_id=book.id,
+            loan_id=loan_id,
+            amount_minor=amount,
+            recast_strategy=(
+                None
+                if payload.get("recastStrategy") in (None, "")
+                else str(payload.get("recastStrategy"))
+            ),
         )
         return {
             "payment": TransportSerializer.serialize(payment),

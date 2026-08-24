@@ -66,12 +66,38 @@ def test_scheduled_service_uses_canonical_posting_policy() -> None:
     assert "counter.currency_code != source.currency_code" not in text
 
 
+def test_budget_service_is_read_model_consumer_not_accounting_writer() -> None:
+    text = (CORE / "budget_service.py").read_text(encoding="utf-8")
+    assert "ReportingService" in text
+    assert ".category_report(" in text
+    assert "LedgerService" not in text
+    assert "INSERT INTO transactions" not in text
+    assert "INSERT INTO entries" not in text
+
+
+def test_budget_frontend_uses_backend_status_not_ledger_math() -> None:
+    text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+    assert 'call("getBudgetStatus"' in text
+    assert 'call("setBudget"' in text
+    assert "report.totalSpentMinor" in text
+    assert "report.totalRemainingMinor" in text
+
+
 def test_transport_contract_is_explicit_not_suffix_driven() -> None:
     controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
     transport = (CORE / "transport.py").read_text(encoding="utf-8")
     assert "_transport_money" not in controller
     assert ".endswith(" not in transport
     assert "_FINANCIAL_INTEGER_FIELDS" in transport
+    for field in (
+        '"spentMinor"',
+        '"remainingMinor"',
+        '"totalBudgetMinor"',
+        '"totalSpentMinor"',
+        '"totalRemainingMinor"',
+        '"usageBps"',
+    ):
+        assert field in transport
 
 
 def test_database_schema_is_owned_by_migrations_module() -> None:

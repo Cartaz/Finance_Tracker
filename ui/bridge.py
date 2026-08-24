@@ -34,6 +34,26 @@ class Bridge(QObject):
         return self._call(self._controller.forecast, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
+    def createLoan(self, payload):
+        return self._call(self._controller.create_loan, dict(payload or {}))
+
+    @Slot(result="QVariant")
+    def listLoans(self):
+        return self._call(self._controller.list_loans)
+
+    @Slot("QVariant", result="QVariant")
+    def getLoanPlan(self, payload):
+        return self._call(self._controller.loan_plan, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def getLoanPayments(self, payload):
+        return self._call(self._controller.loan_payments, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def postNextLoanPayment(self, payload):
+        return self._call(self._controller.post_next_loan_payment, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def getAccountHistory(self, payload):
         return self._call(self._controller.account_history, dict(payload or {}))
 

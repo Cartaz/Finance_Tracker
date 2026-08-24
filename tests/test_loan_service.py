@@ -116,10 +116,9 @@ def _new_loan(env: LoanEnv, *, rate_bps: int = 1200, term: int = 12):
 
 def test_schema_v8_contains_loans_and_payment_constraints(loan_env: LoanEnv) -> None:
     env = loan_env
-    version = env.db.connection.execute(
+    assert env.db.connection.execute(
         "SELECT MAX(version) FROM schema_migrations"
-    ).fetchone()[0]
-    assert version == 8
+    ).fetchone()[0] == 8
     assert env.db.connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='loans'"
     ).fetchone()
@@ -128,10 +127,43 @@ def test_schema_v8_contains_loans_and_payment_constraints(loan_env: LoanEnv) -> 
     ).fetchone()
 
 
+def test_creation_capabilities_are_backend_owned_and_balance_sensitive(
+    loan_env: LoanEnv,
+) -> None:
+    env = loan_env
+    empty = env.loans.creation_capabilities(env.book_id)
+    target = next(
+        item
+        for item in empty["targets"]
+        if item["liabilityAccountId"] == env.liability_id
+    )
+    assert target["allowedModes"] == ["NEW_DISBURSEMENT"]
+    assert env.payment_id in target["paymentAccountIds"]
+    assert env.interest_id in {
+        item["id"] for item in empty["interestExpenseAccounts"]
+    }
+
+    env.ledger.create_opening_balance(
+        book_id=env.book_id,
+        account_id=env.liability_id,
+        equity_account_id=env.equity_id,
+        quantity_minor=-50_000,
+        currency_code="EUR",
+        transaction_date="2026-01-01",
+    )
+    existing = env.loans.creation_capabilities(env.book_id)
+    target = next(
+        item
+        for item in existing["targets"]
+        if item["liabilityAccountId"] == env.liability_id
+    )
+    assert target["allowedModes"] == ["EXISTING_BALANCE"]
+    assert target["nativeBalanceMinor"] == -50_000
+
+
 def test_new_disbursement_is_atomic_and_ledger_owned(loan_env: LoanEnv) -> None:
     env = loan_env
     loan = _new_loan(env)
-
     assert loan.original_principal_minor == 120_000
     assert loan.origination_transaction_id is not None
     assert env.accounts.native_balance(env.book_id, env.liability_id) == -120_000
@@ -162,7 +194,6 @@ def test_existing_balance_mode_derives_principal_from_ledger(loan_env: LoanEnv) 
         first_due_date="2026-02-15",
         mode="EXISTING_BALANCE",
     )
-
     assert loan.original_principal_minor == 75_000
     assert loan.origination_transaction_id is None
 
@@ -172,7 +203,6 @@ def test_amortization_plan_is_deterministic_and_reaches_zero(loan_env: LoanEnv) 
     loan = _new_loan(env)
     first = env.loans.amortization_plan(env.book_id, loan.id)
     second = env.loans.amortization_plan(env.book_id, loan.id)
-
     assert first == second
     assert len(first["rows"]) == 12
     assert sum(row["principalMinor"] for row in first["rows"]) == 120_000
@@ -194,7 +224,7 @@ def test_month_end_due_dates_keep_contract_anchor(loan_env: LoanEnv) -> None:
         mode="NEW_DISBURSEMENT",
         principal_minor=30_000,
         funding_account_id=env.funding_id,
-        start_date="2026-01-01",
+        start_date="2026-01-02",
     )
     plan = env.loans.amortization_plan(env.book_id, loan.id)
     assert [row["dueDate"] for row in plan["rows"]] == [
@@ -218,14 +248,14 @@ def test_payment_posts_principal_and_interest_without_second_balance(loan_env: L
     before = env.accounts.native_balance(env.book_id, env.liability_id)
     payment = env.loans.post_next_payment(book_id=env.book_id, loan_id=loan.id)
     after = env.accounts.native_balance(env.book_id, env.liability_id)
-
     assert payment["interestMinor"] == 1_200
     assert payment["principalMinor"] > 0
     assert payment["paymentMinor"] == payment["principalMinor"] + 1_200
     assert after == before + payment["principalMinor"]
     assert payment["status"]["outstandingPrincipalMinor"] == -after
-    stored = env.loans.list_payments(env.book_id, loan.id)
-    assert stored[0]["transactionId"] == payment["transactionId"]
+    assert env.loans.list_payments(env.book_id, loan.id)[0]["transactionId"] == payment[
+        "transactionId"
+    ]
 
 
 def test_zero_interest_payment_uses_principal_only(loan_env: LoanEnv) -> None:
@@ -252,11 +282,25 @@ def test_stale_archived_contract_fails_closed(loan_env: LoanEnv) -> None:
         env.loans.status(env.book_id, loan.id)
 
 
-def test_invalid_contract_values_and_duplicate_liability_are_rejected(
-    loan_env: LoanEnv,
-) -> None:
+def test_duplicate_liability_is_rejected_as_domain_error(loan_env: LoanEnv) -> None:
     env = loan_env
-    loan = _new_loan(env)
+    _new_loan(env)
+    with pytest.raises(LoanError, match="already linked"):
+        env.loans.create_loan(
+            book_id=env.book_id,
+            name="Duplicate",
+            liability_account_id=env.liability_id,
+            payment_account_id=env.payment_id,
+            interest_expense_account_id=env.interest_id,
+            annual_rate_bps=500,
+            term_months=12,
+            first_due_date="2026-03-01",
+            mode="EXISTING_BALANCE",
+        )
+
+
+def test_invalid_rate_type_is_rejected(loan_env: LoanEnv) -> None:
+    env = loan_env
     with pytest.raises(LoanError, match="annual_rate_bps"):
         env.loans.create_loan(
             book_id=env.book_id,
@@ -268,7 +312,6 @@ def test_invalid_contract_values_and_duplicate_liability_are_rejected(
             term_months=12,
             first_due_date="2026-02-28",
         )
-    assert env.loans.get_loan(env.book_id, loan.id).id == loan.id
 
 
 def test_long_contract_projection_is_read_only(loan_env: LoanEnv) -> None:
@@ -278,11 +321,11 @@ def test_long_contract_projection_is_read_only(loan_env: LoanEnv) -> None:
         "SELECT COUNT(*) FROM transactions"
     ).fetchone()[0]
     balance_before = env.accounts.native_balance(env.book_id, env.liability_id)
-
     first = env.loans.amortization_plan(env.book_id, loan.id)
     second = env.loans.amortization_plan(env.book_id, loan.id)
-
     assert first == second
     assert len(first["rows"]) == 600
-    assert env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == transactions_before
+    assert env.db.connection.execute(
+        "SELECT COUNT(*) FROM transactions"
+    ).fetchone()[0] == transactions_before
     assert env.accounts.native_balance(env.book_id, env.liability_id) == balance_before

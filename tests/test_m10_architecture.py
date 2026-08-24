@@ -33,6 +33,39 @@ def test_loan_amortization_uses_decimal_not_float() -> None:
     assert "float(" not in service
 
 
+def test_loan_creation_capabilities_are_backend_owned() -> None:
+    service = (CORE / "loan_service.py").read_text(encoding="utf-8")
+    controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
+    frontend = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert "def creation_capabilities(" in service
+    assert "def loan_capabilities(" in controller
+    assert 'call("getLoanCapabilities"' in frontend
+    assert "target?.allowedModes" in frontend
+    assert "target?.paymentAccountIds" in frontend
+    assert "target?.fundingAccountIds" in frontend
+    assert 'state.accounts.filter((a) => a.type === "LIABILITY"' not in frontend
+    assert 'state.accounts.filter((a) => a.type === "ASSET"' not in frontend
+
+
+def test_loan_transport_fields_are_explicit_protocol_vocabulary() -> None:
+    transport = (CORE / "transport.py").read_text(encoding="utf-8")
+    for field in (
+        '"annualRateBps"',
+        '"nativeBalanceMinor"',
+        '"originalPrincipalMinor"',
+        '"outstandingPrincipalMinor"',
+        '"fixedPaymentMinor"',
+        '"principalMinor"',
+        '"interestMinor"',
+        '"paymentMinor"',
+        '"remainingPrincipalMinor"',
+        '"totalInterestMinor"',
+        '"totalPaidMinor"',
+    ):
+        assert field in transport
+
+
 def test_database_still_delegates_schema_to_migration_layer() -> None:
     database = (CORE / "database.py").read_text(encoding="utf-8")
     catalog = (CORE / "migration_catalog.py").read_text(encoding="utf-8")

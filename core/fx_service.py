@@ -139,7 +139,7 @@ class FxService:
 
     @staticmethod
     def _parse_rate(raw: str | Decimal) -> Decimal:
-        if isinstance(raw, float) or isinstance(raw, bool):
+        if isinstance(raw, (float, bool)):
             raise FxRateError("FX rates must not use float")
         try:
             if isinstance(raw, Decimal):

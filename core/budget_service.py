@@ -114,12 +114,16 @@ class BudgetService:
         ).fetchall()
         budgets = [self._record(row) for row in rows]
         base_currency = self._fx.base_currency(book_id)
+        children = self._expense_children(book_id)
+        self._assert_scopes_non_overlapping(budgets, children)
+        targets = self._budget_targets(book_id, budgets, children)
         if not budgets:
             return {
                 "period": normalized_period,
                 "startDate": start,
                 "endDate": end,
                 "baseCurrency": base_currency,
+                "targets": targets,
                 "budgets": [],
                 "totalBudgetMinor": 0,
                 "totalSpentMinor": 0,
@@ -128,8 +132,6 @@ class BudgetService:
                 "missingFx": [],
             }
 
-        children = self._expense_children(book_id)
-        self._assert_scopes_non_overlapping(budgets, children)
         report = self._reporting.category_report(
             book_id=book_id,
             start_date=start,
@@ -205,6 +207,7 @@ class BudgetService:
             "startDate": start,
             "endDate": end,
             "baseCurrency": base_currency,
+            "targets": targets,
             "budgets": items,
             "totalBudgetMinor": total_budget,
             "totalSpentMinor": total_spent if total_complete else None,
@@ -232,6 +235,44 @@ class BudgetService:
                 raise BudgetError(
                     "budgets in the same period cannot overlap ancestor and descendant categories"
                 )
+
+    def _budget_targets(
+        self,
+        book_id: int,
+        budgets: list[Budget],
+        children: dict[int, list[int]],
+    ) -> list[dict[str, object]]:
+        existing = {budget.category_account_id for budget in budgets}
+        existing_subtrees = {
+            root_id: self._subtree_ids(root_id, children) for root_id in existing
+        }
+        targets: list[dict[str, object]] = []
+        for account in self._accounts.list_accounts(book_id, include_archived=False):
+            if account.type != "EXPENSE":
+                continue
+            candidate_subtree = self._subtree_ids(account.id, children)
+            eligible = account.id in existing or all(
+                root_id not in candidate_subtree and account.id not in root_subtree
+                for root_id, root_subtree in existing_subtrees.items()
+            )
+            if not eligible:
+                continue
+            targets.append(
+                {
+                    "categoryAccountId": account.id,
+                    "categoryName": account.name,
+                    "categoryPath": self._categories.category_path(book_id, account.id),
+                    "placeholder": account.placeholder,
+                    "hasBudget": account.id in existing,
+                }
+            )
+        targets.sort(
+            key=lambda item: (
+                str(item["categoryPath"]).casefold(),
+                int(item["categoryAccountId"]),
+            )
+        )
+        return targets
 
     def _expense_children(self, book_id: int) -> dict[int, list[int]]:
         children: dict[int, list[int]] = {}

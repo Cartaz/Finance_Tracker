@@ -6,7 +6,7 @@ from core.account_service import AccountService
 from core.book_service import BookService
 from core.database import Database
 from core.errors import FinanceTrackerError, ValidationError
-from core.ledger_service import LedgerService
+from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
 from core.money import parse_money
 from core.payee_service import PayeeService
 
@@ -14,15 +14,7 @@ from core.payee_service import PayeeService
 class AppController:
     """Thin coordinator used by the QWebChannel bridge."""
 
-    def __init__(
-        self,
-        database: Database,
-        settings: Settings,
-        account_service: AccountService,
-        ledger_service: LedgerService,
-        book_service: BookService,
-        payee_service: PayeeService,
-    ) -> None:
+    def __init__(self, database: Database, settings: Settings, account_service: AccountService, ledger_service: LedgerService, book_service: BookService, payee_service: PayeeService) -> None:
         self._database = database
         self._settings = settings
         self._accounts = account_service
@@ -32,49 +24,25 @@ class AppController:
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
-        return {
-            "app": "Finance Tracker",
-            "schemaVersion": SCHEMA_VERSION,
-            "bookCurrency": self._settings.book_currency,
-            "locale": self._settings.locale,
-            "needsSetup": book is None,
-            "book": None if book is None else {"id": book.id, "name": book.name, "currency": book.base_currency_code},
-        }
+        return {"app": "Finance Tracker", "schemaVersion": SCHEMA_VERSION, "bookCurrency": self._settings.book_currency, "locale": self._settings.locale, "needsSetup": book is None, "book": None if book is None else {"id": book.id, "name": book.name, "currency": book.base_currency_code}}
 
     def setup(self, payload: dict[str, object]) -> dict[str, object]:
-        self._books.create_personal_book(
-            user_name=str(payload.get("userName", "")),
-            book_name=str(payload.get("bookName", "")),
-            currency_code=str(payload.get("currency", self._settings.book_currency)),
-        )
+        self._books.create_personal_book(user_name=str(payload.get("userName", "")), book_name=str(payload.get("bookName", "")), currency_code=str(payload.get("currency", self._settings.book_currency)))
         return self.snapshot()
 
     def snapshot(self) -> dict[str, object]:
         book = self._require_book()
         accounts = self._accounts.list_accounts(book.id)
-        transactions = self._database.connection.execute(
-            """
+        transactions = self._database.connection.execute("""
             SELECT t.id, t.kind, t.transaction_date, t.transaction_time, t.currency_code,
                    t.description, p.name AS payee_name
             FROM transactions t LEFT JOIN payees p ON p.id = t.payee_id
             WHERE t.book_id = ? ORDER BY t.transaction_date DESC, COALESCE(t.transaction_time, '') DESC, t.id DESC
             LIMIT 100
-            """,
-            (book.id,),
-        ).fetchall()
+        """, (book.id,)).fetchall()
         return {
             "book": {"id": book.id, "name": book.name, "currency": book.base_currency_code},
-            "accounts": [
-                {
-                    "id": item.id,
-                    "name": item.name,
-                    "type": item.type,
-                    "currency": item.currency_code,
-                    "placeholder": item.placeholder,
-                    "balanceMinor": self._accounts.native_balance(book.id, item.id) if item.type in {"ASSET", "LIABILITY"} else None,
-                }
-                for item in accounts
-            ],
+            "accounts": [{"id": item.id, "name": item.name, "type": item.type, "currency": item.currency_code, "placeholder": item.placeholder, "balanceMinor": self._accounts.native_balance(book.id, item.id) if item.type in {"ASSET", "LIABILITY"} else None} for item in accounts],
             "transactions": [dict(row) for row in transactions],
         }
 
@@ -82,15 +50,7 @@ class AppController:
         book = self._require_book()
         account_type = str(payload.get("type", "")).upper()
         currency = str(payload.get("currency", book.base_currency_code)) if account_type in {"ASSET", "LIABILITY"} else None
-        account = self._accounts.create_account(
-            book_id=book.id,
-            account_type=account_type,
-            name=str(payload.get("name", "")),
-            currency_code=currency,
-            tracking_start_date=str(payload.get("trackingStartDate", "")) if currency else None,
-            tracking_start_time=(str(payload["trackingStartTime"]) if payload.get("trackingStartTime") else None),
-            placeholder=bool(payload.get("placeholder", False)),
-        )
+        account = self._accounts.create_account(book_id=book.id, account_type=account_type, name=str(payload.get("name", "")), currency_code=currency, tracking_start_date=str(payload.get("trackingStartDate", "")) if currency else None, tracking_start_time=str(payload["trackingStartTime"]) if payload.get("trackingStartTime") else None, placeholder=bool(payload.get("placeholder", False)))
         return {"id": account.id, "state": self.snapshot()}
 
     def create_expense(self, payload: dict[str, object]) -> dict[str, object]:
@@ -98,30 +58,25 @@ class AppController:
         source_id = self._positive_id(payload.get("sourceAccountId"))
         category_id = self._positive_id(payload.get("categoryAccountId"))
         source = self._accounts.get_account(book.id, source_id)
-        if source.currency_code is None:
-            raise ValidationError("source account has no currency")
+        category = self._accounts.get_account(book.id, category_id)
+        if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
+            raise ValidationError("source must be a balance account")
+        if category.type != "EXPENSE" or category.placeholder or category.archived:
+            raise ValidationError("category must be an active selectable expense account")
         amount = parse_money(str(payload.get("amount", "")), self._database.currency(source.currency_code))
-        transaction = self._ledger.create_expense(
-            book_id=book.id,
-            source_account_id=source_id,
-            expense_account_id=category_id,
-            amount_minor=amount,
-            currency_code=source.currency_code,
-            transaction_date=str(payload.get("date", "")),
-            transaction_time=str(payload["time"]) if payload.get("time") else None,
-            description=str(payload.get("description", "")).strip(),
-        )
-        payee_id = payload.get("payeeId")
-        if payee_id is not None:
-            self._payees.assign_transaction(book_id=book.id, transaction_id=transaction.id, payee_id=self._positive_id(payee_id))
+        if amount <= 0:
+            raise ValidationError("expense amount must be positive")
+        draft = TransactionDraft(book_id=book.id, kind="EXPENSE", transaction_date=str(payload.get("date", "")), transaction_time=str(payload["time"]) if payload.get("time") else None, currency_code=source.currency_code, description=str(payload.get("description", "")).strip(), entries=(EntryDraft(source_id, -amount, -amount), EntryDraft(category_id, amount, None)))
+        with self._database.transaction() as conn:
+            transaction = self._ledger.create_transaction(draft, connection=conn)
+            payee_id = payload.get("payeeId")
+            if payee_id is not None:
+                self._payees.assign_transaction(book_id=book.id, transaction_id=transaction.id, payee_id=self._positive_id(payee_id), connection=conn)
         return {"id": transaction.id, "state": self.snapshot()}
 
     def suggest_payees(self, query: str) -> list[dict[str, object]]:
         book = self._require_book()
-        return [
-            {"id": item.id, "name": item.name, "usageCount": item.usage_count, "matchedBy": item.matched_by}
-            for item in self._payees.suggest_payees(book.id, query, limit=5)
-        ]
+        return [{"id": item.id, "name": item.name, "usageCount": item.usage_count, "matchedBy": item.matched_by} for item in self._payees.suggest_payees(book.id, query, limit=5)]
 
     def create_payee(self, name: str) -> dict[str, object]:
         book = self._require_book()

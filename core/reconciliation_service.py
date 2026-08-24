@@ -6,7 +6,7 @@ import io
 import re
 import sqlite3
 import unicodedata
-from datetime import date, datetime
+from datetime import date
 
 from core.account_service import AccountService
 from core.database import Database
@@ -660,15 +660,19 @@ class ReconciliationService:
     @staticmethod
     def _parse_date(value: str, row_number: int) -> str:
         raw = value.strip()
-        for parser in (
-            lambda text: date.fromisoformat(text),
-            lambda text: datetime.strptime(text, "%d/%m/%Y").date(),
-            lambda text: datetime.strptime(text, "%d-%m-%Y").date(),
-        ):
+        try:
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            pass
+        for separator in ("/", "-"):
+            parts = raw.split(separator)
+            if len(parts) != 3:
+                continue
             try:
-                return parser(raw).isoformat()
+                day, month, year = (int(part) for part in parts)
+                return date(year, month, day).isoformat()
             except ValueError:
-                pass
+                continue
         raise ReconciliationError(f"row {row_number}: invalid date")
 
     @staticmethod

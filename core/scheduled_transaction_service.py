@@ -13,6 +13,7 @@ from core.posting_policy import PostingPolicy
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
+_MAX_PROJECTION_ADVANCES = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +170,7 @@ class ScheduledTransactionService:
         end_date: str,
         max_occurrences: int = 10_000,
     ) -> list[dict[str, object]]:
-        """Project active future occurrences without mutating schedule state."""
+        """Project active materializable occurrences without mutating state."""
         start = self._parse_date(start_date, "start_date")
         end = self._parse_date(end_date, "end_date")
         if end < start:
@@ -187,15 +188,20 @@ class ScheduledTransactionService:
         for schedule in self.list_schedules(book_id, include_inactive=False):
             if not schedule.active:
                 continue
+            self._materializable_accounts(schedule)
             current = date.fromisoformat(schedule.next_due_date)
             schedule_end = (
                 None
                 if schedule.end_date is None
                 else date.fromisoformat(schedule.end_date)
             )
+            advances = 0
             while current < start and (
                 schedule_end is None or current <= schedule_end
             ):
+                advances += 1
+                if advances > _MAX_PROJECTION_ADVANCES:
+                    raise ScheduledTransactionError("projection advance limit reached")
                 current = self._advance(
                     current,
                     schedule.frequency,
@@ -338,15 +344,7 @@ class ScheduledTransactionService:
                 "alreadyPosted": True,
             }
 
-        source = self._accounts.get_account(
-            schedule.book_id, schedule.source_account_id
-        )
-        counter = self._accounts.get_account(
-            schedule.book_id, schedule.counter_account_id
-        )
-        self._validate_accounts(schedule.kind, source, counter)
-        if source.currency_code != schedule.currency_code:
-            raise ScheduledTransactionError("source account currency changed")
+        source, counter = self._materializable_accounts(schedule)
         next_due = self._advance(
             due, schedule.frequency, schedule.interval, schedule.start_date
         )
@@ -405,6 +403,22 @@ class ScheduledTransactionService:
             "transactionId": transaction.id,
             "alreadyPosted": False,
         }
+
+    def _materializable_accounts(self, schedule: ScheduledTransaction):
+        source = self._accounts.get_account(
+            schedule.book_id, schedule.source_account_id
+        )
+        counter = self._accounts.get_account(
+            schedule.book_id, schedule.counter_account_id
+        )
+        self._validate_accounts(schedule.kind, source, counter)
+        if source.currency_code != schedule.currency_code:
+            raise ScheduledTransactionError("source account currency changed")
+        if schedule.payee_id is not None:
+            payee = self._payees.get_payee(schedule.book_id, schedule.payee_id)
+            if payee.archived:
+                raise ScheduledTransactionError("scheduled payee must be active")
+        return source, counter
 
     def _advance_schedule(
         self, schedule: ScheduledTransaction, next_due: date, conn

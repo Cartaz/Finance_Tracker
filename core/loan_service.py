@@ -111,6 +111,7 @@ class LoanService:
             "rateTypes": ["FIXED", "VARIABLE"],
             "amortizationTypes": ["FRENCH", "ITALIAN", "BULLET"],
             "recastStrategies": ["REDUCE_PAYMENT", "REDUCE_TERM"],
+            "policyCombinations": AmortizationPolicy.compatibility_payload(),
         }
 
     def create_loan(
@@ -144,6 +145,11 @@ class LoanService:
         )
         normalized_recast = AmortizationPolicy.normalize_recast_strategy(
             recast_strategy
+        )
+        AmortizationPolicy.validate_contract_policy(
+            rate_type=normalized_rate_type,
+            amortization_type=normalized_amortization,
+            recast_strategy=normalized_recast,
         )
 
         liability = self._accounts.get_account(book_id, liability_account_id)
@@ -503,19 +509,24 @@ class LoanService:
             payment_kind = "CUSTOM"
             if recast_strategy is not None:
                 strategy = AmortizationPolicy.normalize_recast_strategy(recast_strategy)
-            if custom_amount_minor <= interest:
+            AmortizationPolicy.validate_contract_policy(
+                rate_type=loan.rate_type,
+                amortization_type=loan.amortization_type,
+                recast_strategy=strategy,
+            )
+            if custom_amount_minor < scheduled_payment:
                 raise LoanError(
-                    "custom payment must cover accrued interest and reduce principal"
+                    "custom payment below the scheduled payment requires arrears semantics"
                 )
             if custom_amount_minor > outstanding + interest:
                 raise LoanError(
                     "custom payment exceeds outstanding principal plus interest"
                 )
-            if strategy == "REDUCE_TERM" and custom_amount_minor < scheduled_payment:
-                raise LoanError(
-                    "REDUCE_TERM custom payment cannot be below the scheduled payment"
-                )
             principal = custom_amount_minor - interest
+            if principal <= 0:
+                raise LoanError(
+                    "custom payment must cover accrued interest and reduce principal"
+                )
             payment = custom_amount_minor
 
         with self._database.transaction() as conn:

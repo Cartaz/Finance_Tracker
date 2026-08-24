@@ -190,6 +190,22 @@ BEGIN
 END;
 """
 
+_SCHEMA_V4 = """
+CREATE TABLE IF NOT EXISTS fx_rates (
+    book_id INTEGER NOT NULL,
+    currency_code TEXT NOT NULL,
+    rate_date TEXT NOT NULL,
+    rate_text TEXT NOT NULL CHECK (length(rate_text) > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (book_id, currency_code, rate_date),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_fx_rates_lookup
+    ON fx_rates(book_id, currency_code, rate_date DESC);
+"""
+
 
 class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
@@ -261,6 +277,14 @@ class Database:
                 tx.execute(
                     "INSERT INTO schema_migrations(version, applied_at, description) VALUES (3, datetime('now'), ?)",
                     ("Payees, aliases and transaction payee metadata",),
+                )
+            current = 3
+        if current < 4:
+            with self.transaction() as tx:
+                tx.executescript(_SCHEMA_V4)
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, description) VALUES (4, datetime('now'), ?)",
+                    ("Book-scoped historical FX rates for reporting",),
                 )
 
     def _current_schema_version(self) -> int:

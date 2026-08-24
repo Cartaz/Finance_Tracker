@@ -153,6 +153,36 @@ class LedgerService:
             )
         )
 
+    def create_refund(
+        self,
+        *,
+        book_id: int,
+        destination_account_id: int,
+        expense_account_id: int,
+        amount_minor: int,
+        currency_code: str,
+        transaction_date: str,
+        transaction_time: str | None = None,
+        description: str = "",
+    ) -> TransactionRecord:
+        self._require_positive_minor(amount_minor)
+        self._require_native_currency(book_id, destination_account_id, currency_code)
+        self._require_account_type(book_id, expense_account_id, "EXPENSE")
+        return self.create_transaction(
+            TransactionDraft(
+                book_id=book_id,
+                kind="REFUND",
+                transaction_date=transaction_date,
+                transaction_time=transaction_time,
+                currency_code=currency_code,
+                description=description,
+                entries=(
+                    EntryDraft(destination_account_id, amount_minor, amount_minor),
+                    EntryDraft(expense_account_id, -amount_minor, None),
+                ),
+            )
+        )
+
     def create_transfer(
         self,
         *,
@@ -202,6 +232,36 @@ class LedgerService:
             TransactionDraft(
                 book_id=book_id,
                 kind="OPENING_BALANCE",
+                transaction_date=transaction_date,
+                transaction_time=transaction_time,
+                currency_code=currency_code,
+                description=description,
+                entries=(
+                    EntryDraft(account_id, quantity_minor, quantity_minor),
+                    EntryDraft(equity_account_id, -quantity_minor, None),
+                ),
+            )
+        )
+
+    def create_adjustment(
+        self,
+        *,
+        book_id: int,
+        account_id: int,
+        equity_account_id: int,
+        quantity_minor: int,
+        currency_code: str,
+        transaction_date: str,
+        transaction_time: str | None = None,
+        description: str = "Adjustment",
+    ) -> TransactionRecord:
+        self._require_nonzero_minor(quantity_minor)
+        self._require_native_currency(book_id, account_id, currency_code)
+        self._require_account_type(book_id, equity_account_id, "EQUITY")
+        return self.create_transaction(
+            TransactionDraft(
+                book_id=book_id,
+                kind="ADJUSTMENT",
                 transaction_date=transaction_date,
                 transaction_time=transaction_time,
                 currency_code=currency_code,
@@ -344,6 +404,12 @@ class LedgerService:
                 raise CrossBookReferenceError(
                     "reversed transaction does not exist in the requested book"
                 )
+            already_reversed = conn.execute(
+                "SELECT 1 FROM transactions WHERE reverses_transaction_id = ?",
+                (draft.reverses_transaction_id,),
+            ).fetchone()
+            if already_reversed is not None:
+                raise LedgerValidationError("transaction has already been reversed")
 
         cursor = conn.execute(
             """

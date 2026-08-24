@@ -349,3 +349,107 @@ def test_convenience_apis_require_semantic_counterpart_types(ledger_env) -> None
             transaction_time="16:00:00",
         )
     assert equity.type == "EQUITY"
+
+
+def test_refund_reduces_expense_and_restores_asset(ledger_env) -> None:
+    bank, _, expense, _, equity = _base_accounts(ledger_env)
+    ledger_env.ledger.create_opening_balance(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        equity_account_id=equity.id,
+        quantity_minor=10000,
+        currency_code="EUR",
+        transaction_date="2026-08-25",
+        transaction_time="16:00:00",
+    )
+    ledger_env.ledger.create_expense(
+        book_id=ledger_env.book_id,
+        source_account_id=bank.id,
+        expense_account_id=expense.id,
+        amount_minor=4000,
+        currency_code="EUR",
+        transaction_date="2026-08-26",
+    )
+    refund = ledger_env.ledger.create_refund(
+        book_id=ledger_env.book_id,
+        destination_account_id=bank.id,
+        expense_account_id=expense.id,
+        amount_minor=1500,
+        currency_code="EUR",
+        transaction_date="2026-08-27",
+    )
+    assert refund.kind == "REFUND"
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, bank.id) == 7500
+    expense_total = ledger_env.db.connection.execute(
+        "SELECT SUM(value_minor) FROM entries WHERE account_id = ? AND book_id = ?",
+        (expense.id, ledger_env.book_id),
+    ).fetchone()[0]
+    assert expense_total == 2500
+
+
+def test_adjustment_and_liability_sign_semantics(ledger_env) -> None:
+    liability = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id,
+        account_type="LIABILITY",
+        name="Car loan",
+        currency_code="EUR",
+        tracking_start_date="2026-08-25",
+        tracking_start_time="00:00:00",
+    )
+    equity = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id,
+        account_type="EQUITY",
+        name="Opening",
+    )
+    ledger_env.ledger.create_opening_balance(
+        book_id=ledger_env.book_id,
+        account_id=liability.id,
+        equity_account_id=equity.id,
+        quantity_minor=-240000,
+        currency_code="EUR",
+        transaction_date="2026-08-25",
+        transaction_time="00:00:00",
+    )
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, liability.id) == -240000
+    ledger_env.ledger.create_adjustment(
+        book_id=ledger_env.book_id,
+        account_id=liability.id,
+        equity_account_id=equity.id,
+        quantity_minor=10000,
+        currency_code="EUR",
+        transaction_date="2026-08-26",
+        description="Correct residual debt",
+    )
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, liability.id) == -230000
+
+
+def test_transaction_cannot_be_reversed_twice(ledger_env) -> None:
+    bank, _, expense, _, equity = _base_accounts(ledger_env)
+    ledger_env.ledger.create_opening_balance(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        equity_account_id=equity.id,
+        quantity_minor=10000,
+        currency_code="EUR",
+        transaction_date="2026-08-25",
+        transaction_time="16:00:00",
+    )
+    expense_tx = ledger_env.ledger.create_expense(
+        book_id=ledger_env.book_id,
+        source_account_id=bank.id,
+        expense_account_id=expense.id,
+        amount_minor=1000,
+        currency_code="EUR",
+        transaction_date="2026-08-26",
+    )
+    ledger_env.ledger.create_reversal(
+        book_id=ledger_env.book_id,
+        transaction_id=expense_tx.id,
+        transaction_date="2026-08-27",
+    )
+    with pytest.raises(LedgerValidationError):
+        ledger_env.ledger.create_reversal(
+            book_id=ledger_env.book_id,
+            transaction_id=expense_tx.id,
+            transaction_date="2026-08-28",
+        )

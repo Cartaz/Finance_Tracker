@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS import_batches (
     review_mode TEXT NOT NULL CHECK (review_mode IN ('FULL_REVIEW', 'ASSISTED_REVIEW')),
     imported_at TEXT NOT NULL,
     row_count INTEGER NOT NULL CHECK (row_count >= 0),
+    UNIQUE (id, book_id),
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
     FOREIGN KEY (account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT
 );
@@ -236,7 +237,7 @@ CREATE TABLE IF NOT EXISTS import_rows (
     matched_transaction_id INTEGER,
     created_at TEXT NOT NULL,
     UNIQUE (batch_id, row_number),
-    FOREIGN KEY (batch_id) REFERENCES import_batches(id) ON DELETE RESTRICT,
+    FOREIGN KEY (batch_id, book_id) REFERENCES import_batches(id, book_id) ON DELETE RESTRICT,
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
     FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
     FOREIGN KEY (matched_transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT

@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import re
+import unicodedata
 from datetime import date, datetime
 
 from core.account_service import AccountService
@@ -16,35 +17,16 @@ from core.payee_service import PayeeService
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
+_SPACE_RE = re.compile(r"\s+")
 _DATE_HEADERS = {"date", "data", "bookingdate", "transactiondate", "valuedate"}
 _AMOUNT_HEADERS = {"amount", "importo", "value", "ammontare", "transactionamount"}
 _CURRENCY_HEADERS = {"currency", "valuta", "currencycode", "ccy"}
-_DESCRIPTION_HEADERS = {
-    "description",
-    "descrizione",
-    "details",
-    "causale",
-    "memo",
-    "narrative",
-}
-_EXTERNAL_ID_HEADERS = {
-    "externalid",
-    "id",
-    "transactionid",
-    "reference",
-    "riferimento",
-    "bankid",
-}
+_DESCRIPTION_HEADERS = {"description", "descrizione", "details", "causale", "memo", "narrative"}
+_EXTERNAL_ID_HEADERS = {"externalid", "id", "transactionid", "reference", "riferimento", "bankid"}
 
 
 class ReconciliationService:
-    """Stages bank CSV data and reconciles it without owning ledger truth.
-
-    Imported rows are external evidence. They never mutate accounting state until
-    an explicit link or posting is confirmed. Automatic MATCHED status is only
-    allowed when a bank external id already has a unique persisted reconciliation
-    link for the same book/account/source.
-    """
+    """Stages external bank evidence without becoming a ledger writer."""
 
     def __init__(
         self,
@@ -72,9 +54,7 @@ class ReconciliationService:
             raise ReconciliationError("imports require a balance account")
         if account.archived or account.placeholder:
             raise ReconciliationError("imports require an active non-placeholder account")
-        source = source_name.strip()
-        if not source:
-            raise ReconciliationError("source_name is required")
+        source = self._normalize_source(source_name)
         mode = review_mode.strip().upper()
         if mode not in _REVIEW_MODES:
             raise ReconciliationError("review_mode must be FULL_REVIEW or ASSISTED_REVIEW")
@@ -82,17 +62,16 @@ class ReconciliationService:
             raise ReconciliationError("CSV content is empty")
         if len(csv_text.encode("utf-8")) > 10_000_000:
             raise ReconciliationError("CSV content exceeds 10 MB")
-
-        rows = self._parse_csv(csv_text)
-        if not rows:
+        raw_rows = self._parse_csv(csv_text)
+        if not raw_rows:
             raise ReconciliationError("CSV contains no data rows")
-        if len(rows) > 10_000:
+        if len(raw_rows) > 10_000:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
-        seen_external: set[str] = set()
         prepared: list[dict[str, object]] = []
-        for row_number, raw in enumerate(rows, start=2):
-            parsed_date = self._parse_date(raw["date"], row_number)
+        seen_external: set[str] = set()
+        for row_number, raw in enumerate(raw_rows, start=2):
+            transaction_date = self._parse_date(raw["date"], row_number)
             currency = (raw.get("currency") or account.currency_code).strip().upper()
             if currency != account.currency_code:
                 raise ReconciliationError(
@@ -109,18 +88,17 @@ class ReconciliationService:
                         f"duplicate external id inside CSV: {external_id}"
                     )
                 seen_external.add(external_id)
-            fingerprint = self._fingerprint(
-                account_id, parsed_date, amount_minor, currency, description
-            )
             prepared.append(
                 {
                     "row_number": row_number,
-                    "date": parsed_date,
+                    "date": transaction_date,
                     "amount_minor": amount_minor,
                     "currency": currency,
                     "description": description,
                     "external_id": external_id,
-                    "fingerprint": fingerprint,
+                    "fingerprint": self._fingerprint(
+                        account_id, transaction_date, amount_minor, currency, description
+                    ),
                 }
             )
 
@@ -137,7 +115,7 @@ class ReconciliationService:
             )
             summary: dict[str, int] = {}
             for item in prepared:
-                state, matched_tx = self._initial_state(
+                state, matched_transaction_id = self._initial_state(
                     book_id=book_id,
                     account_id=account_id,
                     source_name=source,
@@ -168,7 +146,7 @@ class ReconciliationService:
                         item["external_id"],
                         item["fingerprint"],
                         state,
-                        matched_tx,
+                        matched_transaction_id,
                     ),
                 )
                 summary[state] = summary.get(state, 0) + 1
@@ -182,8 +160,8 @@ class ReconciliationService:
             SELECT b.id, b.account_id, a.name AS account_name, b.source_name,
                    b.review_mode, b.imported_at, b.row_count
             FROM import_batches b
-            JOIN accounts a ON a.id = b.account_id AND a.book_id = b.book_id
-            WHERE b.book_id = ? ORDER BY b.id DESC LIMIT ?
+            JOIN accounts a ON a.id=b.account_id AND a.book_id=b.book_id
+            WHERE b.book_id=? ORDER BY b.id DESC LIMIT ?
             """,
             (book_id, limit),
         ).fetchall()
@@ -195,7 +173,7 @@ class ReconciliationService:
             """
             SELECT id, row_number, transaction_date, amount_minor, currency_code,
                    description, external_id, review_state, matched_transaction_id
-            FROM import_rows WHERE book_id = ? AND batch_id = ? ORDER BY row_number
+            FROM import_rows WHERE book_id=? AND batch_id=? ORDER BY row_number
             """,
             (book_id, batch_id),
         ).fetchall()
@@ -219,24 +197,23 @@ class ReconciliationService:
         row, batch = self._require_row(book_id, row_id)
         if str(row["review_state"]) in _TERMINAL_STATES:
             raise ReconciliationError("row is already resolved")
-        candidate_ids = self._candidate_ids(
+        candidates = self._candidate_ids(
             book_id,
             int(batch["account_id"]),
             str(row["transaction_date"]),
             int(row["amount_minor"]),
             str(row["currency_code"]),
         )
-        if transaction_id not in candidate_ids:
+        if transaction_id not in candidates:
             raise ReconciliationError("transaction is not compatible with the imported row")
         with self._database.transaction() as conn:
-            external_id = row["external_id"]
-            if external_id is not None:
+            if row["external_id"] is not None:
                 self._insert_link(
                     conn,
                     book_id=book_id,
                     account_id=int(batch["account_id"]),
                     source_name=str(batch["source_name"]),
-                    external_id=str(external_id),
+                    external_id=str(row["external_id"]),
                     transaction_id=transaction_id,
                 )
             conn.execute(
@@ -264,32 +241,27 @@ class ReconciliationService:
             if category.type != "EXPENSE" or category.placeholder or category.archived:
                 raise ReconciliationError("negative bank rows require an active expense category")
             kind = "EXPENSE"
-            entries = (
-                EntryDraft(account.id, amount, amount),
-                EntryDraft(category.id, -amount, None),
-            )
         else:
             if category.type != "INCOME" or category.placeholder or category.archived:
                 raise ReconciliationError("positive bank rows require an active income category")
             kind = "INCOME"
-            entries = (
-                EntryDraft(account.id, amount, amount),
-                EntryDraft(category.id, -amount, None),
-            )
         draft = TransactionDraft(
             book_id=book_id,
             kind=kind,
             transaction_date=str(row["transaction_date"]),
             currency_code=str(row["currency_code"]),
             description=str(row["description"]),
-            entries=entries,
+            entries=(
+                EntryDraft(account.id, amount, amount),
+                EntryDraft(category.id, -amount, None),
+            ),
         )
         with self._database.transaction() as conn:
-            tx = self._ledger.create_transaction(draft, connection=conn)
+            transaction = self._ledger.create_transaction(draft, connection=conn)
             if payee_id is not None:
                 self._payees.assign_transaction(
                     book_id=book_id,
-                    transaction_id=tx.id,
+                    transaction_id=transaction.id,
                     payee_id=payee_id,
                     connection=conn,
                 )
@@ -300,13 +272,13 @@ class ReconciliationService:
                     account_id=account.id,
                     source_name=str(batch["source_name"]),
                     external_id=str(row["external_id"]),
-                    transaction_id=tx.id,
+                    transaction_id=transaction.id,
                 )
             conn.execute(
                 "UPDATE import_rows SET review_state='POSTED', matched_transaction_id=? WHERE id=? AND book_id=?",
-                (tx.id, row_id, book_id),
+                (transaction.id, row_id, book_id),
             )
-        return {"rowId": row_id, "transactionId": tx.id, "state": "POSTED"}
+        return {"rowId": row_id, "transactionId": transaction.id, "state": "POSTED"}
 
     def ignore_row(self, *, book_id: int, row_id: int) -> dict[str, object]:
         row, _ = self._require_row(book_id, row_id)
@@ -338,6 +310,10 @@ class ReconciliationService:
                 return "OUTSIDE_TRACKING", None
             if transaction_date == tracking_start_date and tracking_start_time is not None:
                 return "OUTSIDE_TRACKING", None
+
+        candidates = self._candidate_ids(
+            book_id, account_id, transaction_date, amount_minor, currency_code
+        )
         if external_id is not None:
             link = self._database.connection.execute(
                 """
@@ -347,7 +323,10 @@ class ReconciliationService:
                 (book_id, account_id, source_name, str(external_id)),
             ).fetchone()
             if link is not None:
-                return "MATCHED", int(link["transaction_id"])
+                linked_id = int(link["transaction_id"])
+                if linked_id in candidates:
+                    return "MATCHED", linked_id
+                return "AMBIGUOUS", None
             duplicate = self._database.connection.execute(
                 """
                 SELECT 1 FROM import_rows r JOIN import_batches b ON b.id=r.batch_id
@@ -360,9 +339,6 @@ class ReconciliationService:
                 return "DUPLICATE_REVIEW", None
         if review_mode == "FULL_REVIEW":
             return "REVIEW_REQUIRED", None
-        candidates = self._candidate_ids(
-            book_id, account_id, transaction_date, amount_minor, currency_code
-        )
         if len(candidates) == 1:
             return "SUGGESTED", None
         if len(candidates) > 1:
@@ -404,8 +380,7 @@ class ReconciliationService:
         ).fetchone()
         if row is None:
             raise ReconciliationError("unknown import row")
-        batch = self._require_batch(book_id, int(row["batch_id"]))
-        return row, batch
+        return row, self._require_batch(book_id, int(row["batch_id"]))
 
     @staticmethod
     def _insert_link(
@@ -433,9 +408,8 @@ class ReconciliationService:
 
     @classmethod
     def _parse_csv(cls, text: str) -> list[dict[str, str]]:
-        sample = text[:4096]
         try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
         except csv.Error:
             dialect = csv.excel
         reader = csv.DictReader(io.StringIO(text), dialect=dialect)
@@ -494,6 +468,16 @@ class ReconciliationService:
         raise ReconciliationError(f"row {row_number}: invalid date")
 
     @staticmethod
+    def _normalize_source(value: str) -> str:
+        if not isinstance(value, str):
+            raise ReconciliationError("source_name is required")
+        normalized = unicodedata.normalize("NFKC", value).strip().casefold()
+        normalized = _SPACE_RE.sub(" ", normalized)
+        if not normalized:
+            raise ReconciliationError("source_name is required")
+        return normalized
+
+    @staticmethod
     def _fingerprint(
         account_id: int,
         transaction_date: str,
@@ -501,5 +485,8 @@ class ReconciliationService:
         currency_code: str,
         description: str,
     ) -> str:
-        payload = f"{account_id}|{transaction_date}|{amount_minor}|{currency_code}|{description.strip().casefold()}"
+        payload = (
+            f"{account_id}|{transaction_date}|{amount_minor}|{currency_code}|"
+            f"{description.strip().casefold()}"
+        )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()

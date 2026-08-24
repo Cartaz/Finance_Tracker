@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import sqlite3
 
 import pytest
 
@@ -91,7 +92,7 @@ def test_m3_stress_payees_aliases_categories_and_invalid_states(ledger_env) -> N
     assert len(payees.suggest_payees(book, "M", limit=5)) == 5
     assert len(categories.suggest_categories(book, "Cat", limit=5)) == 5
 
-    # Merge ten merchants into five canonical merchants and ensure links move atomically.
+    # Merge ten merchants into canonical merchants and ensure links move atomically.
     for source_id, target_id in zip(merchant_ids[50:60], merchant_ids[0:10], strict=True):
         payees.merge_payees(book_id=book, source_id=source_id, target_id=target_id)
         assert payees.get_payee(book, source_id).archived
@@ -107,14 +108,18 @@ def test_m3_stress_payees_aliases_categories_and_invalid_states(ledger_env) -> N
         before = (
             db.connection.execute("SELECT COUNT(*) FROM payees").fetchone()[0],
             db.connection.execute("SELECT COUNT(*) FROM payee_aliases").fetchone()[0],
-            db.connection.execute("SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL").fetchone()[0],
+            db.connection.execute(
+                "SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL"
+            ).fetchone()[0],
         )
         with pytest.raises(expected):
             call()
         after = (
             db.connection.execute("SELECT COUNT(*) FROM payees").fetchone()[0],
             db.connection.execute("SELECT COUNT(*) FROM payee_aliases").fetchone()[0],
-            db.connection.execute("SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL").fetchone()[0],
+            db.connection.execute(
+                "SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL"
+            ).fetchone()[0],
         )
         assert after == before
         invalid_attempts += 1
@@ -197,20 +202,23 @@ def test_m3_stress_payees_aliases_categories_and_invalid_states(ledger_env) -> N
     before_payee = db.connection.execute(
         "SELECT payee_id FROM transactions WHERE id = ?", (transaction_ids[1],)
     ).fetchone()[0]
-    with pytest.raises(Exception):
-        with db.transaction() as conn:
-            conn.execute(
-                "UPDATE transactions SET payee_id = ? WHERE id = ?",
-                (other_payee.id, transaction_ids[1]),
-            )
+    with pytest.raises(sqlite3.IntegrityError), db.transaction() as conn:
+        conn.execute(
+            "UPDATE transactions SET payee_id = ? WHERE id = ?",
+            (other_payee.id, transaction_ids[1]),
+        )
     assert db.connection.execute(
         "SELECT payee_id FROM transactions WHERE id = ?", (transaction_ids[1],)
     ).fetchone()[0] == before_payee
     invalid_attempts += 1
 
     assert invalid_attempts >= 10
-    assert db.connection.execute("SELECT COUNT(*) FROM payees WHERE book_id = ?", (book,)).fetchone()[0] == 60
-    assert db.connection.execute("SELECT COUNT(*) FROM transactions WHERE book_id = ?", (book,)).fetchone()[0] == 181
+    assert db.connection.execute(
+        "SELECT COUNT(*) FROM payees WHERE book_id = ?", (book,)
+    ).fetchone()[0] == 60
+    assert db.connection.execute(
+        "SELECT COUNT(*) FROM transactions WHERE book_id = ?", (book,)
+    ).fetchone()[0] == 181
     assert not db.connection.execute(
         """
         SELECT normalized_name FROM payees

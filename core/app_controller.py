@@ -303,7 +303,7 @@ class AppController:
             return None
         if (
             key is not None
-            and key.endswith(("Minor", "Bps"))
+            and key.endswith(("Minor", "Bps", "_minor", "_bps"))
             and isinstance(value, int)
         ):
             return str(value)

@@ -3,16 +3,18 @@ from __future__ import annotations
 from config.constants import SCHEMA_VERSION
 from config.settings import Settings
 from core.account_service import AccountService
+from core.app_state_service import AppStateService
 from core.book_service import BookService
 from core.database import Database
 from core.errors import FinanceTrackerError, ValidationError
 from core.fx_service import FxService
-from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
+from core.ledger_service import LedgerService
 from core.money import parse_money
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
+from core.transport import TransportSerializer
 
 
 class AppController:
@@ -30,6 +32,7 @@ class AppController:
         reporting_service: ReportingService | None = None,
         reconciliation_service: ReconciliationService | None = None,
         scheduled_service: ScheduledTransactionService | None = None,
+        app_state_service: AppStateService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -47,6 +50,7 @@ class AppController:
         self._scheduled = scheduled_service or ScheduledTransactionService(
             database, account_service, ledger_service, payee_service
         )
+        self._app_state = app_state_service or AppStateService(database, account_service)
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -56,7 +60,7 @@ class AppController:
             "bookCurrency": self._settings.book_currency,
             "locale": self._settings.locale,
             "reconciliationReviewMode": self._settings.reconciliation_review_mode,
-            "currencies": self._supported_currencies(),
+            "currencies": self._app_state.supported_currencies(),
             "needsSetup": book is None,
             "book": None
             if book is None
@@ -73,40 +77,12 @@ class AppController:
 
     def snapshot(self) -> dict[str, object]:
         book = self._require_book()
-        accounts = self._accounts.list_accounts(book.id)
-        transactions = self._database.connection.execute(
-            """
-            SELECT t.id, t.kind, t.transaction_date, t.transaction_time, t.currency_code,
-                   t.description, p.name AS payee_name
-            FROM transactions t LEFT JOIN payees p ON p.id = t.payee_id
-            WHERE t.book_id = ?
-            ORDER BY t.transaction_date DESC, COALESCE(t.transaction_time, '') DESC, t.id DESC
-            LIMIT 100
-            """,
-            (book.id,),
-        ).fetchall()
-        return self._transport_money(
-            {
-                "book": {
-                    "id": book.id,
-                    "name": book.name,
-                    "currency": book.base_currency_code,
-                },
-                "accounts": [
-                    {
-                        "id": item.id,
-                        "name": item.name,
-                        "type": item.type,
-                        "currency": item.currency_code,
-                        "placeholder": item.placeholder,
-                        "balanceMinor": self._accounts.native_balance(book.id, item.id)
-                        if item.type in {"ASSET", "LIABILITY"}
-                        else None,
-                    }
-                    for item in accounts
-                ],
-                "transactions": [dict(row) for row in transactions],
-            }
+        return TransportSerializer.serialize(
+            self._app_state.snapshot(
+                book_id=book.id,
+                book_name=book.name,
+                book_currency=book.base_currency_code,
+            )
         )
 
     def dashboard(self, payload: dict[str, object]) -> dict[str, object]:
@@ -117,7 +93,7 @@ class AppController:
             end_date=str(payload.get("endDate", "")),
             as_of_date=str(payload.get("asOfDate", "")),
         )
-        return self._transport_money(result)
+        return TransportSerializer.serialize(result)
 
     def account_history(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -127,7 +103,7 @@ class AppController:
             start_date=str(payload.get("startDate", "")),
             end_date=str(payload.get("endDate", "")),
         )
-        return self._transport_money(result)
+        return TransportSerializer.serialize(result)
 
     def set_fx_rate(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -172,7 +148,7 @@ class AppController:
 
     def import_batch_rows(self, payload: dict[str, object]) -> list[dict[str, object]]:
         book = self._require_book()
-        return self._transport_money(
+        return TransportSerializer.serialize(
             self._reconciliation.batch_rows(
                 book.id, self._positive_id(payload.get("batchId"))
             )
@@ -236,11 +212,11 @@ class AppController:
             description=str(payload.get("description", "")),
             payee_id=None if payee in (None, "") else self._positive_id(payee),
         )
-        return self._transport_money(self._scheduled_payload(item))
+        return TransportSerializer.serialize(self._scheduled_payload(item))
 
     def list_scheduled_transactions(self) -> list[dict[str, object]]:
         book = self._require_book()
-        return self._transport_money(
+        return TransportSerializer.serialize(
             [self._scheduled_payload(item) for item in self._scheduled.list_schedules(book.id)]
         )
 
@@ -254,7 +230,7 @@ class AppController:
             self._positive_id(payload.get("scheduleId")),
             active,
         )
-        return self._transport_money(self._scheduled_payload(item))
+        return TransportSerializer.serialize(self._scheduled_payload(item))
 
     def post_due_scheduled(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -305,30 +281,25 @@ class AppController:
         source_id = self._positive_id(payload.get("sourceAccountId"))
         category_id = self._positive_id(payload.get("categoryAccountId"))
         source = self._accounts.get_account(book.id, source_id)
-        category = self._accounts.get_account(book.id, category_id)
         if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
             raise ValidationError("source must be a balance account")
-        if category.type != "EXPENSE" or category.placeholder or category.archived:
-            raise ValidationError("category must be an active selectable expense account")
         amount = parse_money(
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
         if amount <= 0:
             raise ValidationError("expense amount must be positive")
-        draft = TransactionDraft(
-            book_id=book.id,
-            kind="EXPENSE",
-            transaction_date=str(payload.get("date", "")),
-            transaction_time=str(payload["time"]) if payload.get("time") else None,
-            currency_code=source.currency_code,
-            description=str(payload.get("description", "")).strip(),
-            entries=(
-                EntryDraft(source_id, -amount, -amount),
-                EntryDraft(category_id, amount, None),
-            ),
-        )
         with self._database.transaction() as conn:
-            transaction = self._ledger.create_transaction(draft, connection=conn)
+            transaction = self._ledger.create_expense(
+                book_id=book.id,
+                source_account_id=source_id,
+                expense_account_id=category_id,
+                amount_minor=amount,
+                currency_code=source.currency_code,
+                transaction_date=str(payload.get("date", "")),
+                transaction_time=str(payload["time"]) if payload.get("time") else None,
+                description=str(payload.get("description", "")).strip(),
+                connection=conn,
+            )
             payee_id = payload.get("payeeId")
             if payee_id is not None:
                 self._payees.assign_transaction(
@@ -383,37 +354,6 @@ class AppController:
         if book is None:
             raise ValidationError("initial setup is required")
         return book
-
-    def _supported_currencies(self) -> list[dict[str, object]]:
-        rows = self._database.connection.execute(
-            "SELECT code, minor_unit_digits FROM currencies WHERE active = 1 ORDER BY code"
-        ).fetchall()
-        return [
-            {
-                "code": str(row["code"]),
-                "minorUnitDigits": int(row["minor_unit_digits"]),
-            }
-            for row in rows
-        ]
-
-    @classmethod
-    def _transport_money(cls, value, key: str | None = None):
-        if value is None:
-            return None
-        if (
-            key is not None
-            and key.endswith(("Minor", "Bps", "_minor", "_bps"))
-            and isinstance(value, int)
-        ):
-            return str(value)
-        if isinstance(value, dict):
-            return {
-                item_key: cls._transport_money(item, item_key)
-                for item_key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [cls._transport_money(item) for item in value]
-        return value
 
     @staticmethod
     def _positive_id(value: object) -> int:

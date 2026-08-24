@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from core.database import Database
 from core.errors import AccountNotFoundError, ScheduledTransactionError
 from core.payee_service import PayeeService
 from core.scheduled_transaction_service import ScheduledTransactionService
@@ -128,14 +129,14 @@ def test_m7_thousand_occurrences_and_invalid_state_stress(
         db.connection.execute("SELECT COUNT(*) FROM scheduled_transactions").fetchone()[0],
         db.connection.execute("SELECT COUNT(*) FROM scheduled_occurrences").fetchone()[0],
     )
-    common = dict(
-        book_id=book,
-        source_account_id=bank.id,
-        amount_minor=100,
-        frequency="MONTHLY",
-        interval=1,
-        start_date="2026-03-01",
-    )
+    common = {
+        "book_id": book,
+        "source_account_id": bank.id,
+        "amount_minor": 100,
+        "frequency": "MONTHLY",
+        "interval": 1,
+        "start_date": "2026-03-01",
+    }
     invalid_cases = (
         (ScheduledTransactionError, lambda: service.create_schedule(kind="UNKNOWN", counter_account_id=expense.id, **common)),
         (ScheduledTransactionError, lambda: service.create_schedule(kind="EXPENSE", counter_account_id=income.id, **common)),
@@ -165,8 +166,6 @@ def test_m7_thousand_occurrences_and_invalid_state_stress(
     db.integrity_check()
     backup = tmp_path / "m7-backup.db"
     db.backup_to(backup)
-    from core.database import Database
-
     restored = Database(backup)
     restored.open()
     try:

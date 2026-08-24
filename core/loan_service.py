@@ -65,7 +65,9 @@ class LoanService:
         interest_accounts = [
             {"id": account.id, "name": account.name}
             for account in accounts
-            if account.type == "EXPENSE" and not account.placeholder and not account.archived
+            if account.type == "EXPENSE"
+            and not account.placeholder
+            and not account.archived
         ]
         targets: list[dict[str, object]] = []
         for liability in accounts:
@@ -140,7 +142,9 @@ class LoanService:
         normalized_amortization = AmortizationPolicy.normalize_amortization(
             amortization_type
         )
-        normalized_recast = AmortizationPolicy.normalize_recast_strategy(recast_strategy)
+        normalized_recast = AmortizationPolicy.normalize_recast_strategy(
+            recast_strategy
+        )
 
         liability = self._accounts.get_account(book_id, liability_account_id)
         payment = self._accounts.get_account(book_id, payment_account_id)
@@ -186,7 +190,9 @@ class LoanService:
                 if first_due <= start:
                     raise LoanError("first_due_date must follow start_date")
                 if self._accounts.native_balance(book_id, liability.id) != 0:
-                    raise LoanError("new disbursement requires an empty liability account")
+                    raise LoanError(
+                        "new disbursement requires an empty liability account"
+                    )
                 funding = self._accounts.get_account(book_id, funding_account_id)
                 self._validate_funding_account(funding, liability.currency_code)
                 transaction = self._ledger.create_transfer(
@@ -257,6 +263,12 @@ class LoanService:
             raise LoanError("rate revisions are only valid for VARIABLE loans")
         effective = self._parse_date(effective_date, "effective_date")
         rate = self._rate_bps(annual_rate_bps)
+        posted = self._database.connection.execute(
+            "SELECT MAX(due_date) FROM loan_payments WHERE book_id=? AND loan_id=?",
+            (book_id, loan.id),
+        ).fetchone()[0]
+        if posted is not None and effective.isoformat() <= str(posted):
+            raise LoanError("rate revision cannot rewrite a posted installment period")
         with self._database.transaction() as conn:
             conn.execute(
                 """
@@ -275,7 +287,9 @@ class LoanService:
             "annualRateBps": rate,
         }
 
-    def list_rate_revisions(self, book_id: int, loan_id: int) -> list[dict[str, object]]:
+    def list_rate_revisions(
+        self, book_id: int, loan_id: int
+    ) -> list[dict[str, object]]:
         loan = self.get_loan(book_id, loan_id)
         if loan.rate_type != "VARIABLE":
             return []
@@ -319,8 +333,10 @@ class LoanService:
         last_installment = self._last_installment_number(book_id, loan.id)
         if outstanding > 0 and last_installment >= loan.term_months:
             raise LoanError("contractual term ended with outstanding principal")
-        next_terms = None if outstanding == 0 else self._next_actual_terms(
-            loan, outstanding, last_installment + 1
+        next_terms = (
+            None
+            if outstanding == 0
+            else self._next_actual_terms(loan, outstanding, last_installment + 1)
         )
         return {
             "id": loan.id,
@@ -333,14 +349,19 @@ class LoanService:
             "outstandingPrincipalMinor": outstanding,
             "annualRateBps": loan.annual_rate_bps,
             "currentAnnualRateBps": (
-                None if next_terms is None else int(next_terms[4])
+                None if next_terms is None else int(next_terms[5])
             ),
             "rateType": loan.rate_type,
+            "ratePolicy": (
+                "FIXED_CONTRACT"
+                if loan.rate_type == "FIXED"
+                else "LATEST_EFFECTIVE_REVISION"
+            ),
             "amortizationType": loan.amortization_type,
             "recastStrategy": loan.recast_strategy,
             "termMonths": loan.term_months,
-            "fixedPaymentMinor": 0 if next_terms is None else int(next_terms[3]),
-            "nextPaymentMinor": 0 if next_terms is None else int(next_terms[3]),
+            "fixedPaymentMinor": 0 if next_terms is None else int(next_terms[4]),
+            "nextPaymentMinor": 0 if next_terms is None else int(next_terms[4]),
             "paidInstallments": self._payment_count(book_id, loan.id),
             "lastInstallmentNumber": last_installment,
             "remainingInstallments": max(0, loan.term_months - last_installment),
@@ -360,6 +381,11 @@ class LoanService:
             "loanId": loan.id,
             "currency": loan.currency_code,
             "rateType": loan.rate_type,
+            "ratePolicy": (
+                "FIXED_CONTRACT"
+                if loan.rate_type == "FIXED"
+                else "LATEST_EFFECTIVE_REVISION"
+            ),
             "amortizationType": loan.amortization_type,
             "recastStrategy": loan.recast_strategy,
             "planBasis": "CURRENT_LEDGER_STATE",
@@ -386,7 +412,9 @@ class LoanService:
             loan = self.get_loan(book_id, int(item["id"]))
             outstanding = int(item["outstandingPrincipalMinor"])
             start_installment = int(item["lastInstallmentNumber"]) + 1
-            for row in self._project_remaining_rows(loan, outstanding, start_installment):
+            for row in self._project_remaining_rows(
+                loan, outstanding, start_installment
+            ):
                 due = date.fromisoformat(str(row["dueDate"]))
                 if due > end:
                     break
@@ -415,7 +443,9 @@ class LoanService:
         return projected
 
     def post_next_payment(self, *, book_id: int, loan_id: int) -> dict[str, object]:
-        return self._post_payment(book_id=book_id, loan_id=loan_id, custom_amount_minor=None)
+        return self._post_payment(
+            book_id=book_id, loan_id=loan_id, custom_amount_minor=None
+        )
 
     def post_custom_payment(
         self,
@@ -425,7 +455,11 @@ class LoanService:
         amount_minor: int,
         recast_strategy: str | None = None,
     ) -> dict[str, object]:
-        if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
+        if (
+            isinstance(amount_minor, bool)
+            or not isinstance(amount_minor, int)
+            or amount_minor <= 0
+        ):
             raise LoanError("custom payment must be a positive integer magnitude")
         return self._post_payment(
             book_id=book_id,
@@ -452,7 +486,14 @@ class LoanService:
             outstanding,
             self._last_installment_number(book_id, loan.id) + 1,
         )
-        due, installment_number, scheduled_principal, interest, scheduled_payment, rate = next_terms
+        (
+            due,
+            installment_number,
+            scheduled_principal,
+            interest,
+            scheduled_payment,
+            rate,
+        ) = next_terms
         strategy = loan.recast_strategy
         payment_kind = "REGULAR"
         principal = scheduled_principal
@@ -467,7 +508,9 @@ class LoanService:
                     "custom payment must cover accrued interest and reduce principal"
                 )
             if custom_amount_minor > outstanding + interest:
-                raise LoanError("custom payment exceeds outstanding principal plus interest")
+                raise LoanError(
+                    "custom payment exceeds outstanding principal plus interest"
+                )
             if strategy == "REDUCE_TERM" and custom_amount_minor < scheduled_payment:
                 raise LoanError(
                     "REDUCE_TERM custom payment cannot be below the scheduled payment"
@@ -593,7 +636,9 @@ class LoanService:
             if outstanding == 0:
                 break
         if outstanding > 0:
-            raise LoanError("contractual term cannot amortize current outstanding principal")
+            raise LoanError(
+                "contractual term cannot amortize current outstanding principal"
+            )
         return rows
 
     def _next_actual_terms(
@@ -602,7 +647,9 @@ class LoanService:
         outstanding_minor: int,
         start_installment: int,
     ) -> tuple[date, int, int, int, int, int]:
-        for row in self._project_remaining_rows(loan, outstanding_minor, start_installment):
+        for row in self._project_remaining_rows(
+            loan, outstanding_minor, start_installment
+        ):
             if int(row["paymentMinor"]) <= 0:
                 continue
             return (
@@ -648,7 +695,9 @@ class LoanService:
             (loan.book_id, loan.id, due.isoformat()),
         ).fetchone()
         if row is None:
-            raise LoanError(f"missing variable rate for loan {loan.id} on {due.isoformat()}")
+            raise LoanError(
+                f"missing variable rate for loan {loan.id} on {due.isoformat()}"
+            )
         return int(row["annual_rate_bps"])
 
     def _post_ledger_payment(
@@ -735,7 +784,10 @@ class LoanService:
             raise LoanError("payment account must be an active selectable ASSET")
         if interest.archived or interest.placeholder or interest.type != "EXPENSE":
             raise LoanError("interest account must be an active selectable EXPENSE")
-        if liability.currency_code is None or payment.currency_code != liability.currency_code:
+        if (
+            liability.currency_code is None
+            or payment.currency_code != liability.currency_code
+        ):
             raise LoanError("loan and payment account must use the same currency")
 
     @staticmethod
@@ -756,14 +808,18 @@ class LoanService:
             transaction_time=None,
         )
         if result.status is TrackingBoundaryStatus.BEFORE_BOUNDARY:
-            raise LoanError("first loan installment precedes an account tracking boundary")
+            raise LoanError(
+                "first loan installment precedes an account tracking boundary"
+            )
         if result.status is TrackingBoundaryStatus.AMBIGUOUS:
             raise LoanError(
                 "first loan installment is ambiguous against an account tracking boundary"
             )
 
     def _validated_outstanding(self, loan: LoanRecord) -> int:
-        outstanding = self._outstanding_minor(loan.book_id, loan.liability_account_id)
+        outstanding = self._outstanding_minor(
+            loan.book_id, loan.liability_account_id
+        )
         if outstanding > loan.original_principal_minor:
             raise LoanError("loan liability exceeds original contractual principal")
         return outstanding
@@ -791,10 +847,13 @@ class LoanService:
         )
 
     def _has_custom_payment(self, book_id: int, loan_id: int) -> bool:
-        return self._database.connection.execute(
-            "SELECT 1 FROM loan_payments WHERE book_id=? AND loan_id=? AND payment_kind='CUSTOM' LIMIT 1",
-            (book_id, loan_id),
-        ).fetchone() is not None
+        return (
+            self._database.connection.execute(
+                "SELECT 1 FROM loan_payments WHERE book_id=? AND loan_id=? AND payment_kind='CUSTOM' LIMIT 1",
+                (book_id, loan_id),
+            ).fetchone()
+            is not None
+        )
 
     @staticmethod
     def _due_date(first_due_date: str, installment_number: int) -> date:

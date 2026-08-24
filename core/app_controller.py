@@ -11,7 +11,7 @@ from core.database import Database
 from core.errors import FinanceTrackerError, ValidationError
 from core.fx_service import FxService
 from core.ledger_service import LedgerService
-from core.money import parse_money
+from core.money import parse_money_magnitude
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
@@ -117,7 +117,7 @@ class AppController:
 
     def set_budget(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
-        amount = parse_money(
+        amount = parse_money_magnitude(
             payload.get("amount", ""), self._database.currency(book.base_currency_code)
         )
         item = self._budgets.set_budget(
@@ -234,7 +234,7 @@ class AppController:
         source = self._accounts.get_account(book.id, source_id)
         if source.currency_code is None:
             raise ValidationError("scheduled source must be a balance account")
-        amount = parse_money(
+        amount = parse_money_magnitude(
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
         payee = payload.get("payeeId")
@@ -328,11 +328,9 @@ class AppController:
         source = self._accounts.get_account(book.id, source_id)
         if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
             raise ValidationError("source must be a balance account")
-        amount = parse_money(
+        amount = parse_money_magnitude(
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
-        if amount <= 0:
-            raise ValidationError("expense amount must be positive")
         with self._database.transaction() as conn:
             transaction = self._ledger.create_expense(
                 book_id=book.id,

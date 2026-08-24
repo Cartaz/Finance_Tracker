@@ -176,6 +176,46 @@ def test_catchup_limit_is_fail_closed_before_any_posting(ledger_env) -> None:
     assert service.get_schedule(ledger_env.book_id, schedule.id).next_due_date == "2026-02-01"
 
 
+def test_post_due_batch_rolls_back_all_schedules_if_one_becomes_invalid(ledger_env) -> None:
+    service, bank, _, _, expense, income, _ = _setup(ledger_env)
+    first = service.create_schedule(
+        book_id=ledger_env.book_id,
+        kind="INCOME",
+        source_account_id=bank.id,
+        counter_account_id=income.id,
+        amount_minor=10_000,
+        frequency="MONTHLY",
+        interval=1,
+        start_date="2026-02-01",
+    )
+    second = service.create_schedule(
+        book_id=ledger_env.book_id,
+        kind="EXPENSE",
+        source_account_id=bank.id,
+        counter_account_id=expense.id,
+        amount_minor=2_000,
+        frequency="MONTHLY",
+        interval=1,
+        start_date="2026-02-01",
+    )
+    ledger_env.accounts.set_archived(ledger_env.book_id, expense.id, True)
+    before = (
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM scheduled_occurrences").fetchone()[0],
+    )
+    with pytest.raises(ScheduledTransactionError):
+        service.post_due(book_id=ledger_env.book_id, as_of_date="2026-02-01")
+    after = (
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM scheduled_occurrences").fetchone()[0],
+    )
+    assert after == before
+    assert service.get_schedule(ledger_env.book_id, first.id).next_due_date == "2026-02-01"
+    assert service.get_schedule(ledger_env.book_id, second.id).next_due_date == "2026-02-01"
+
+
 def test_invalid_schedule_inputs_and_cross_book_are_rejected(ledger_env) -> None:
     service, bank, _, usd, expense, income, _ = _setup(ledger_env)
     other = ledger_env.accounts.create_account(
@@ -183,14 +223,14 @@ def test_invalid_schedule_inputs_and_cross_book_are_rejected(ledger_env) -> None
         account_type="EXPENSE",
         name="Other",
     )
-    common = dict(
-        book_id=ledger_env.book_id,
-        source_account_id=bank.id,
-        amount_minor=100,
-        frequency="MONTHLY",
-        interval=1,
-        start_date="2026-02-01",
-    )
+    common = {
+        "book_id": ledger_env.book_id,
+        "source_account_id": bank.id,
+        "amount_minor": 100,
+        "frequency": "MONTHLY",
+        "interval": 1,
+        "start_date": "2026-02-01",
+    }
     invalid = (
         lambda: service.create_schedule(kind="NOPE", counter_account_id=expense.id, **common),
         lambda: service.create_schedule(kind="EXPENSE", counter_account_id=income.id, **common),

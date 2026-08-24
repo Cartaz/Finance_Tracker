@@ -62,6 +62,23 @@
     $("report-end").value = localDate(now);
     $("report-start").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
     $("fx-form").elements.date.value = localDate(now);
+    $("scheduled-form").elements.startDate.value = localDate(now);
+    $("scheduled-asof").value = localDate(now);
+  }
+
+  function scheduledCounterOptions(kind, sourceId) {
+    const source = state?.accounts.find((item) => String(item.id) === String(sourceId));
+    if (!source) return "";
+    let items = [];
+    if (kind === "EXPENSE" || kind === "REFUND") items = state.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder);
+    else if (kind === "INCOME") items = state.accounts.filter((a) => a.type === "INCOME" && !a.placeholder);
+    else items = state.accounts.filter((a) => ["ASSET", "LIABILITY"].includes(a.type) && !a.placeholder && a.id !== source.id && a.currency === source.currency);
+    return items.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}${a.currency ? ` · ${a.currency}` : ""}</option>`).join("");
+  }
+
+  function refreshScheduledCounter() {
+    if (!state) return;
+    $("scheduled-counter").innerHTML = scheduledCounterOptions($("scheduled-kind").value, $("scheduled-source").value);
   }
 
   function renderSnapshot(snapshot) {
@@ -76,6 +93,8 @@
     $("expense-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
     $("history-account").innerHTML = balanceAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    $("scheduled-source").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    refreshScheduledCounter();
   }
 
   function renderDashboard(report) {
@@ -99,6 +118,10 @@
   async function refreshFxRates() {
     const items = unwrap(await call("listFxRates"));
     $("fx-rates").innerHTML = items.map((item) => `<div class="mini-row"><span>${item.date}</span><b>${escapeHtml(item.currency)}</b><span>${escapeHtml(item.rate)}</span></div>`).join("") || `<p class="empty">Nessun tasso salvato.</p>`;
+  }
+  async function refreshScheduled() {
+    const items = unwrap(await call("listScheduledTransactions"));
+    $("scheduled-list").innerHTML = items.map((item) => `<div class="card"><div class="report-row"><b>${escapeHtml(item.description || item.kind)}</b><span>${escapeHtml(item.sourceAccountName)} → ${escapeHtml(item.counterAccountName)}</span><strong>${money(item.amountMinor, item.currency)}</strong><small>${item.frequency} × ${item.interval} · prossima ${item.nextDueDate}${item.endDate ? ` · fine ${item.endDate}` : ""} · ${item.active ? "ATTIVA" : "PAUSA"}</small></div><div class="history-controls"><button type="button" data-schedule-toggle="${item.id}" data-active="${item.active ? "0" : "1"}">${item.active ? "Pausa" : "Riattiva"}</button><button type="button" data-schedule-post="${item.id}">Registra dovute</button></div></div>`).join("") || `<p class="empty">Nessuna transazione programmata.</p>`;
   }
   async function refreshImportBatches() {
     const items = unwrap(await call("listImportBatches"));
@@ -145,7 +168,7 @@
   }
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
-    await Promise.all([refreshReports(), refreshFxRates(), refreshImportBatches()]);
+    await Promise.all([refreshReports(), refreshFxRates(), refreshScheduled(), refreshImportBatches()]);
     if (currentBatchId) await loadImportBatch(currentBatchId);
   }
   async function submit(method, form) {
@@ -159,10 +182,15 @@
 
   document.querySelectorAll(".nav").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".nav").forEach((b) => b.classList.remove("active")); button.classList.add("active"); document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden")); $(button.dataset.view).classList.remove("hidden"); $("view-title").textContent = button.textContent; }));
   $("account-type").addEventListener("change", (event) => $("balance-fields").classList.toggle("hidden", !["ASSET", "LIABILITY"].includes(event.target.value)));
+  $("scheduled-kind").addEventListener("change", refreshScheduledCounter);
+  $("scheduled-source").addEventListener("change", refreshScheduledCounter);
   $("apply-report").addEventListener("click", () => refreshReports().catch((error) => toast(error.message, true)));
   $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
+  $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await refreshScheduled(); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });
+  $("post-due-scheduled").addEventListener("click", async () => { try { const result = unwrap(await call("postDueScheduled", { asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshScheduled(), refreshReports()]); toast(`${result.count} scadenze registrate`); } catch (error) { toast(error.message, true); } });
+  $("scheduled-list").addEventListener("click", async (event) => { const toggle = event.target.closest("[data-schedule-toggle]"); const post = event.target.closest("[data-schedule-post]"); if (!toggle && !post) return; try { if (toggle) unwrap(await call("setScheduledActive", { scheduleId: toggle.dataset.scheduleToggle, active: toggle.dataset.active === "1" })); else { const result = unwrap(await call("postDueScheduled", { scheduleId: post.dataset.schedulePost, asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await refreshReports(); } await refreshScheduled(); toast("Programmazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
   $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
   $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });

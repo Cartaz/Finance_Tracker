@@ -100,16 +100,19 @@ class ForecastService:
             if source == "LOAN_INSTALLMENT":
                 direction = "OUTFLOW"
                 kind = "LOAN_PAYMENT"
+                flow_amount_minor = int(occurrence["interestMinor"])
                 bucket["loanInstallmentCount"] = int(bucket["loanInstallmentCount"]) + 1
                 loan_installment_count += 1
             else:
                 kind = str(occurrence["kind"])
+                flow_amount_minor = int(occurrence["amountMinor"])
                 try:
                     direction = PostingPolicy.book_cash_flow_direction(kind)
                 except ValueError as exc:
                     raise ForecastError(f"unsupported scheduled kind: {kind}") from exc
 
             converted: int | None = None
+            flow_converted: int | None = None
             missing: tuple[str, str] | None = None
             if direction == "TRANSFER":
                 bucket["transferCount"] = int(bucket["transferCount"]) + 1
@@ -122,6 +125,16 @@ class ForecastService:
                         currency_code=str(occurrence["currency"]),
                         rate_date=due_date,
                     )
+                    flow_converted = (
+                        converted
+                        if flow_amount_minor == int(occurrence["amountMinor"])
+                        else self._fx.convert_minor(
+                            book_id=book_id,
+                            amount_minor=flow_amount_minor,
+                            currency_code=str(occurrence["currency"]),
+                            rate_date=due_date,
+                        )
+                    )
                 except FxRateMissingError as exc:
                     missing = (exc.currency_code, exc.rate_date)
                     bucket["complete"] = False
@@ -130,11 +143,11 @@ class ForecastService:
                     total_complete = False
                 else:
                     if direction == "INFLOW":
-                        bucket["inflow"] = int(bucket["inflow"]) + converted
-                        total_inflow += converted
+                        bucket["inflow"] = int(bucket["inflow"]) + int(flow_converted)
+                        total_inflow += int(flow_converted)
                     else:
-                        bucket["outflow"] = int(bucket["outflow"]) + converted
-                        total_outflow += converted
+                        bucket["outflow"] = int(bucket["outflow"]) + int(flow_converted)
+                        total_outflow += int(flow_converted)
 
             details.append(
                 {
@@ -142,6 +155,7 @@ class ForecastService:
                     "kind": kind,
                     "direction": direction,
                     "baseAmountMinor": converted,
+                    "flowBaseAmountMinor": flow_converted,
                     "complete": missing is None,
                     "missingFx": []
                     if missing is None

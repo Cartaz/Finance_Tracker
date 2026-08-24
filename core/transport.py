@@ -8,6 +8,7 @@ _FINANCIAL_INTEGER_FIELDS = {
     "baseValueMinor",
     "expenseMinor",
     "fixedPaymentMinor",
+    "flowBaseAmountMinor",
     "incomeMinor",
     "inflowMinor",
     "interestMinor",

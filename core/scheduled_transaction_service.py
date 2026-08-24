@@ -143,9 +143,13 @@ class ScheduledTransactionService:
         self, book_id: int, schedule_id: int, active: bool
     ) -> ScheduledTransaction:
         schedule = self.get_schedule(book_id, schedule_id)
-        if active and schedule.end_date is not None:
-            if date.fromisoformat(schedule.next_due_date) > date.fromisoformat(schedule.end_date):
-                raise ScheduledTransactionError("completed schedule cannot be reactivated")
+        if (
+            active
+            and schedule.end_date is not None
+            and date.fromisoformat(schedule.next_due_date)
+            > date.fromisoformat(schedule.end_date)
+        ):
+            raise ScheduledTransactionError("completed schedule cannot be reactivated")
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE scheduled_transactions SET active=?, updated_at=datetime('now') WHERE id=? AND book_id=?",
@@ -211,7 +215,12 @@ class ScheduledTransactionService:
             )
         return count
 
-    def _post_occurrence(self, schedule: ScheduledTransaction, due: date, conn) -> dict[str, object]:
+    def _post_occurrence(
+        self,
+        schedule: ScheduledTransaction,
+        due: date,
+        conn,
+    ) -> dict[str, object]:
         existing = conn.execute(
             "SELECT transaction_id FROM scheduled_occurrences WHERE schedule_id=? AND due_date=?",
             (schedule.id, due.isoformat()),
@@ -233,7 +242,9 @@ class ScheduledTransactionService:
         self._validate_accounts(schedule.kind, source, counter)
         if source.currency_code != schedule.currency_code:
             raise ScheduledTransactionError("source account currency changed")
-        next_due = self._advance(due, schedule.frequency, schedule.interval, schedule.start_date)
+        next_due = self._advance(
+            due, schedule.frequency, schedule.interval, schedule.start_date
+        )
         amount = schedule.amount_minor
         if schedule.kind == "EXPENSE":
             entries = (

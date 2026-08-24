@@ -27,7 +27,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TEXT NOT NULL,
     description TEXT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS currencies (
     code TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -35,7 +34,6 @@ CREATE TABLE IF NOT EXISTS currencies (
     minor_unit_digits INTEGER NOT NULL CHECK (minor_unit_digits >= 0),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
 );
-
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -43,7 +41,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS books (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -53,7 +50,6 @@ CREATE TABLE IF NOT EXISTS books (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (base_currency_code) REFERENCES currencies(code) ON DELETE RESTRICT
 );
-
 CREATE TABLE IF NOT EXISTS book_members (
     book_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -62,7 +58,6 @@ CREATE TABLE IF NOT EXISTS book_members (
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 );
-
 CREATE INDEX IF NOT EXISTS idx_books_currency ON books(base_currency_code);
 CREATE INDEX IF NOT EXISTS idx_book_members_user ON book_members(user_id);
 """
@@ -91,7 +86,6 @@ CREATE TABLE IF NOT EXISTS accounts (
         (type IN ('INCOME', 'EXPENSE', 'EQUITY') AND currency_code IS NULL AND tracking_start_date IS NULL AND tracking_start_time IS NULL)
     )
 );
-
 CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY,
     book_id INTEGER NOT NULL,
@@ -121,7 +115,6 @@ CREATE TABLE IF NOT EXISTS transactions (
         (original_amount_minor IS NOT NULL AND original_currency_code IS NOT NULL)
     )
 );
-
 CREATE TABLE IF NOT EXISTS entries (
     id INTEGER PRIMARY KEY,
     transaction_id INTEGER NOT NULL,
@@ -135,7 +128,6 @@ CREATE TABLE IF NOT EXISTS entries (
     FOREIGN KEY (transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT,
     FOREIGN KEY (account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT
 );
-
 CREATE INDEX IF NOT EXISTS idx_accounts_book_parent ON accounts(book_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_accounts_book_type ON accounts(book_id, type);
 CREATE INDEX IF NOT EXISTS idx_transactions_book_date ON transactions(book_id, transaction_date);
@@ -144,6 +136,58 @@ CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(book_id, account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_single_reversal
     ON transactions(reverses_transaction_id)
     WHERE reverses_transaction_id IS NOT NULL;
+"""
+
+_SCHEMA_V3 = """
+CREATE TABLE IF NOT EXISTS payees (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (id, book_id),
+    UNIQUE (book_id, normalized_name),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS payee_aliases (
+    id INTEGER PRIMARY KEY,
+    payee_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    match_type TEXT NOT NULL CHECK (match_type IN ('EXACT', 'PREFIX')),
+    created_at TEXT NOT NULL,
+    UNIQUE (book_id, normalized_alias),
+    FOREIGN KEY (payee_id, book_id) REFERENCES payees(id, book_id) ON DELETE RESTRICT
+);
+ALTER TABLE transactions ADD COLUMN payee_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_payees_book_name ON payees(book_id, normalized_name);
+CREATE INDEX IF NOT EXISTS idx_payee_aliases_book_alias ON payee_aliases(book_id, normalized_alias);
+CREATE INDEX IF NOT EXISTS idx_transactions_book_payee ON transactions(book_id, payee_id);
+CREATE TRIGGER IF NOT EXISTS trg_transactions_payee_insert
+BEFORE INSERT ON transactions
+WHEN NEW.payee_id IS NOT NULL
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM payees p WHERE p.id = NEW.payee_id AND p.book_id = NEW.book_id
+    ) THEN RAISE(ABORT, 'invalid transaction payee for book') END;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_transactions_payee_update
+BEFORE UPDATE OF payee_id, book_id ON transactions
+WHEN NEW.payee_id IS NOT NULL
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM payees p WHERE p.id = NEW.payee_id AND p.book_id = NEW.book_id
+    ) THEN RAISE(ABORT, 'invalid transaction payee for book') END;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_payees_delete_restrict
+BEFORE DELETE ON payees
+WHEN EXISTS (SELECT 1 FROM transactions t WHERE t.payee_id = OLD.id AND t.book_id = OLD.book_id)
+BEGIN
+    SELECT RAISE(ABORT, 'payee is referenced by transactions');
+END;
 """
 
 
@@ -155,22 +199,18 @@ class Database:
     def open(self) -> sqlite3.Connection:
         if self._connection is not None:
             return self._connection
-
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, autocommit=True)
         conn.row_factory = sqlite3.Row
-
         conn.execute("PRAGMA foreign_keys = ON")
         enabled = conn.execute("PRAGMA foreign_keys").fetchone()[0]
         if enabled != 1:
             conn.close()
             raise DatabaseIntegrityError("SQLite foreign key enforcement could not be enabled")
-
         journal_mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
         if str(journal_mode).lower() != "wal":
             conn.close()
             raise DatabaseIntegrityError(f"SQLite WAL mode unavailable: {journal_mode}")
-
         conn.autocommit = False
         self._connection = conn
         return conn
@@ -195,7 +235,6 @@ class Database:
             raise DatabaseIntegrityError(
                 f"database schema {current} is newer than supported schema {SCHEMA_VERSION}"
             )
-
         if current < 1:
             with self.transaction() as tx:
                 tx.executescript(_SCHEMA_V1)
@@ -208,13 +247,20 @@ class Database:
                     ("Initial foundation schema",),
                 )
             current = 1
-
         if current < 2:
             with self.transaction() as tx:
                 tx.executescript(_SCHEMA_V2)
                 tx.execute(
                     "INSERT INTO schema_migrations(version, applied_at, description) VALUES (2, datetime('now'), ?)",
                     ("Ledger core schema",),
+                )
+            current = 2
+        if current < 3:
+            with self.transaction() as tx:
+                tx.executescript(_SCHEMA_V3)
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, description) VALUES (3, datetime('now'), ?)",
+                    ("Payees, aliases and transaction payee metadata",),
                 )
 
     def _current_schema_version(self) -> int:
@@ -262,7 +308,6 @@ class Database:
             source.backup(target)
         finally:
             target.close()
-
         verify = sqlite3.connect(temp, autocommit=True)
         try:
             verify.execute("PRAGMA foreign_keys = ON")

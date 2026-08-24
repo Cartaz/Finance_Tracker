@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Slot
 
 from core.app_controller import AppController
+from core.errors import FinanceTrackerError
 
 
 class Bridge(QObject):
@@ -13,7 +14,7 @@ class Bridge(QObject):
     def _call(self, function, *args):
         try:
             return {"ok": True, "data": function(*args)}
-        except Exception as exc:
+        except (FinanceTrackerError, TypeError, ValueError) as exc:
             return self._controller.error_payload(exc)
 
     @Slot(result="QVariant")

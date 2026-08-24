@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from config.constants import SCHEMA_VERSION
 from core.account_service import AccountService
 from core.currency_registry import DEFAULT_CURRENCIES
 from core.database import Database
@@ -11,14 +12,14 @@ from core.ledger_service import LedgerService
 from core.migrations import _SCHEMA_V1, _SCHEMA_V2
 
 
-def test_migration_enables_m10_schema(tmp_path: Path) -> None:
+def test_migration_enables_current_schema(tmp_path: Path) -> None:
     db = Database(tmp_path / "finance.db")
     try:
         conn = db.open()
         db.migrate()
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 8
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == SCHEMA_VERSION
         tables = {
             row[0]
             for row in conn.execute(
@@ -40,11 +41,16 @@ def test_migration_enables_m10_schema(tmp_path: Path) -> None:
             "budgets",
             "loans",
             "loan_payments",
+            "loan_rate_revisions",
         } <= tables
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
         }
         assert "payee_id" in columns
+        loan_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(loans)").fetchall()
+        }
+        assert {"rate_type", "amortization_type", "recast_strategy"} <= loan_columns
         assert db.currency("EUR").minor_unit_digits == 2
         assert db.currency("JPY").minor_unit_digits == 0
         assert db.currency("KWD").minor_unit_digits == 3
@@ -53,7 +59,7 @@ def test_migration_enables_m10_schema(tmp_path: Path) -> None:
         db.close()
 
 
-def test_existing_v2_database_with_ledger_data_upgrades_to_v8(
+def test_existing_v2_database_with_ledger_data_upgrades_to_current_schema(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "finance.db"
@@ -137,7 +143,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v8(
         upgraded.migrate()
         assert upgraded.connection.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == SCHEMA_VERSION
         assert upgraded.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
         assert upgraded.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 4
         columns = {
@@ -157,6 +163,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v8(
             "budgets",
             "loans",
             "loan_payments",
+            "loan_rate_revisions",
         ):
             assert upgraded.connection.execute(
                 f"SELECT COUNT(*) FROM {table}"
@@ -248,7 +255,7 @@ def test_backup_is_verified_snapshot(tmp_path: Path) -> None:
             assert restored.currency("EUR").code == "EUR"
             assert restored.connection.execute(
                 "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == 8
+            ).fetchone()[0] == SCHEMA_VERSION
         finally:
             restored.close()
     finally:

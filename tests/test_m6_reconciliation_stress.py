@@ -11,7 +11,9 @@ from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 
 
-def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp_path: Path) -> None:
+def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
+    ledger_env, tmp_path: Path
+) -> None:
     db = ledger_env.db
     book = ledger_env.book_id
     accounts = ledger_env.accounts
@@ -23,7 +25,9 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
         currency_code="EUR",
         tracking_start_date="2026-01-01",
     )
-    equity = accounts.create_account(book_id=book, account_type="EQUITY", name="M6 Equity")
+    equity = accounts.create_account(
+        book_id=book, account_type="EQUITY", name="M6 Equity"
+    )
     ledger.create_opening_balance(
         book_id=book,
         account_id=bank.id,
@@ -33,8 +37,27 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
         transaction_date="2026-01-01",
     )
     categories = CategoryService(db, accounts)
-    expense = categories.create_category(book_id=book, category_type="EXPENSE", name="M6 Expense")
-    income = categories.create_category(book_id=book, category_type="INCOME", name="M6 Income")
+    expense = categories.create_category(
+        book_id=book, category_type="EXPENSE", name="M6 Expense"
+    )
+    income = categories.create_category(
+        book_id=book, category_type="INCOME", name="M6 Income"
+    )
+    placeholder = categories.create_category(
+        book_id=book,
+        category_type="EXPENSE",
+        name="M6 Placeholder",
+        placeholder=True,
+    )
+    archived = categories.create_category(
+        book_id=book, category_type="EXPENSE", name="M6 Archived"
+    )
+    categories.set_archived(book, archived.id, True)
+    other_book_counter = accounts.create_account(
+        book_id=ledger_env.other_book_id,
+        account_type="EXPENSE",
+        name="Other book expense",
+    )
     payees = PayeeService(db)
     merchant = payees.create_payee(book_id=book, name="M6 Merchant")
     service = ReconciliationService(db, accounts, ledger, payees)
@@ -65,7 +88,8 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
         service.post_row(
             book_id=book,
             row_id=int(row["id"]),
-            category_account_id=expense.id if index % 2 == 0 else income.id,
+            posting_kind="EXPENSE" if index % 2 == 0 else "INCOME",
+            counter_account_id=expense.id if index % 2 == 0 else income.id,
             payee_id=merchant.id if index % 2 == 0 else None,
         )
     for row in rows[500:750]:
@@ -97,18 +121,51 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
         lambda: service.post_row(
             book_id=book,
             row_id=int(rows[0]["id"]),
-            category_account_id=expense.id,
+            posting_kind="EXPENSE",
+            counter_account_id=expense.id,
         ),
         lambda: service.ignore_row(book_id=book, row_id=int(rows[1]["id"])),
         lambda: service.post_row(
             book_id=book,
             row_id=int(rows[751]["id"]),
-            category_account_id=expense.id,
+            posting_kind="EXPENSE",
+            counter_account_id=expense.id,
         ),
         lambda: service.post_row(
             book_id=book,
             row_id=int(rows[752]["id"]),
-            category_account_id=expense.id if int(rows[752]["amount_minor"]) > 0 else income.id,
+            posting_kind="INCOME",
+            counter_account_id=income.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(rows[754]["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=placeholder.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(rows[756]["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=archived.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(rows[758]["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=other_book_counter.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(rows[760]["id"]),
+            posting_kind="UNKNOWN",
+            counter_account_id=expense.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(rows[762]["id"]),
+            posting_kind="TRANSFER",
+            counter_account_id=bank.id,
         ),
         lambda: service.link_existing(
             book_id=book,
@@ -147,8 +204,14 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
     restored.open()
     try:
         restored.integrity_check()
-        assert restored.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == 2
-        assert restored.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 2000
-        assert restored.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0] == 500
+        assert restored.connection.execute(
+            "SELECT COUNT(*) FROM import_batches"
+        ).fetchone()[0] == 2
+        assert restored.connection.execute(
+            "SELECT COUNT(*) FROM import_rows"
+        ).fetchone()[0] == 2000
+        assert restored.connection.execute(
+            "SELECT COUNT(*) FROM reconciliation_links"
+        ).fetchone()[0] == 500
     finally:
         restored.close()

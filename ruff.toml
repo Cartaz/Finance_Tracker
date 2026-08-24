@@ -1,5 +1,0 @@
-# Reconciliation parses bank statement calendar dates, not instants.
-# Current Ruff correctly recognizes datetime.strptime(...).date() as date-only,
-# so no timezone suppression is required for that parser.
-[lint]
-extend-select = ["DTZ007"]

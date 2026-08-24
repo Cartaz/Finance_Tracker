@@ -108,16 +108,18 @@
     return state.accounts.filter((a) => a.type === type && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
   }
   function candidateButton(rowId, candidate) {
-    const detail = candidate.payee_name || candidate.description || candidate.kind;
-    return `<button type="button" data-action="link" data-row-id="${rowId}" data-transaction-id="${candidate.id}">Collega #${candidate.id} · ${escapeHtml(detail)}</button>`;
+    const detail = candidate.payee_name || candidate.description || candidate.kind || "Transazione";
+    const currency = candidate.currency_code ? ` · ${candidate.currency_code}` : "";
+    return `<button type="button" data-action="link" data-row-id="${rowId}" data-transaction-id="${candidate.id}">Collega #${candidate.id} · ${escapeHtml(detail)}${currency}</button>`;
   }
   async function loadImportBatch(batchId) {
     currentBatchId = String(batchId);
     const rows = unwrap(await call("getImportBatchRows", { batchId }));
     $("import-rows").innerHTML = rows.map((row) => {
       const resolved = ["MATCHED", "POSTED", "IGNORED"].includes(row.review_state);
+      const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"].includes(row.review_state);
       const candidates = (row.candidates || []).map((candidate) => candidateButton(row.id, candidate)).join("");
-      const post = resolved || row.review_state === "OUTSIDE_TRACKING" ? "" : `<select data-category-row="${row.id}">${categoryOptionsForRow(row.amount_minor)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button><button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
+      const post = resolved || blocked ? "" : `<select data-category-row="${row.id}">${categoryOptionsForRow(row.amount_minor)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button><button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
       return `<div class="card import-row"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}</div></div>`;
     }).join("") || `<p class="empty">Nessuna riga.</p>`;
   }
@@ -142,7 +144,7 @@
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
-  $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
+  $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
   $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });
   $("import-rows").addEventListener("click", async (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; try { const rowId = button.dataset.rowId; if (button.dataset.action === "link") unwrap(await call("linkImportRow", { rowId, transactionId: button.dataset.transactionId })); else if (button.dataset.action === "ignore") unwrap(await call("ignoreImportRow", { rowId })); else if (button.dataset.action === "post") { const category = document.querySelector(`[data-category-row="${rowId}"]`); const result = unwrap(await call("postImportRow", { rowId, categoryAccountId: category?.value })); if (result.stateSnapshot) renderSnapshot(result.stateSnapshot); await refreshReports(); } await refreshImportBatches(); if (currentBatchId) await loadImportBatch(currentBatchId); toast("Riconciliazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("load-history").addEventListener("click", async () => { try { const accountId = $("history-account").value; if (!accountId) return; const period = reportPeriod(); const history = unwrap(await call("getAccountHistory", { accountId, startDate: period.startDate, endDate: period.endDate })); $("account-history").innerHTML = `<p><b>${escapeHtml(history.name)}</b> · ${escapeHtml(history.currency)}</p>${history.points.map((point) => `<div class="report-row"><span>${point.date}</span><span>${money(point.balanceMinor, history.currency)}</span><strong>${money(point.baseValueMinor, history.baseCurrency)}</strong></div>`).join("")}`; } catch (error) { toast(error.message, true); } });

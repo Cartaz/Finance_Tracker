@@ -94,7 +94,6 @@
     $("accounts-list").innerHTML = snapshot.accounts.map((a) => `<div class="row"><b>${escapeHtml(a.name)}</b><small>${a.type}${a.currency ? ` · ${a.currency}` : ""}</small><span>${a.balanceMinor == null ? "" : money(a.balanceMinor, a.currency)}</span></div>`).join("") || `<p class="empty">Crea il primo conto.</p>`;
     $("expense-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("expense-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
-    $("budget-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE").map((a) => `<option value="${a.id}">${escapeHtml(a.name)}${a.placeholder ? " · gruppo" : ""}</option>`).join("");
     $("history-account").innerHTML = balanceAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("scheduled-source").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
@@ -120,6 +119,10 @@
 
   function renderBudgets(report) {
     const currency = report.baseCurrency;
+    const previousTarget = $("budget-category").value;
+    $("budget-category").innerHTML = (report.targets || []).map((item) => `<option value="${item.categoryAccountId}">${escapeHtml(item.categoryPath)}${item.placeholder ? " · gruppo" : ""}${item.hasBudget ? " · budget esistente" : ""}</option>`).join("");
+    if ([...$("budget-category").options].some((option) => option.value === previousTarget)) $("budget-category").value = previousTarget;
+    $("budget-form").querySelector('button[type="submit"]').disabled = (report.targets || []).length === 0;
     $("budget-summary").innerHTML = `<div class="report-row"><b>${report.period}</b><span>Budget ${money(report.totalBudgetMinor, currency)}</span><span>Speso ${money(report.totalSpentMinor, currency)}</span><strong>Residuo ${money(report.totalRemainingMinor, currency)}</strong></div>`;
     const missing = report.missingFx || [];
     $("budget-warning").classList.toggle("hidden", missing.length === 0);

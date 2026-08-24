@@ -42,6 +42,30 @@ class Bridge(QObject):
         return self._call(self._controller.list_fx_rates)
 
     @Slot("QVariant", result="QVariant")
+    def importCsv(self, payload):
+        return self._call(self._controller.import_csv, dict(payload or {}))
+
+    @Slot(result="QVariant")
+    def listImportBatches(self):
+        return self._call(self._controller.list_import_batches)
+
+    @Slot("QVariant", result="QVariant")
+    def getImportBatchRows(self, payload):
+        return self._call(self._controller.import_batch_rows, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def linkImportRow(self, payload):
+        return self._call(self._controller.link_import_row, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def postImportRow(self, payload):
+        return self._call(self._controller.post_import_row, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def ignoreImportRow(self, payload):
+        return self._call(self._controller.ignore_import_row, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def setup(self, payload):
         return self._call(self._controller.setup, dict(payload or {}))
 

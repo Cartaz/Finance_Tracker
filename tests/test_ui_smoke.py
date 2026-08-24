@@ -57,4 +57,10 @@ def test_reconciliation_ui_uses_structured_candidates_and_safe_file_payload() ->
     assert 'data-transaction-id="${candidate.id}"' in app_js
     assert 'delete data["import-file"]' in app_js
     assert '"TRACKING_AMBIGUOUS"' in app_js
-    assert 'const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"]' in app_js
+    assert (
+        'const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS", "AMBIGUOUS"]'
+        in app_js
+    )
+    assert "postingKind: postingKind?.value" in app_js
+    assert "counterAccountId: counter.value" in app_js
+    assert "initial.reconciliationReviewMode" in app_js

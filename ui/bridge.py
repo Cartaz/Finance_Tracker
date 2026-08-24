@@ -54,8 +54,20 @@ class Bridge(QObject):
         return self._call(self._controller.loan_payments, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
+    def getLoanRateRevisions(self, payload):
+        return self._call(self._controller.loan_rate_revisions, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def setLoanVariableRate(self, payload):
+        return self._call(self._controller.set_loan_variable_rate, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def postNextLoanPayment(self, payload):
         return self._call(self._controller.post_next_loan_payment, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def postCustomLoanPayment(self, payload):
+        return self._call(self._controller.post_custom_loan_payment, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
     def getAccountHistory(self, payload):

@@ -21,6 +21,7 @@ from core.book_service import BookService
 from core.budget_service import BudgetService
 from core.category_service import CategoryService
 from core.database import Database
+from core.forecast_service import ForecastService
 from core.fx_service import FxService
 from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
@@ -93,6 +94,7 @@ def main() -> int:
             account_service,
             category_service,
         )
+        forecast_service = ForecastService(scheduled_service, fx_service)
         app_state_service = AppStateService(database, account_service)
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
@@ -109,6 +111,7 @@ def main() -> int:
             scheduled_service,
             app_state_service,
             budget_service,
+            forecast_service,
         )
         bridge = Bridge(controller)
         window = MainWindow(bridge)

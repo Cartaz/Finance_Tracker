@@ -244,13 +244,12 @@ def test_database_trigger_rejects_non_expense_budget_category(ledger_env) -> Non
         category_type="INCOME",
         name="Income only",
     )
-    with pytest.raises(sqlite3.IntegrityError):
-        with ledger_env.db.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO budgets(
-                    book_id, category_account_id, period, amount_minor, created_at, updated_at
-                ) VALUES (?, ?, '2026-05', 1000, datetime('now'), datetime('now'))
-                """,
-                (ledger_env.book_id, income.id),
-            )
+    with pytest.raises(sqlite3.IntegrityError), ledger_env.db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO budgets(
+                book_id, category_account_id, period, amount_minor, created_at, updated_at
+            ) VALUES (?, ?, '2026-05', 1000, datetime('now'), datetime('now'))
+            """,
+            (ledger_env.book_id, income.id),
+        )

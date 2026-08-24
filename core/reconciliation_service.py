@@ -662,8 +662,8 @@ class ReconciliationService:
         raw = value.strip()
         for parser in (
             lambda text: date.fromisoformat(text),
-            lambda text: datetime.strptime(text, "%d/%m/%Y").date(),  # noqa: DTZ007
-            lambda text: datetime.strptime(text, "%d-%m-%Y").date(),  # noqa: DTZ007
+            lambda text: datetime.strptime(text, "%d/%m/%Y").date(),
+            lambda text: datetime.strptime(text, "%d-%m-%Y").date(),
         ):
             try:
                 return parser(raw).isoformat()

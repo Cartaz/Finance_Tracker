@@ -8,14 +8,14 @@ from core.errors import UnsupportedCurrencyError
 from core.ledger_service import LedgerService
 
 
-def test_migration_enables_m4_schema(tmp_path: Path) -> None:
+def test_migration_enables_m6_schema(tmp_path: Path) -> None:
     db = Database(tmp_path / "finance.db")
     try:
         conn = db.open()
         db.migrate()
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
         tables = {
             row[0]
             for row in conn.execute(
@@ -29,6 +29,9 @@ def test_migration_enables_m4_schema(tmp_path: Path) -> None:
             "payees",
             "payee_aliases",
             "fx_rates",
+            "import_batches",
+            "import_rows",
+            "reconciliation_links",
         } <= tables
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
@@ -42,7 +45,7 @@ def test_migration_enables_m4_schema(tmp_path: Path) -> None:
         db.close()
 
 
-def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
+def test_existing_v2_database_with_ledger_data_upgrades_to_v5(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "finance.db"
@@ -126,7 +129,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
         upgraded.migrate()
         assert upgraded.connection.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 5
         assert upgraded.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
         assert upgraded.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 4
         columns = {
@@ -139,9 +142,10 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
         assert upgraded.connection.execute(
             "SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL"
         ).fetchone()[0] == 0
-        assert upgraded.connection.execute(
-            "SELECT COUNT(*) FROM fx_rates"
-        ).fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0] == 0
         upgraded.integrity_check()
     finally:
         upgraded.close()
@@ -173,7 +177,7 @@ def test_backup_is_verified_snapshot(tmp_path: Path) -> None:
             assert restored.currency("EUR").code == "EUR"
             assert restored.connection.execute(
                 "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == 4
+            ).fetchone()[0] == 5
         finally:
             restored.close()
     finally:

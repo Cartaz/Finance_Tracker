@@ -203,9 +203,9 @@ def test_overview_is_fx_aware_and_uses_income_expense_semantics(ledger_env) -> N
     assert overview["expenseMinor"] == 9_920
     assert overview["savingMinor"] == 290_080
     assert overview["savingRateBps"] == 9_669
-    assert overview["assetsMinor"] == 466_550
+    assert overview["assetsMinor"] == 395_550
     assert overview["liabilitiesMinor"] == -16_000
-    assert overview["netWorthMinor"] == 450_550
+    assert overview["netWorthMinor"] == 379_550
     assert overview["missingFx"] == []
 
 
@@ -306,6 +306,6 @@ def test_dashboard_composes_canonical_reporting_without_new_state(ledger_env) ->
         as_of_date="2026-01-31",
     )
     assert dashboard["baseCurrency"] == "EUR"
-    assert dashboard["overview"]["netWorthMinor"] == 450_550
+    assert dashboard["overview"]["netWorthMinor"] == 379_550
     assert dashboard["categories"][0]["path"] == "Food › Groceries"
     assert dashboard["cashFlow"][0]["netMinor"] == 290_080

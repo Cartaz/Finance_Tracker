@@ -5,7 +5,14 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from config.constants import BACKUP_DIR, CONFIG_DIR, DATA_DIR, IMPORT_DIR, LOAN_DOCUMENT_DIR, LOG_DIR
+from config.constants import (
+    BACKUP_DIR,
+    CONFIG_DIR,
+    DATA_DIR,
+    IMPORT_DIR,
+    LOAN_DOCUMENT_DIR,
+    LOG_DIR,
+)
 from config.settings import SettingsStore
 from core.app_controller import AppController
 from core.database import Database

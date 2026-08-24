@@ -48,6 +48,18 @@ def test_loan_creation_capabilities_are_backend_owned() -> None:
     assert 'state.accounts.filter((a) => a.type === "ASSET"' not in frontend
 
 
+def test_forecast_consumes_canonical_loan_projection() -> None:
+    loan = (CORE / "loan_service.py").read_text(encoding="utf-8")
+    forecast = (CORE / "forecast_service.py").read_text(encoding="utf-8")
+
+    assert "def project_payments(" in loan
+    assert "def _next_payment_terms(" in loan
+    assert ".project_payments(" in forecast
+    assert '"LOAN_INSTALLMENT"' in forecast
+    assert 'flow_amount_minor = int(occurrence["interestMinor"])' in forecast
+    assert "LedgerService" not in forecast
+
+
 def test_loan_transport_fields_are_explicit_protocol_vocabulary() -> None:
     transport = (CORE / "transport.py").read_text(encoding="utf-8")
     for field in (
@@ -62,6 +74,7 @@ def test_loan_transport_fields_are_explicit_protocol_vocabulary() -> None:
         '"remainingPrincipalMinor"',
         '"totalInterestMinor"',
         '"totalPaidMinor"',
+        '"flowBaseAmountMinor"',
     ):
         assert field in transport
 

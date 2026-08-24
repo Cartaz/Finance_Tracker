@@ -15,7 +15,9 @@ def test_local_page_accepts_local_frontend() -> None:
     page = LocalOnlyPage()
     try:
         assert page.acceptNavigationRequest(QUrl("file:///tmp/index.html"), None, True)
-        assert page.acceptNavigationRequest(QUrl("qrc:///qtwebchannel/qwebchannel.js"), None, True)
+        assert page.acceptNavigationRequest(
+            QUrl("qrc:///qtwebchannel/qwebchannel.js"), None, True
+        )
     finally:
         page.deleteLater()
         app.processEvents()
@@ -101,3 +103,22 @@ def test_budget_ui_uses_backend_budget_status_and_bigint_money() -> None:
     assert "item.usageBps" in app_js
     assert "parseFloat(" not in app_js
     assert "Number(item.spentMinor" not in app_js
+
+
+def test_forecast_ui_is_backend_driven_and_explicit_about_assumptions() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert 'data-view="forecast"' in index
+    assert 'id="forecast-start"' in index
+    assert 'id="forecast-end"' in index
+    assert 'id="forecast-granularity"' in index
+    assert 'call("getForecast"' in app_js
+    assert "report.totalInflowMinor" in app_js
+    assert "report.totalOutflowMinor" in app_js
+    assert "report.totalNetMinor" in app_js
+    assert "report.buckets" in app_js
+    assert "report.occurrences" in app_js
+    assert "scheduled-only" not in app_js.lower()
+    assert "Math.random(" not in app_js
+    assert "parseFloat(" not in app_js

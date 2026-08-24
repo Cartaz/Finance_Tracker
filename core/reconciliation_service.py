@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import re
+import sqlite3
 import unicodedata
 from datetime import date, datetime
 
@@ -18,15 +19,15 @@ _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
 _SPACE_RE = re.compile(r"\s+")
-_DATE_HEADERS = {"date", "data", "bookingdate", "transactiondate", "valuedate"}
-_AMOUNT_HEADERS = {"amount", "importo", "value", "ammontare", "transactionamount"}
-_CURRENCY_HEADERS = {"currency", "valuta", "currencycode", "ccy"}
-_DESCRIPTION_HEADERS = {"description", "descrizione", "details", "causale", "memo", "narrative"}
-_EXTERNAL_ID_HEADERS = {"externalid", "id", "transactionid", "reference", "riferimento", "bankid"}
+_DATE_HEADERS = ("date", "bookingdate", "transactiondate", "data", "valuedate")
+_AMOUNT_HEADERS = ("amount", "transactionamount", "importo", "value", "ammontare")
+_CURRENCY_HEADERS = ("currency", "currencycode", "valuta", "ccy")
+_DESCRIPTION_HEADERS = ("description", "descrizione", "details", "causale", "memo", "narrative")
+_EXTERNAL_ID_HEADERS = ("externalid", "transactionid", "bankid", "reference", "riferimento", "id")
 
 
 class ReconciliationService:
-    """Stages external bank evidence without becoming a ledger writer."""
+    """Stages external bank evidence while keeping LedgerService as accounting writer."""
 
     def __init__(
         self,
@@ -120,6 +121,7 @@ class ReconciliationService:
                     account_id=account_id,
                     source_name=source,
                     external_id=item["external_id"],
+                    fingerprint=str(item["fingerprint"]),
                     transaction_date=str(item["date"]),
                     amount_minor=int(item["amount_minor"]),
                     currency_code=str(item["currency"]),
@@ -180,7 +182,7 @@ class ReconciliationService:
         return [
             {
                 **dict(row),
-                "candidates": self._candidate_ids(
+                "candidates": self._candidate_details(
                     book_id,
                     int(batch["account_id"]),
                     str(row["transaction_date"]),
@@ -197,15 +199,18 @@ class ReconciliationService:
         row, batch = self._require_row(book_id, row_id)
         if str(row["review_state"]) in _TERMINAL_STATES:
             raise ReconciliationError("row is already resolved")
-        candidates = self._candidate_ids(
-            book_id,
-            int(batch["account_id"]),
-            str(row["transaction_date"]),
-            int(row["amount_minor"]),
-            str(row["currency_code"]),
-        )
-        if transaction_id not in candidates:
-            raise ReconciliationError("transaction is not compatible with the imported row")
+        candidate_ids = {
+            int(item["id"])
+            for item in self._candidate_details(
+                book_id,
+                int(batch["account_id"]),
+                str(row["transaction_date"]),
+                int(row["amount_minor"]),
+                str(row["currency_code"]),
+            )
+        }
+        if transaction_id not in candidate_ids:
+            raise ReconciliationError("transaction is not compatible or is already reconciled")
         with self._database.transaction() as conn:
             if row["external_id"] is not None:
                 self._insert_link(
@@ -298,6 +303,7 @@ class ReconciliationService:
         account_id: int,
         source_name: str,
         external_id: object,
+        fingerprint: str,
         transaction_date: str,
         amount_minor: int,
         currency_code: str,
@@ -311,9 +317,6 @@ class ReconciliationService:
             if transaction_date == tracking_start_date and tracking_start_time is not None:
                 return "OUTSIDE_TRACKING", None
 
-        candidates = self._candidate_ids(
-            book_id, account_id, transaction_date, amount_minor, currency_code
-        )
         if external_id is not None:
             link = self._database.connection.execute(
                 """
@@ -324,7 +327,14 @@ class ReconciliationService:
             ).fetchone()
             if link is not None:
                 linked_id = int(link["transaction_id"])
-                if linked_id in candidates:
+                if self._transaction_is_compatible(
+                    book_id,
+                    account_id,
+                    linked_id,
+                    transaction_date,
+                    amount_minor,
+                    currency_code,
+                ):
                     return "MATCHED", linked_id
                 return "AMBIGUOUS", None
             duplicate = self._database.connection.execute(
@@ -337,34 +347,91 @@ class ReconciliationService:
             ).fetchone()
             if duplicate is not None:
                 return "DUPLICATE_REVIEW", None
+        else:
+            duplicate = self._database.connection.execute(
+                """
+                SELECT 1 FROM import_rows r JOIN import_batches b ON b.id=r.batch_id
+                WHERE r.book_id=? AND b.account_id=? AND b.source_name=? AND r.fingerprint=?
+                LIMIT 1
+                """,
+                (book_id, account_id, source_name, fingerprint),
+            ).fetchone()
+            if duplicate is not None:
+                return "DUPLICATE_REVIEW", None
+
         if review_mode == "FULL_REVIEW":
             return "REVIEW_REQUIRED", None
-        if len(candidates) == 1:
+        candidate_count = len(
+            self._candidate_details(
+                book_id, account_id, transaction_date, amount_minor, currency_code
+            )
+        )
+        if candidate_count == 1:
             return "SUGGESTED", None
-        if len(candidates) > 1:
+        if candidate_count > 1:
             return "AMBIGUOUS", None
         return "UNMATCHED", None
 
-    def _candidate_ids(
+    def _candidate_details(
         self,
         book_id: int,
         account_id: int,
         transaction_date: str,
         amount_minor: int,
         currency_code: str,
-    ) -> list[int]:
+    ) -> list[dict[str, object]]:
         rows = self._database.connection.execute(
             """
-            SELECT DISTINCT t.id
+            SELECT DISTINCT t.id, t.kind, t.transaction_date, t.description,
+                   COALESCE(p.name, '') AS payee_name
             FROM transactions t
             JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
+            LEFT JOIN payees p ON p.id=t.payee_id AND p.book_id=t.book_id
             WHERE t.book_id=? AND e.account_id=? AND t.transaction_date=?
               AND t.currency_code=? AND e.quantity_minor=?
+              AND NOT EXISTS (
+                  SELECT 1 FROM reconciliation_links l
+                  WHERE l.book_id=t.book_id AND l.account_id=? AND l.transaction_id=t.id
+              )
             ORDER BY t.id
             """,
-            (book_id, account_id, transaction_date, currency_code, amount_minor),
+            (
+                book_id,
+                account_id,
+                transaction_date,
+                currency_code,
+                amount_minor,
+                account_id,
+            ),
         ).fetchall()
-        return [int(row["id"]) for row in rows]
+        return [dict(row) for row in rows]
+
+    def _transaction_is_compatible(
+        self,
+        book_id: int,
+        account_id: int,
+        transaction_id: int,
+        transaction_date: str,
+        amount_minor: int,
+        currency_code: str,
+    ) -> bool:
+        row = self._database.connection.execute(
+            """
+            SELECT 1 FROM transactions t
+            JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
+            WHERE t.id=? AND t.book_id=? AND e.account_id=? AND t.transaction_date=?
+              AND t.currency_code=? AND e.quantity_minor=? LIMIT 1
+            """,
+            (
+                transaction_id,
+                book_id,
+                account_id,
+                transaction_date,
+                currency_code,
+                amount_minor,
+            ),
+        ).fetchone()
+        return row is not None
 
     def _require_batch(self, book_id: int, batch_id: int):
         row = self._database.connection.execute(
@@ -401,7 +468,7 @@ class ReconciliationService:
                 """,
                 (book_id, account_id, source_name, external_id, transaction_id),
             )
-        except Exception as exc:
+        except sqlite3.IntegrityError as exc:
             raise ReconciliationAmbiguousError(
                 "reconciliation identity is already linked"
             ) from exc
@@ -445,7 +512,9 @@ class ReconciliationService:
         return _HEADER_RE.sub("", value.strip().casefold())
 
     @staticmethod
-    def _find_header(headers: dict[str, str], aliases: set[str], required: str | None):
+    def _find_header(
+        headers: dict[str, str], aliases: tuple[str, ...], required: str | None
+    ) -> str | None:
         for alias in aliases:
             if alias in headers:
                 return headers[alias]

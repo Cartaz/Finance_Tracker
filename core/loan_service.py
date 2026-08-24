@@ -48,7 +48,6 @@ class LoanService:
         self._ledger = ledger
 
     def creation_capabilities(self, book_id: int) -> dict[str, object]:
-        """Return backend-owned valid targets for creating a loan contract."""
         accounts = self._accounts.list_accounts(book_id)
         linked = {
             int(row["liability_account_id"])
@@ -83,16 +82,15 @@ class LoanService:
             ]
             if not asset_ids or not interest_accounts:
                 continue
-            allowed_modes = (
-                ["NEW_DISBURSEMENT"] if native == 0 else ["EXISTING_BALANCE"]
-            )
             targets.append(
                 {
                     "liabilityAccountId": liability.id,
                     "name": liability.name,
                     "currency": liability.currency_code,
                     "nativeBalanceMinor": native,
-                    "allowedModes": allowed_modes,
+                    "allowedModes": [
+                        "NEW_DISBURSEMENT" if native == 0 else "EXISTING_BALANCE"
+                    ],
                     "paymentAccountIds": asset_ids,
                     "fundingAccountIds": asset_ids,
                 }
@@ -231,14 +229,9 @@ class LoanService:
     def status(self, book_id: int, loan_id: int) -> dict[str, object]:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
-        outstanding = self._outstanding_minor(book_id, loan.liability_account_id)
-        if outstanding > loan.original_principal_minor:
-            raise LoanError("loan liability exceeds original principal")
+        outstanding = self._validated_outstanding(loan)
         paid_count = self._payment_count(book_id, loan.id)
-        if paid_count > loan.term_months:
-            raise LoanError("loan payment history exceeds contractual term")
-        if paid_count >= loan.term_months and outstanding > 0:
-            raise LoanError("loan remains outstanding after contractual term")
+        self._validate_payment_history(loan, paid_count, outstanding)
         next_due = (
             None
             if outstanding == 0
@@ -286,30 +279,81 @@ class LoanService:
             "totalPaidMinor": sum(int(row["paymentMinor"]) for row in rows),
         }
 
+    def project_payments(
+        self,
+        *,
+        book_id: int,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, object]]:
+        """Project remaining contractual payments without mutating the ledger."""
+        start = self._parse_date(start_date, "start_date")
+        end = self._parse_date(end_date, "end_date")
+        if end < start:
+            raise LoanError("end_date cannot precede start_date")
+        projected: list[dict[str, object]] = []
+        for status in self.list_loans(book_id):
+            if bool(status["closed"]):
+                continue
+            loan = self.get_loan(book_id, int(status["id"]))
+            outstanding = int(status["outstandingPrincipalMinor"])
+            installment_number = int(status["paidInstallments"]) + 1
+            fixed_payment = int(status["fixedPaymentMinor"])
+            while outstanding > 0 and installment_number <= loan.term_months:
+                due, principal, interest, payment = self._next_payment_terms(
+                    loan=loan,
+                    outstanding_minor=outstanding,
+                    installment_number=installment_number,
+                    fixed_payment_minor=fixed_payment,
+                )
+                if due > end:
+                    break
+                if due >= start:
+                    projected.append(
+                        {
+                            "source": "LOAN_INSTALLMENT",
+                            "loanId": loan.id,
+                            "installmentNumber": installment_number,
+                            "dueDate": due.isoformat(),
+                            "amountMinor": payment,
+                            "principalMinor": principal,
+                            "interestMinor": interest,
+                            "currency": loan.currency_code,
+                            "description": f"Loan payment · {loan.name}",
+                        }
+                    )
+                outstanding -= principal
+                installment_number += 1
+        projected.sort(
+            key=lambda item: (
+                str(item["dueDate"]),
+                int(item["loanId"]),
+                int(item["installmentNumber"]),
+            )
+        )
+        return projected
+
     def post_next_payment(self, *, book_id: int, loan_id: int) -> dict[str, object]:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
         paid_count = self._payment_count(book_id, loan.id)
-        if paid_count >= loan.term_months:
-            raise LoanError("contractual term has no remaining installments")
-        outstanding = self._outstanding_minor(book_id, loan.liability_account_id)
+        outstanding = self._validated_outstanding(loan)
+        self._validate_payment_history(loan, paid_count, outstanding)
         if outstanding <= 0:
             raise LoanError("loan is already paid off")
-        if outstanding > loan.original_principal_minor:
-            raise LoanError("loan liability exceeds original principal")
 
         installment_number = paid_count + 1
-        due = self._due_date(loan.first_due_date, installment_number)
         fixed_payment = self._fixed_payment_minor(
             loan.original_principal_minor,
             loan.annual_rate_bps,
             loan.term_months,
         )
-        interest_minor = self._interest_minor(outstanding, loan.annual_rate_bps)
-        principal_minor = min(outstanding, fixed_payment - interest_minor)
-        if principal_minor <= 0:
-            raise LoanError("contract payment does not amortize principal")
-        payment_minor = principal_minor + interest_minor
+        due, principal_minor, interest_minor, payment_minor = self._next_payment_terms(
+            loan=loan,
+            outstanding_minor=outstanding,
+            installment_number=installment_number,
+            fixed_payment_minor=fixed_payment,
+        )
 
         with self._database.transaction() as conn:
             if interest_minor == 0:
@@ -419,9 +463,23 @@ class LoanService:
             raise LoanError("loan liability currency changed")
         if payment.currency_code != loan.currency_code:
             raise LoanError("loan payment account currency changed")
-        native = self._accounts.native_balance(loan.book_id, liability.id)
-        if native > 0:
-            raise LoanError("loan liability has a positive balance")
+
+    def _validated_outstanding(self, loan: LoanRecord) -> int:
+        outstanding = self._outstanding_minor(loan.book_id, loan.liability_account_id)
+        if outstanding > loan.original_principal_minor:
+            raise LoanError("loan liability exceeds original principal")
+        return outstanding
+
+    @staticmethod
+    def _validate_payment_history(
+        loan: LoanRecord,
+        paid_count: int,
+        outstanding: int,
+    ) -> None:
+        if paid_count > loan.term_months:
+            raise LoanError("loan payment history exceeds contractual term")
+        if paid_count >= loan.term_months and outstanding > 0:
+            raise LoanError("loan remains outstanding after contractual term")
 
     @staticmethod
     def _validate_contract_accounts(
@@ -469,20 +527,17 @@ class LoanService:
         balance = loan.original_principal_minor
         rows: list[dict[str, object]] = []
         for installment_number in range(1, loan.term_months + 1):
-            interest = cls._interest_minor(balance, loan.annual_rate_bps)
-            principal = min(balance, fixed - interest)
-            if installment_number == loan.term_months:
-                principal = balance
-            if principal <= 0:
-                raise LoanError("contract payment does not amortize principal")
-            payment = principal + interest
+            due, principal, interest, payment = cls._next_payment_terms(
+                loan=loan,
+                outstanding_minor=balance,
+                installment_number=installment_number,
+                fixed_payment_minor=fixed,
+            )
             balance -= principal
             rows.append(
                 {
                     "installmentNumber": installment_number,
-                    "dueDate": cls._due_date(
-                        loan.first_due_date, installment_number
-                    ).isoformat(),
+                    "dueDate": due.isoformat(),
                     "principalMinor": principal,
                     "interestMinor": interest,
                     "paymentMinor": payment,
@@ -490,6 +545,27 @@ class LoanService:
                 }
             )
         return rows
+
+    @classmethod
+    def _next_payment_terms(
+        cls,
+        *,
+        loan: LoanRecord,
+        outstanding_minor: int,
+        installment_number: int,
+        fixed_payment_minor: int,
+    ) -> tuple[date, int, int, int]:
+        if not 1 <= installment_number <= loan.term_months:
+            raise LoanError("installment number is outside contractual term")
+        interest = cls._interest_minor(outstanding_minor, loan.annual_rate_bps)
+        if installment_number == loan.term_months:
+            principal = outstanding_minor
+        else:
+            principal = min(outstanding_minor, fixed_payment_minor - interest)
+        if principal <= 0:
+            raise LoanError("contract payment does not amortize principal")
+        due = cls._due_date(loan.first_due_date, installment_number)
+        return due, principal, interest, principal + interest
 
     @staticmethod
     def _fixed_payment_minor(

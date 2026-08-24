@@ -66,6 +66,24 @@ class Bridge(QObject):
         return self._call(self._controller.ignore_import_row, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
+    def createScheduledTransaction(self, payload):
+        return self._call(
+            self._controller.create_scheduled_transaction, dict(payload or {})
+        )
+
+    @Slot(result="QVariant")
+    def listScheduledTransactions(self):
+        return self._call(self._controller.list_scheduled_transactions)
+
+    @Slot("QVariant", result="QVariant")
+    def setScheduledActive(self, payload):
+        return self._call(self._controller.set_scheduled_active, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def postDueScheduled(self, payload):
+        return self._call(self._controller.post_due_scheduled, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def setup(self, payload):
         return self._call(self._controller.setup, dict(payload or {}))
 

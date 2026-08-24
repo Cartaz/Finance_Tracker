@@ -5,7 +5,14 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from config.constants import BACKUP_DIR, CONFIG_DIR, DATA_DIR, IMPORT_DIR, LOAN_DOCUMENT_DIR, LOG_DIR
+from config.constants import (
+    BACKUP_DIR,
+    CONFIG_DIR,
+    DATA_DIR,
+    IMPORT_DIR,
+    LOAN_DOCUMENT_DIR,
+    LOG_DIR,
+)
 from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
@@ -28,7 +35,14 @@ def _ensure_directories() -> None:
 
 def _configure_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", handlers=[logging.FileHandler(LOG_DIR / "finance-tracker.log", encoding="utf-8"), logging.StreamHandler()])
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_DIR / "finance-tracker.log", encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
 
 
 def main() -> int:
@@ -47,7 +61,14 @@ def main() -> int:
         payee_service = PayeeService(database)
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
-        controller = AppController(database, settings, account_service, ledger_service, book_service, payee_service)
+        controller = AppController(
+            database,
+            settings,
+            account_service,
+            ledger_service,
+            book_service,
+            payee_service,
+        )
         bridge = Bridge(controller)
         window = MainWindow(bridge)
         window.show()

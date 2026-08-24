@@ -33,6 +33,10 @@ class Bridge(QObject):
     def getForecast(self, payload):
         return self._call(self._controller.forecast, dict(payload or {}))
 
+    @Slot(result="QVariant")
+    def getLoanCapabilities(self):
+        return self._call(self._controller.loan_capabilities)
+
     @Slot("QVariant", result="QVariant")
     def createLoan(self, payload):
         return self._call(self._controller.create_loan, dict(payload or {}))
@@ -99,7 +103,7 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def ignoreImportRow(self, payload):
-        return self._call(self._controller.ignore_import_row, dict(payload or {}))
+        return self._call(self._controller.ignore_row, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
     def createScheduledTransaction(self, payload):

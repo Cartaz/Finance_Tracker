@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from core.database import Database
-from core.errors import FxRateError, FxRateMissingError
+from core.errors import FxRateError, FxRateMissingError, MoneyParseError
 from core.money import decimal_to_minor, minor_to_decimal, normalize_decimal_text
 
 
@@ -148,7 +148,7 @@ class FxService:
                 value = Decimal(normalize_decimal_text(raw))
             else:
                 raise FxRateError("FX rate must be text or Decimal")
-        except (InvalidOperation, ValueError) as exc:
+        except (InvalidOperation, ValueError, MoneyParseError) as exc:
             raise FxRateError("invalid FX rate") from exc
         if not value.is_finite() or value <= 0:
             raise FxRateError("FX rate must be finite and greater than zero")

@@ -11,6 +11,7 @@ _FINANCIAL_INTEGER_FIELDS = {
     "incomeMinor",
     "inflowMinor",
     "interestMinor",
+    "nativeBalanceMinor",
     "netMinor",
     "netWorthMinor",
     "originalPrincipalMinor",

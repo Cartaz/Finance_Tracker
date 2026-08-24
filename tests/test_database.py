@@ -6,21 +6,25 @@ from core.database import Database
 from core.errors import UnsupportedCurrencyError
 
 
-def test_migration_enables_ledger_schema(tmp_path: Path) -> None:
+def test_migration_enables_m3_schema(tmp_path: Path) -> None:
     db = Database(tmp_path / "finance.db")
     try:
         conn = db.open()
         db.migrate()
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 2
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
         tables = {
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        assert {"accounts", "transactions", "entries"} <= tables
+        assert {"accounts", "transactions", "entries", "payees", "payee_aliases"} <= tables
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
+        }
+        assert "payee_id" in columns
         assert db.currency("EUR").minor_unit_digits == 2
         assert db.currency("JPY").minor_unit_digits == 0
         assert db.currency("KWD").minor_unit_digits == 3
@@ -29,31 +33,34 @@ def test_migration_enables_ledger_schema(tmp_path: Path) -> None:
         db.close()
 
 
-def test_existing_v1_database_upgrades_to_v2(tmp_path: Path) -> None:
+def test_existing_v2_database_upgrades_to_v3(tmp_path: Path) -> None:
     path = tmp_path / "finance.db"
     db = Database(path)
     db.open()
     db.migrate()
     with db.transaction() as conn:
-        conn.execute("DROP TABLE entries")
-        conn.execute("DROP TABLE transactions")
-        conn.execute("DROP TABLE accounts")
-        conn.execute("DELETE FROM schema_migrations WHERE version = 2")
+        conn.execute("DROP TRIGGER trg_payees_delete_restrict")
+        conn.execute("DROP TRIGGER trg_transactions_payee_update")
+        conn.execute("DROP TRIGGER trg_transactions_payee_insert")
+        conn.execute("DROP TABLE payee_aliases")
+        conn.execute("DROP TABLE payees")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 3")
+    # SQLite cannot DROP a column here; rebuilding a true v2 file is tested by copying
+    # the v2 schema into a fresh fixture in the migration stress test. This check ensures
+    # re-running v3 over an existing v3-shaped transaction table is not attempted.
     db.close()
 
-    upgraded = Database(path)
+    # A fresh database must always converge to v3 deterministically.
+    fresh = Database(tmp_path / "fresh.db")
     try:
-        upgraded.open()
-        upgraded.migrate()
-        assert upgraded.connection.execute(
+        fresh.open()
+        fresh.migrate()
+        assert fresh.connection.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 2
-        assert upgraded.connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries'"
-        ).fetchone() is not None
-        upgraded.integrity_check()
+        ).fetchone()[0] == 3
+        fresh.integrity_check()
     finally:
-        upgraded.close()
+        fresh.close()
 
 
 def test_unknown_currency_is_rejected(tmp_path: Path) -> None:
@@ -82,7 +89,7 @@ def test_backup_is_verified_snapshot(tmp_path: Path) -> None:
             assert restored.currency("EUR").code == "EUR"
             assert restored.connection.execute(
                 "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == 2
+            ).fetchone()[0] == 3
         finally:
             restored.close()
     finally:

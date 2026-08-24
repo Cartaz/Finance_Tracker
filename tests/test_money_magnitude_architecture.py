@@ -14,7 +14,7 @@ def test_user_money_inputs_use_canonical_magnitude_parser() -> None:
 
     assert "def parse_money_magnitude" in money
     assert "from core.money import parse_money_magnitude" in controller
-    assert controller.count("parse_money_magnitude(") == 3
+    assert controller.count("parse_money_magnitude(") == 4
     assert "from core.money import parse_money" in reconciliation
     assert "parse_money(" in reconciliation
 

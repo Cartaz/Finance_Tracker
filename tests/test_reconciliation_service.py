@@ -4,6 +4,7 @@ import pytest
 
 from core.category_service import CategoryService
 from core.errors import ReconciliationAmbiguousError, ReconciliationError
+from core.ledger_service import EntryDraft, TransactionDraft
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 
@@ -201,11 +202,13 @@ def test_refund_and_liability_transfer_are_not_misclassified_as_income(ledger_en
         posting_kind="TRANSFER",
         counter_account_id=bank.id,
     )
+    updated = service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+    transaction_ids = tuple(int(row["matched_transaction_id"]) for row in updated)
     kinds = [
         row[0]
         for row in ledger_env.db.connection.execute(
             "SELECT kind FROM transactions WHERE id IN (?,?,?) ORDER BY id",
-            tuple(int(row["matched_transaction_id"]) for row in service.batch_rows(ledger_env.book_id, int(result["batchId"]))),
+            transaction_ids,
         ).fetchall()
     ]
     assert kinds == ["EXPENSE", "REFUND", "TRANSFER"]
@@ -251,3 +254,131 @@ def test_reimport_without_external_id_is_never_silently_duplicated(ledger_env) -
         csv_text=csv_text,
     )
     assert service.batch_rows(ledger_env.book_id, int(second["batchId"]))[0]["review_state"] == "DUPLICATE_REVIEW"
+
+
+def test_cross_currency_candidate_uses_native_account_quantity(ledger_env) -> None:
+    accounts = ledger_env.accounts
+    book = ledger_env.book_id
+    cash_gbp = accounts.create_account(
+        book_id=book,
+        account_type="ASSET",
+        name="GBP account",
+        currency_code="GBP",
+        tracking_start_date="2026-01-01",
+    )
+    expense = accounts.create_account(
+        book_id=book,
+        account_type="EXPENSE",
+        name="Travel",
+    )
+    transaction = ledger_env.ledger.create_transaction(
+        TransactionDraft(
+            book_id=book,
+            kind="EXPENSE",
+            transaction_date="2026-07-10",
+            currency_code="CHF",
+            entries=(
+                EntryDraft(cash_gbp.id, -1200, -1000),
+                EntryDraft(expense.id, 1200, None),
+            ),
+        )
+    )
+    service = ReconciliationService(
+        ledger_env.db,
+        accounts,
+        ledger_env.ledger,
+        PayeeService(ledger_env.db),
+    )
+    imported = service.import_csv(
+        book_id=book,
+        account_id=cash_gbp.id,
+        source_name="Cross Currency Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text=(
+            "date,amount,currency,description,external_id\n"
+            "2026-07-10,-10.00,GBP,Card purchase,cross-1\n"
+        ),
+    )
+    row = service.batch_rows(book, int(imported["batchId"]))[0]
+    assert row["review_state"] == "SUGGESTED"
+    assert [candidate["id"] for candidate in row["candidates"]] == [transaction.id]
+    assert row["candidates"][0]["currency_code"] == "CHF"
+
+    service.link_existing(
+        book_id=book,
+        row_id=int(row["id"]),
+        transaction_id=transaction.id,
+    )
+    repeated = service.import_csv(
+        book_id=book,
+        account_id=cash_gbp.id,
+        source_name="cross currency bank",
+        review_mode="FULL_REVIEW",
+        csv_text=(
+            "date,amount,currency,description,external_id\n"
+            "2026-07-10,-10.00,GBP,Card purchase,cross-1\n"
+        ),
+    )
+    repeated_row = service.batch_rows(book, int(repeated["batchId"]))[0]
+    assert repeated_row["review_state"] == "MATCHED"
+    assert repeated_row["matched_transaction_id"] == transaction.id
+
+
+def test_tracking_start_day_without_time_is_explicitly_ambiguous(ledger_env) -> None:
+    accounts = ledger_env.accounts
+    book = ledger_env.book_id
+    intraday = accounts.create_account(
+        book_id=book,
+        account_type="ASSET",
+        name="Intraday",
+        currency_code="EUR",
+        tracking_start_date="2026-08-01",
+        tracking_start_time="12:00:00",
+    )
+    category = accounts.create_account(
+        book_id=book,
+        account_type="EXPENSE",
+        name="Boundary Expense",
+    )
+    service = ReconciliationService(
+        ledger_env.db,
+        accounts,
+        ledger_env.ledger,
+        PayeeService(ledger_env.db),
+    )
+    before = ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+    imported = service.import_csv(
+        book_id=book,
+        account_id=intraday.id,
+        source_name="Boundary Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount,currency\n2026-08-01,-1.00,EUR\n",
+    )
+    row = service.batch_rows(book, int(imported["batchId"]))[0]
+    assert row["review_state"] == "TRACKING_AMBIGUOUS"
+    with pytest.raises(ReconciliationError):
+        service.post_row(
+            book_id=book,
+            row_id=int(row["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=category.id,
+        )
+    after = ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+    assert after == before
+
+
+def test_multiple_semantic_csv_headers_are_rejected_fail_closed(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    before = ledger_env.db.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0]
+    with pytest.raises(ReconciliationAmbiguousError):
+        service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            review_mode="FULL_REVIEW",
+            csv_text=(
+                "date,booking_date,amount\n"
+                "2026-09-01,2026-09-01,-1.00\n"
+            ),
+        )
+    assert ledger_env.db.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == before

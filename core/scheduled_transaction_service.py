@@ -79,11 +79,13 @@ class ScheduledTransactionService:
         self._validate_accounts(normalized_kind, source, counter)
         if source.currency_code is None:
             raise ScheduledTransactionError("source account has no native currency")
-        tracking_start = date.fromisoformat(source.tracking_start_date)
-        if start <= tracking_start:
-            raise ScheduledTransactionError(
-                "scheduled start_date must be after the source tracking boundary"
-            )
+        balance_accounts = (source, counter) if normalized_kind == "TRANSFER" else (source,)
+        for account in balance_accounts:
+            tracking_start = date.fromisoformat(account.tracking_start_date)
+            if start <= tracking_start:
+                raise ScheduledTransactionError(
+                    f"scheduled start_date must be after account {account.id} tracking boundary"
+                )
         if payee_id is not None:
             payee = self._payees.get_payee(book_id, payee_id)
             if payee.archived:

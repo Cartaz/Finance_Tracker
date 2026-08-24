@@ -59,6 +59,7 @@ class BudgetService:
             raise BudgetError("budgets require an EXPENSE category")
         if category.archived:
             raise BudgetError("budgets require a non-archived category")
+        self._assert_no_overlap(book_id, normalized_period, category_account_id)
 
         with self._database.transaction() as conn:
             conn.execute(
@@ -135,12 +136,7 @@ class BudgetService:
             limit=None,
         )
         direct = {int(item["accountId"]): item for item in report}
-        accounts = self._accounts.list_accounts(book_id, include_archived=True)
-        children: dict[int, list[int]] = {}
-        for account in accounts:
-            if account.type != "EXPENSE" or account.parent_id is None:
-                continue
-            children.setdefault(account.parent_id, []).append(account.id)
+        children = self._expense_children(book_id)
 
         items: list[dict[str, object]] = []
         overall_missing: set[tuple[str, str]] = set()
@@ -152,12 +148,10 @@ class BudgetService:
             spent = 0
             complete = True
             missing: set[tuple[str, str]] = set()
-            transaction_count = 0
             for account_id in subtree:
                 item = direct.get(account_id)
                 if item is None:
                     continue
-                transaction_count += int(item["transactionCount"])
                 for missing_item in item["missingFx"]:
                     missing.add(
                         (str(missing_item["currency"]), str(missing_item["date"]))
@@ -198,7 +192,6 @@ class BudgetService:
                     "usageBps": usage_bps,
                     "overBudget": None if remaining is None else remaining < 0,
                     "complete": complete,
-                    "transactionCount": transaction_count,
                     "missingFx": self._missing_payload(missing),
                 }
             )
@@ -218,6 +211,34 @@ class BudgetService:
             "complete": total_complete,
             "missingFx": self._missing_payload(overall_missing),
         }
+
+    def _assert_no_overlap(
+        self, book_id: int, period: str, category_account_id: int
+    ) -> None:
+        rows = self._database.connection.execute(
+            "SELECT category_account_id FROM budgets WHERE book_id=? AND period=?",
+            (book_id, period),
+        ).fetchall()
+        existing = {int(row["category_account_id"]) for row in rows}
+        existing.discard(category_account_id)
+        if not existing:
+            return
+        children = self._expense_children(book_id)
+        new_subtree = self._subtree_ids(category_account_id, children)
+        for existing_id in existing:
+            existing_subtree = self._subtree_ids(existing_id, children)
+            if existing_id in new_subtree or category_account_id in existing_subtree:
+                raise BudgetError(
+                    "budgets in the same period cannot overlap ancestor and descendant categories"
+                )
+
+    def _expense_children(self, book_id: int) -> dict[int, list[int]]:
+        children: dict[int, list[int]] = {}
+        for account in self._accounts.list_accounts(book_id, include_archived=True):
+            if account.type != "EXPENSE" or account.parent_id is None:
+                continue
+            children.setdefault(account.parent_id, []).append(account.id)
+        return children
 
     @staticmethod
     def _period(value: str) -> str:

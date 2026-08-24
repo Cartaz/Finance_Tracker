@@ -236,7 +236,7 @@ class AppController:
             description=str(payload.get("description", "")),
             payee_id=None if payee in (None, "") else self._positive_id(payee),
         )
-        return self._scheduled_payload(item)
+        return self._transport_money(self._scheduled_payload(item))
 
     def list_scheduled_transactions(self) -> list[dict[str, object]]:
         book = self._require_book()
@@ -246,12 +246,15 @@ class AppController:
 
     def set_scheduled_active(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
+        active = payload.get("active")
+        if not isinstance(active, bool):
+            raise ValidationError("active must be boolean")
         item = self._scheduled.set_active(
             book.id,
             self._positive_id(payload.get("scheduleId")),
-            bool(payload.get("active", False)),
+            active,
         )
-        return self._scheduled_payload(item)
+        return self._transport_money(self._scheduled_payload(item))
 
     def post_due_scheduled(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()

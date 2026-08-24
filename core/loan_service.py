@@ -47,6 +47,61 @@ class LoanService:
         self._accounts = accounts
         self._ledger = ledger
 
+    def creation_capabilities(self, book_id: int) -> dict[str, object]:
+        """Return backend-owned valid targets for creating a loan contract."""
+        accounts = self._accounts.list_accounts(book_id)
+        linked = {
+            int(row["liability_account_id"])
+            for row in self._database.connection.execute(
+                "SELECT liability_account_id FROM loans WHERE book_id=?",
+                (book_id,),
+            ).fetchall()
+        }
+        interest_accounts = [
+            {"id": account.id, "name": account.name}
+            for account in accounts
+            if account.type == "EXPENSE" and not account.placeholder
+        ]
+        targets: list[dict[str, object]] = []
+        for liability in accounts:
+            if (
+                liability.type != "LIABILITY"
+                or liability.placeholder
+                or liability.id in linked
+                or liability.currency_code is None
+            ):
+                continue
+            native = self._accounts.native_balance(book_id, liability.id)
+            if native > 0:
+                continue
+            asset_ids = [
+                account.id
+                for account in accounts
+                if account.type == "ASSET"
+                and not account.placeholder
+                and account.currency_code == liability.currency_code
+            ]
+            if not asset_ids or not interest_accounts:
+                continue
+            allowed_modes = (
+                ["NEW_DISBURSEMENT"] if native == 0 else ["EXISTING_BALANCE"]
+            )
+            targets.append(
+                {
+                    "liabilityAccountId": liability.id,
+                    "name": liability.name,
+                    "currency": liability.currency_code,
+                    "nativeBalanceMinor": native,
+                    "allowedModes": allowed_modes,
+                    "paymentAccountIds": asset_ids,
+                    "fundingAccountIds": asset_ids,
+                }
+            )
+        return {
+            "targets": targets,
+            "interestExpenseAccounts": interest_accounts,
+        }
+
     def create_loan(
         self,
         *,
@@ -83,6 +138,12 @@ class LoanService:
 
         origination_transaction_id: int | None = None
         with self._database.transaction() as conn:
+            if conn.execute(
+                "SELECT 1 FROM loans WHERE book_id=? AND liability_account_id=?",
+                (book_id, liability.id),
+            ).fetchone() is not None:
+                raise LoanError("liability account is already linked to a loan")
+
             if normalized_mode == "EXISTING_BALANCE":
                 outstanding = self._outstanding_minor(book_id, liability.id)
                 if outstanding <= 0:
@@ -171,12 +232,16 @@ class LoanService:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
         outstanding = self._outstanding_minor(book_id, loan.liability_account_id)
+        if outstanding > loan.original_principal_minor:
+            raise LoanError("loan liability exceeds original principal")
         paid_count = self._payment_count(book_id, loan.id)
         if paid_count > loan.term_months:
             raise LoanError("loan payment history exceeds contractual term")
+        if paid_count >= loan.term_months and outstanding > 0:
+            raise LoanError("loan remains outstanding after contractual term")
         next_due = (
             None
-            if outstanding == 0 or paid_count >= loan.term_months
+            if outstanding == 0
             else self._due_date(loan.first_due_date, paid_count + 1).isoformat()
         )
         fixed_payment = self._fixed_payment_minor(
@@ -230,6 +295,8 @@ class LoanService:
         outstanding = self._outstanding_minor(book_id, loan.liability_account_id)
         if outstanding <= 0:
             raise LoanError("loan is already paid off")
+        if outstanding > loan.original_principal_minor:
+            raise LoanError("loan liability exceeds original principal")
 
         installment_number = paid_count + 1
         due = self._due_date(loan.first_due_date, installment_number)
@@ -431,16 +498,17 @@ class LoanService:
         term_months: int,
     ) -> int:
         if annual_rate_bps == 0:
-            return max(1, int(
-                (Decimal(principal_minor) / Decimal(term_months)).quantize(
-                    Decimal(1), rounding=ROUND_HALF_UP
-                )
-            ))
+            return max(
+                1,
+                int(
+                    (Decimal(principal_minor) / Decimal(term_months)).quantize(
+                        Decimal(1), rounding=ROUND_HALF_UP
+                    )
+                ),
+            )
         with localcontext() as context:
             context.prec = 50
-            monthly_rate = (
-                Decimal(annual_rate_bps) / Decimal(10_000) / Decimal(12)
-            )
+            monthly_rate = Decimal(annual_rate_bps) / Decimal(10_000) / Decimal(12)
             factor = (Decimal(1) + monthly_rate) ** (-term_months)
             payment = Decimal(principal_minor) * monthly_rate / (Decimal(1) - factor)
             return max(1, int(payment.quantize(Decimal(1), rounding=ROUND_HALF_UP)))

@@ -56,6 +56,16 @@ def test_frontend_does_not_rederive_reconciliation_posting_rules() -> None:
     assert "row.postingCapabilities" in text
 
 
+def test_scheduled_service_uses_canonical_posting_policy() -> None:
+    text = (CORE / "scheduled_transaction_service.py").read_text(encoding="utf-8")
+    assert "from core.posting_policy import PostingPolicy" in text
+    assert "PostingPolicy.normalize_kind" in text
+    assert "PostingPolicy.counter_is_eligible" in text
+    assert 'counter.type != "EXPENSE"' not in text
+    assert 'counter.type != "INCOME"' not in text
+    assert "counter.currency_code != source.currency_code" not in text
+
+
 def test_transport_contract_is_explicit_not_suffix_driven() -> None:
     controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
     transport = (CORE / "transport.py").read_text(encoding="utf-8")

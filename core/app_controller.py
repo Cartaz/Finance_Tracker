@@ -50,6 +50,7 @@ class AppController:
             "schemaVersion": SCHEMA_VERSION,
             "bookCurrency": self._settings.book_currency,
             "locale": self._settings.locale,
+            "reconciliationReviewMode": self._settings.reconciliation_review_mode,
             "currencies": self._supported_currencies(),
             "needsSetup": book is None,
             "book": None
@@ -151,7 +152,9 @@ class AppController:
             account_id=self._positive_id(payload.get("accountId")),
             source_name=str(payload.get("sourceName", "")),
             csv_text=str(payload.get("csvText", "")),
-            review_mode=str(payload.get("reviewMode", "FULL_REVIEW")),
+            review_mode=str(
+                payload.get("reviewMode", self._settings.reconciliation_review_mode)
+            ),
         )
 
     def list_import_batches(self) -> list[dict[str, object]]:

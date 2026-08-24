@@ -119,6 +119,8 @@ def test_forecast_ui_is_backend_driven_and_explicit_about_assumptions() -> None:
     assert "report.totalNetMinor" in app_js
     assert "report.buckets" in app_js
     assert "report.occurrences" in app_js
-    assert "scheduled-only" not in app_js.lower()
+    assert "transazioni programmate attive" in index
+    assert "non viene previsto il cambio futuro" in index
+    assert "ultimo tasso FX noto" in index
     assert "Math.random(" not in app_js
     assert "parseFloat(" not in app_js

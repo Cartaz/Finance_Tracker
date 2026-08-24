@@ -24,6 +24,7 @@ from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
+from core.scheduled_transaction_service import ScheduledTransactionService
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -77,6 +78,12 @@ def main() -> int:
             ledger_service,
             payee_service,
         )
+        scheduled_service = ScheduledTransactionService(
+            database,
+            account_service,
+            ledger_service,
+            payee_service,
+        )
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -89,6 +96,7 @@ def main() -> int:
             fx_service,
             reporting_service,
             reconciliation_service,
+            scheduled_service,
         )
         bridge = Bridge(controller)
         window = MainWindow(bridge)

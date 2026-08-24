@@ -3,12 +3,13 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from core.account_service import Account, AccountService
 from core.database import Database
 from core.errors import LoanError
 from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
+from core.loan_policies import AmortizationPolicy
+from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _MAX_TERM_MONTHS = 600
 _MAX_ANNUAL_RATE_BPS = 100_000
@@ -28,13 +29,18 @@ class LoanRecord:
     term_months: int
     first_due_date: str
     origination_transaction_id: int | None
+    rate_type: str
+    amortization_type: str
+    recast_strategy: str
 
 
 class LoanService:
-    """Own fixed-rate loan contracts while the ledger owns every balance.
+    """Own loan contracts while LedgerService remains the accounting writer.
 
-    `loans` contains contract metadata only. Current principal is always derived
-    from the linked liability account; it is never persisted as parallel state.
+    Contract metadata and rate history are persisted. Outstanding principal is
+    never shadow-persisted: it is always derived from the linked LIABILITY
+    account. Plans and forecasts are deterministic projections of canonical
+    ledger state plus contract/rate policy.
     """
 
     def __init__(
@@ -59,13 +65,14 @@ class LoanService:
         interest_accounts = [
             {"id": account.id, "name": account.name}
             for account in accounts
-            if account.type == "EXPENSE" and not account.placeholder
+            if account.type == "EXPENSE" and not account.placeholder and not account.archived
         ]
         targets: list[dict[str, object]] = []
         for liability in accounts:
             if (
                 liability.type != "LIABILITY"
                 or liability.placeholder
+                or liability.archived
                 or liability.id in linked
                 or liability.currency_code is None
             ):
@@ -78,6 +85,7 @@ class LoanService:
                 for account in accounts
                 if account.type == "ASSET"
                 and not account.placeholder
+                and not account.archived
                 and account.currency_code == liability.currency_code
             ]
             if not asset_ids or not interest_accounts:
@@ -98,6 +106,9 @@ class LoanService:
         return {
             "targets": targets,
             "interestExpenseAccounts": interest_accounts,
+            "rateTypes": ["FIXED", "VARIABLE"],
+            "amortizationTypes": ["FRENCH", "ITALIAN", "BULLET"],
+            "recastStrategies": ["REDUCE_PAYMENT", "REDUCE_TERM"],
         }
 
     def create_loan(
@@ -115,6 +126,9 @@ class LoanService:
         principal_minor: int | None = None,
         funding_account_id: int | None = None,
         start_date: str | None = None,
+        rate_type: str = "FIXED",
+        amortization_type: str = "FRENCH",
+        recast_strategy: str = "REDUCE_PAYMENT",
     ) -> LoanRecord:
         clean_name = name.strip() if isinstance(name, str) else ""
         if not clean_name:
@@ -122,11 +136,18 @@ class LoanService:
         rate_bps = self._rate_bps(annual_rate_bps)
         term = self._term(term_months)
         first_due = self._parse_date(first_due_date, "first_due_date")
+        normalized_rate_type = AmortizationPolicy.normalize_rate_type(rate_type)
+        normalized_amortization = AmortizationPolicy.normalize_amortization(
+            amortization_type
+        )
+        normalized_recast = AmortizationPolicy.normalize_recast_strategy(recast_strategy)
 
         liability = self._accounts.get_account(book_id, liability_account_id)
         payment = self._accounts.get_account(book_id, payment_account_id)
         interest = self._accounts.get_account(book_id, interest_expense_account_id)
         self._validate_contract_accounts(liability, payment, interest)
+        self._validate_due_boundary(liability, first_due)
+        self._validate_due_boundary(payment, first_due)
         if liability.currency_code is None:
             raise LoanError("loan liability has no native currency")
 
@@ -135,6 +156,7 @@ class LoanService:
             raise LoanError("mode must be EXISTING_BALANCE or NEW_DISBURSEMENT")
 
         origination_transaction_id: int | None = None
+        rate_effective_date = first_due.isoformat()
         with self._database.transaction() as conn:
             if conn.execute(
                 "SELECT 1 FROM loans WHERE book_id=? AND liability_account_id=?",
@@ -164,9 +186,7 @@ class LoanService:
                 if first_due <= start:
                     raise LoanError("first_due_date must follow start_date")
                 if self._accounts.native_balance(book_id, liability.id) != 0:
-                    raise LoanError(
-                        "new disbursement requires an empty liability account"
-                    )
+                    raise LoanError("new disbursement requires an empty liability account")
                 funding = self._accounts.get_account(book_id, funding_account_id)
                 self._validate_funding_account(funding, liability.currency_code)
                 transaction = self._ledger.create_transfer(
@@ -181,17 +201,19 @@ class LoanService:
                 )
                 original_principal = principal_minor
                 origination_transaction_id = transaction.id
+                rate_effective_date = start.isoformat()
 
             loan_id = int(
                 conn.execute(
                     """
                     INSERT INTO loans(
-                        book_id, name, liability_account_id, payment_account_id,
-                        interest_expense_account_id, currency_code,
-                        original_principal_minor, annual_rate_bps, term_months,
-                        first_due_date, origination_transaction_id,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                        book_id,name,liability_account_id,payment_account_id,
+                        interest_expense_account_id,currency_code,
+                        original_principal_minor,annual_rate_bps,term_months,
+                        first_due_date,origination_transaction_id,
+                        rate_type,amortization_type,recast_strategy,
+                        created_at,updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
                     """,
                     (
                         book_id,
@@ -205,10 +227,74 @@ class LoanService:
                         term,
                         first_due.isoformat(),
                         origination_transaction_id,
+                        normalized_rate_type,
+                        normalized_amortization,
+                        normalized_recast,
                     ),
                 ).lastrowid
             )
+            if normalized_rate_type == "VARIABLE":
+                conn.execute(
+                    """
+                    INSERT INTO loan_rate_revisions(
+                        loan_id,book_id,effective_date,annual_rate_bps,created_at
+                    ) VALUES (?,?,?,?,datetime('now'))
+                    """,
+                    (loan_id, book_id, rate_effective_date, rate_bps),
+                )
         return self.get_loan(book_id, loan_id)
+
+    def set_variable_rate(
+        self,
+        *,
+        book_id: int,
+        loan_id: int,
+        effective_date: str,
+        annual_rate_bps: int,
+    ) -> dict[str, object]:
+        loan = self.get_loan(book_id, loan_id)
+        if loan.rate_type != "VARIABLE":
+            raise LoanError("rate revisions are only valid for VARIABLE loans")
+        effective = self._parse_date(effective_date, "effective_date")
+        rate = self._rate_bps(annual_rate_bps)
+        with self._database.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO loan_rate_revisions(
+                    loan_id,book_id,effective_date,annual_rate_bps,created_at
+                ) VALUES (?,?,?,?,datetime('now'))
+                ON CONFLICT(loan_id,effective_date) DO UPDATE SET
+                    annual_rate_bps=excluded.annual_rate_bps,
+                    created_at=excluded.created_at
+                """,
+                (loan.id, book_id, effective.isoformat(), rate),
+            )
+        return {
+            "loanId": loan.id,
+            "effectiveDate": effective.isoformat(),
+            "annualRateBps": rate,
+        }
+
+    def list_rate_revisions(self, book_id: int, loan_id: int) -> list[dict[str, object]]:
+        loan = self.get_loan(book_id, loan_id)
+        if loan.rate_type != "VARIABLE":
+            return []
+        rows = self._database.connection.execute(
+            """
+            SELECT effective_date,annual_rate_bps
+            FROM loan_rate_revisions
+            WHERE book_id=? AND loan_id=?
+            ORDER BY effective_date
+            """,
+            (book_id, loan_id),
+        ).fetchall()
+        return [
+            {
+                "effectiveDate": str(row["effective_date"]),
+                "annualRateBps": int(row["annual_rate_bps"]),
+            }
+            for row in rows
+        ]
 
     def get_loan(self, book_id: int, loan_id: int) -> LoanRecord:
         row = self._database.connection.execute(
@@ -221,7 +307,7 @@ class LoanService:
 
     def list_loans(self, book_id: int) -> list[dict[str, object]]:
         rows = self._database.connection.execute(
-            "SELECT * FROM loans WHERE book_id=? ORDER BY name COLLATE NOCASE, id",
+            "SELECT id FROM loans WHERE book_id=? ORDER BY name COLLATE NOCASE,id",
             (book_id,),
         ).fetchall()
         return [self.status(book_id, int(row["id"])) for row in rows]
@@ -230,17 +316,11 @@ class LoanService:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
         outstanding = self._validated_outstanding(loan)
-        paid_count = self._payment_count(book_id, loan.id)
-        self._validate_payment_history(loan, paid_count, outstanding)
-        next_due = (
-            None
-            if outstanding == 0
-            else self._due_date(loan.first_due_date, paid_count + 1).isoformat()
-        )
-        fixed_payment = self._fixed_payment_minor(
-            loan.original_principal_minor,
-            loan.annual_rate_bps,
-            loan.term_months,
+        last_installment = self._last_installment_number(book_id, loan.id)
+        if outstanding > 0 and last_installment >= loan.term_months:
+            raise LoanError("contractual term ended with outstanding principal")
+        next_terms = None if outstanding == 0 else self._next_actual_terms(
+            loan, outstanding, last_installment + 1
         )
         return {
             "id": loan.id,
@@ -252,12 +332,20 @@ class LoanService:
             "originalPrincipalMinor": loan.original_principal_minor,
             "outstandingPrincipalMinor": outstanding,
             "annualRateBps": loan.annual_rate_bps,
+            "currentAnnualRateBps": (
+                None if next_terms is None else int(next_terms[4])
+            ),
+            "rateType": loan.rate_type,
+            "amortizationType": loan.amortization_type,
+            "recastStrategy": loan.recast_strategy,
             "termMonths": loan.term_months,
-            "fixedPaymentMinor": fixed_payment,
-            "paidInstallments": paid_count,
-            "remainingInstallments": max(0, loan.term_months - paid_count),
+            "fixedPaymentMinor": 0 if next_terms is None else int(next_terms[3]),
+            "nextPaymentMinor": 0 if next_terms is None else int(next_terms[3]),
+            "paidInstallments": self._payment_count(book_id, loan.id),
+            "lastInstallmentNumber": last_installment,
+            "remainingInstallments": max(0, loan.term_months - last_installment),
             "firstDueDate": loan.first_due_date,
-            "nextDueDate": next_due,
+            "nextDueDate": None if next_terms is None else next_terms[0].isoformat(),
             "closed": outstanding == 0,
             "originationTransactionId": loan.origination_transaction_id,
         }
@@ -265,15 +353,16 @@ class LoanService:
     def amortization_plan(self, book_id: int, loan_id: int) -> dict[str, object]:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
-        rows = self._contract_plan(loan)
+        outstanding = self._validated_outstanding(loan)
+        last_installment = self._last_installment_number(book_id, loan.id)
+        rows = self._project_remaining_rows(loan, outstanding, last_installment + 1)
         return {
             "loanId": loan.id,
             "currency": loan.currency_code,
-            "fixedPaymentMinor": self._fixed_payment_minor(
-                loan.original_principal_minor,
-                loan.annual_rate_bps,
-                loan.term_months,
-            ),
+            "rateType": loan.rate_type,
+            "amortizationType": loan.amortization_type,
+            "recastStrategy": loan.recast_strategy,
+            "planBasis": "CURRENT_LEDGER_STATE",
             "rows": rows,
             "totalInterestMinor": sum(int(row["interestMinor"]) for row in rows),
             "totalPaidMinor": sum(int(row["paymentMinor"]) for row in rows),
@@ -286,44 +375,36 @@ class LoanService:
         start_date: str,
         end_date: str,
     ) -> list[dict[str, object]]:
-        """Project remaining contractual payments without mutating the ledger."""
         start = self._parse_date(start_date, "start_date")
         end = self._parse_date(end_date, "end_date")
         if end < start:
             raise LoanError("end_date cannot precede start_date")
         projected: list[dict[str, object]] = []
-        for status in self.list_loans(book_id):
-            if bool(status["closed"]):
+        for item in self.list_loans(book_id):
+            if bool(item["closed"]):
                 continue
-            loan = self.get_loan(book_id, int(status["id"]))
-            outstanding = int(status["outstandingPrincipalMinor"])
-            installment_number = int(status["paidInstallments"]) + 1
-            fixed_payment = int(status["fixedPaymentMinor"])
-            while outstanding > 0 and installment_number <= loan.term_months:
-                due, principal, interest, payment = self._next_payment_terms(
-                    loan=loan,
-                    outstanding_minor=outstanding,
-                    installment_number=installment_number,
-                    fixed_payment_minor=fixed_payment,
-                )
+            loan = self.get_loan(book_id, int(item["id"]))
+            outstanding = int(item["outstandingPrincipalMinor"])
+            start_installment = int(item["lastInstallmentNumber"]) + 1
+            for row in self._project_remaining_rows(loan, outstanding, start_installment):
+                due = date.fromisoformat(str(row["dueDate"]))
                 if due > end:
                     break
-                if due >= start:
+                if due >= start and int(row["paymentMinor"]) > 0:
                     projected.append(
                         {
                             "source": "LOAN_INSTALLMENT",
                             "loanId": loan.id,
-                            "installmentNumber": installment_number,
-                            "dueDate": due.isoformat(),
-                            "amountMinor": payment,
-                            "principalMinor": principal,
-                            "interestMinor": interest,
+                            "installmentNumber": int(row["installmentNumber"]),
+                            "dueDate": row["dueDate"],
+                            "amountMinor": int(row["paymentMinor"]),
+                            "principalMinor": int(row["principalMinor"]),
+                            "interestMinor": int(row["interestMinor"]),
+                            "annualRateBps": int(row["annualRateBps"]),
                             "currency": loan.currency_code,
                             "description": f"Loan payment · {loan.name}",
                         }
                     )
-                outstanding -= principal
-                installment_number += 1
         projected.sort(
             key=lambda item: (
                 str(item["dueDate"]),
@@ -334,96 +415,112 @@ class LoanService:
         return projected
 
     def post_next_payment(self, *, book_id: int, loan_id: int) -> dict[str, object]:
+        return self._post_payment(book_id=book_id, loan_id=loan_id, custom_amount_minor=None)
+
+    def post_custom_payment(
+        self,
+        *,
+        book_id: int,
+        loan_id: int,
+        amount_minor: int,
+        recast_strategy: str | None = None,
+    ) -> dict[str, object]:
+        if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
+            raise LoanError("custom payment must be a positive integer magnitude")
+        return self._post_payment(
+            book_id=book_id,
+            loan_id=loan_id,
+            custom_amount_minor=amount_minor,
+            recast_strategy=recast_strategy,
+        )
+
+    def _post_payment(
+        self,
+        *,
+        book_id: int,
+        loan_id: int,
+        custom_amount_minor: int | None,
+        recast_strategy: str | None = None,
+    ) -> dict[str, object]:
         loan = self.get_loan(book_id, loan_id)
         self._validate_live_contract(loan)
-        paid_count = self._payment_count(book_id, loan.id)
         outstanding = self._validated_outstanding(loan)
-        self._validate_payment_history(loan, paid_count, outstanding)
         if outstanding <= 0:
             raise LoanError("loan is already paid off")
+        next_terms = self._next_actual_terms(
+            loan,
+            outstanding,
+            self._last_installment_number(book_id, loan.id) + 1,
+        )
+        due, installment_number, scheduled_principal, interest, scheduled_payment, rate = next_terms
+        strategy = loan.recast_strategy
+        payment_kind = "REGULAR"
+        principal = scheduled_principal
+        payment = scheduled_payment
 
-        installment_number = paid_count + 1
-        fixed_payment = self._fixed_payment_minor(
-            loan.original_principal_minor,
-            loan.annual_rate_bps,
-            loan.term_months,
-        )
-        due, principal_minor, interest_minor, payment_minor = self._next_payment_terms(
-            loan=loan,
-            outstanding_minor=outstanding,
-            installment_number=installment_number,
-            fixed_payment_minor=fixed_payment,
-        )
+        if custom_amount_minor is not None:
+            payment_kind = "CUSTOM"
+            if recast_strategy is not None:
+                strategy = AmortizationPolicy.normalize_recast_strategy(recast_strategy)
+            if custom_amount_minor <= interest:
+                raise LoanError(
+                    "custom payment must cover accrued interest and reduce principal"
+                )
+            if custom_amount_minor > outstanding + interest:
+                raise LoanError("custom payment exceeds outstanding principal plus interest")
+            if strategy == "REDUCE_TERM" and custom_amount_minor < scheduled_payment:
+                raise LoanError(
+                    "REDUCE_TERM custom payment cannot be below the scheduled payment"
+                )
+            principal = custom_amount_minor - interest
+            payment = custom_amount_minor
 
         with self._database.transaction() as conn:
-            if interest_minor == 0:
-                transaction = self._ledger.create_transfer(
-                    book_id=book_id,
-                    source_account_id=loan.payment_account_id,
-                    destination_account_id=loan.liability_account_id,
-                    amount_minor=principal_minor,
-                    currency_code=loan.currency_code,
-                    transaction_date=due.isoformat(),
-                    description=f"Loan payment · {loan.name}",
-                    connection=conn,
-                )
-            else:
-                transaction = self._ledger.create_transaction(
-                    TransactionDraft(
-                        book_id=book_id,
-                        kind="EXPENSE",
-                        transaction_date=due.isoformat(),
-                        currency_code=loan.currency_code,
-                        description=f"Loan payment · {loan.name}",
-                        entries=(
-                            EntryDraft(
-                                loan.payment_account_id,
-                                -payment_minor,
-                                -payment_minor,
-                                "Loan payment",
-                            ),
-                            EntryDraft(
-                                loan.liability_account_id,
-                                principal_minor,
-                                principal_minor,
-                                "Principal",
-                            ),
-                            EntryDraft(
-                                loan.interest_expense_account_id,
-                                interest_minor,
-                                None,
-                                "Interest",
-                            ),
-                        ),
-                    ),
-                    connection=conn,
-                )
+            transaction = self._post_ledger_payment(
+                loan=loan,
+                due=due,
+                principal_minor=principal,
+                interest_minor=interest,
+                payment_minor=payment,
+                connection=conn,
+            )
             conn.execute(
                 """
                 INSERT INTO loan_payments(
-                    loan_id, book_id, installment_number, due_date,
-                    principal_minor, interest_minor, payment_minor,
-                    transaction_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    loan_id,book_id,installment_number,due_date,
+                    principal_minor,interest_minor,payment_minor,annual_rate_bps,
+                    payment_kind,recast_strategy,transaction_id,created_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                 """,
                 (
                     loan.id,
                     book_id,
                     installment_number,
                     due.isoformat(),
-                    principal_minor,
-                    interest_minor,
-                    payment_minor,
+                    principal,
+                    interest,
+                    payment,
+                    rate,
+                    payment_kind,
+                    strategy if payment_kind == "CUSTOM" else None,
                     transaction.id,
                 ),
             )
+            if payment_kind == "CUSTOM" and strategy != loan.recast_strategy:
+                conn.execute(
+                    "UPDATE loans SET recast_strategy=?,updated_at=datetime('now') WHERE id=? AND book_id=?",
+                    (strategy, loan.id, book_id),
+                )
         return {
             "loanId": loan.id,
             "installmentNumber": installment_number,
             "dueDate": due.isoformat(),
-            "principalMinor": principal_minor,
-            "interestMinor": interest_minor,
-            "paymentMinor": payment_minor,
+            "principalMinor": principal,
+            "interestMinor": interest,
+            "paymentMinor": payment,
+            "annualRateBps": rate,
+            "paymentKind": payment_kind,
+            "recastStrategy": strategy if payment_kind == "CUSTOM" else None,
             "transactionId": transaction.id,
             "status": self.status(book_id, loan.id),
         }
@@ -432,8 +529,8 @@ class LoanService:
         self.get_loan(book_id, loan_id)
         rows = self._database.connection.execute(
             """
-            SELECT installment_number, due_date, principal_minor, interest_minor,
-                   payment_minor, transaction_id
+            SELECT installment_number,due_date,principal_minor,interest_minor,
+                   payment_minor,annual_rate_bps,payment_kind,recast_strategy,transaction_id
             FROM loan_payments
             WHERE book_id=? AND loan_id=?
             ORDER BY installment_number
@@ -447,10 +544,169 @@ class LoanService:
                 "principalMinor": int(row["principal_minor"]),
                 "interestMinor": int(row["interest_minor"]),
                 "paymentMinor": int(row["payment_minor"]),
+                "annualRateBps": int(row["annual_rate_bps"]),
+                "paymentKind": str(row["payment_kind"]),
+                "recastStrategy": row["recast_strategy"],
                 "transactionId": int(row["transaction_id"]),
             }
             for row in rows
         ]
+
+    def _project_remaining_rows(
+        self,
+        loan: LoanRecord,
+        outstanding_minor: int,
+        start_installment: int,
+    ) -> list[dict[str, object]]:
+        if outstanding_minor == 0:
+            return []
+        outstanding = outstanding_minor
+        rows: list[dict[str, object]] = []
+        for installment_number in range(start_installment, loan.term_months + 1):
+            due = self._due_date(loan.first_due_date, installment_number)
+            rate = self._rate_for_due(loan, due)
+            remaining = loan.term_months - installment_number + 1
+            fixed = self._french_fixed_payment(loan, outstanding, remaining, rate)
+            terms = AmortizationPolicy.installment(
+                amortization_type=loan.amortization_type,
+                outstanding_minor=outstanding,
+                annual_rate_bps=rate,
+                remaining_installments=remaining,
+                original_principal_minor=loan.original_principal_minor,
+                original_term_months=loan.term_months,
+                installment_number=installment_number,
+                recast_strategy=loan.recast_strategy,
+                fixed_french_payment_minor=fixed,
+            )
+            outstanding -= terms.principal_minor
+            rows.append(
+                {
+                    "installmentNumber": installment_number,
+                    "dueDate": due.isoformat(),
+                    "annualRateBps": rate,
+                    "principalMinor": terms.principal_minor,
+                    "interestMinor": terms.interest_minor,
+                    "paymentMinor": terms.payment_minor,
+                    "remainingPrincipalMinor": outstanding,
+                }
+            )
+            if outstanding == 0:
+                break
+        if outstanding > 0:
+            raise LoanError("contractual term cannot amortize current outstanding principal")
+        return rows
+
+    def _next_actual_terms(
+        self,
+        loan: LoanRecord,
+        outstanding_minor: int,
+        start_installment: int,
+    ) -> tuple[date, int, int, int, int, int]:
+        for row in self._project_remaining_rows(loan, outstanding_minor, start_installment):
+            if int(row["paymentMinor"]) <= 0:
+                continue
+            return (
+                date.fromisoformat(str(row["dueDate"])),
+                int(row["installmentNumber"]),
+                int(row["principalMinor"]),
+                int(row["interestMinor"]),
+                int(row["paymentMinor"]),
+                int(row["annualRateBps"]),
+            )
+        raise LoanError("loan has no payable installment remaining")
+
+    def _french_fixed_payment(
+        self,
+        loan: LoanRecord,
+        outstanding_minor: int,
+        remaining_installments: int,
+        rate_bps: int,
+    ) -> int | None:
+        if loan.amortization_type != "FRENCH":
+            return None
+        if loan.rate_type == "VARIABLE":
+            return None
+        if loan.recast_strategy == "REDUCE_PAYMENT" and self._has_custom_payment(
+            loan.book_id, loan.id
+        ):
+            return None
+        return AmortizationPolicy.french_payment_minor(
+            loan.original_principal_minor,
+            loan.annual_rate_bps,
+            loan.term_months,
+        )
+
+    def _rate_for_due(self, loan: LoanRecord, due: date) -> int:
+        if loan.rate_type == "FIXED":
+            return loan.annual_rate_bps
+        row = self._database.connection.execute(
+            """
+            SELECT annual_rate_bps FROM loan_rate_revisions
+            WHERE book_id=? AND loan_id=? AND effective_date<=?
+            ORDER BY effective_date DESC LIMIT 1
+            """,
+            (loan.book_id, loan.id, due.isoformat()),
+        ).fetchone()
+        if row is None:
+            raise LoanError(f"missing variable rate for loan {loan.id} on {due.isoformat()}")
+        return int(row["annual_rate_bps"])
+
+    def _post_ledger_payment(
+        self,
+        *,
+        loan: LoanRecord,
+        due: date,
+        principal_minor: int,
+        interest_minor: int,
+        payment_minor: int,
+        connection,
+    ):
+        if interest_minor == 0:
+            return self._ledger.create_transfer(
+                book_id=loan.book_id,
+                source_account_id=loan.payment_account_id,
+                destination_account_id=loan.liability_account_id,
+                amount_minor=principal_minor,
+                currency_code=loan.currency_code,
+                transaction_date=due.isoformat(),
+                description=f"Loan payment · {loan.name}",
+                connection=connection,
+            )
+        entries = [
+            EntryDraft(
+                loan.payment_account_id,
+                -payment_minor,
+                -payment_minor,
+                "Loan payment",
+            ),
+            EntryDraft(
+                loan.interest_expense_account_id,
+                interest_minor,
+                None,
+                "Interest",
+            ),
+        ]
+        if principal_minor > 0:
+            entries.insert(
+                1,
+                EntryDraft(
+                    loan.liability_account_id,
+                    principal_minor,
+                    principal_minor,
+                    "Principal",
+                ),
+            )
+        return self._ledger.create_transaction(
+            TransactionDraft(
+                book_id=loan.book_id,
+                kind="EXPENSE",
+                transaction_date=due.isoformat(),
+                currency_code=loan.currency_code,
+                description=f"Loan payment · {loan.name}",
+                entries=tuple(entries),
+            ),
+            connection=connection,
+        )
 
     def _validate_live_contract(self, loan: LoanRecord) -> None:
         liability = self._accounts.get_account(loan.book_id, loan.liability_account_id)
@@ -463,23 +719,9 @@ class LoanService:
             raise LoanError("loan liability currency changed")
         if payment.currency_code != loan.currency_code:
             raise LoanError("loan payment account currency changed")
-
-    def _validated_outstanding(self, loan: LoanRecord) -> int:
-        outstanding = self._outstanding_minor(loan.book_id, loan.liability_account_id)
+        outstanding = self._outstanding_minor(loan.book_id, liability.id)
         if outstanding > loan.original_principal_minor:
-            raise LoanError("loan liability exceeds original principal")
-        return outstanding
-
-    @staticmethod
-    def _validate_payment_history(
-        loan: LoanRecord,
-        paid_count: int,
-        outstanding: int,
-    ) -> None:
-        if paid_count > loan.term_months:
-            raise LoanError("loan payment history exceeds contractual term")
-        if paid_count >= loan.term_months and outstanding > 0:
-            raise LoanError("loan remains outstanding after contractual term")
+            raise LoanError("loan liability exceeds original contractual principal")
 
     @staticmethod
     def _validate_contract_accounts(
@@ -503,6 +745,29 @@ class LoanService:
         if account.currency_code != currency_code:
             raise LoanError("funding account must use the loan currency")
 
+    @staticmethod
+    def _validate_due_boundary(account: Account, due: date) -> None:
+        if account.tracking_start_date is None:
+            return
+        result = TrackingBoundaryPolicy.classify(
+            tracking_start_date=account.tracking_start_date,
+            tracking_start_time=account.tracking_start_time,
+            transaction_date=due.isoformat(),
+            transaction_time=None,
+        )
+        if result.status is TrackingBoundaryStatus.BEFORE_BOUNDARY:
+            raise LoanError("first loan installment precedes an account tracking boundary")
+        if result.status is TrackingBoundaryStatus.AMBIGUOUS:
+            raise LoanError(
+                "first loan installment is ambiguous against an account tracking boundary"
+            )
+
+    def _validated_outstanding(self, loan: LoanRecord) -> int:
+        outstanding = self._outstanding_minor(loan.book_id, loan.liability_account_id)
+        if outstanding > loan.original_principal_minor:
+            raise LoanError("loan liability exceeds original contractual principal")
+        return outstanding
+
     def _outstanding_minor(self, book_id: int, liability_account_id: int) -> int:
         native = self._accounts.native_balance(book_id, liability_account_id)
         if native > 0:
@@ -517,91 +782,19 @@ class LoanService:
             ).fetchone()[0]
         )
 
-    @classmethod
-    def _contract_plan(cls, loan: LoanRecord) -> list[dict[str, object]]:
-        fixed = cls._fixed_payment_minor(
-            loan.original_principal_minor,
-            loan.annual_rate_bps,
-            loan.term_months,
+    def _last_installment_number(self, book_id: int, loan_id: int) -> int:
+        return int(
+            self._database.connection.execute(
+                "SELECT COALESCE(MAX(installment_number),0) FROM loan_payments WHERE book_id=? AND loan_id=?",
+                (book_id, loan_id),
+            ).fetchone()[0]
         )
-        balance = loan.original_principal_minor
-        rows: list[dict[str, object]] = []
-        for installment_number in range(1, loan.term_months + 1):
-            due, principal, interest, payment = cls._next_payment_terms(
-                loan=loan,
-                outstanding_minor=balance,
-                installment_number=installment_number,
-                fixed_payment_minor=fixed,
-            )
-            balance -= principal
-            rows.append(
-                {
-                    "installmentNumber": installment_number,
-                    "dueDate": due.isoformat(),
-                    "principalMinor": principal,
-                    "interestMinor": interest,
-                    "paymentMinor": payment,
-                    "remainingPrincipalMinor": balance,
-                }
-            )
-        return rows
 
-    @classmethod
-    def _next_payment_terms(
-        cls,
-        *,
-        loan: LoanRecord,
-        outstanding_minor: int,
-        installment_number: int,
-        fixed_payment_minor: int,
-    ) -> tuple[date, int, int, int]:
-        if not 1 <= installment_number <= loan.term_months:
-            raise LoanError("installment number is outside contractual term")
-        interest = cls._interest_minor(outstanding_minor, loan.annual_rate_bps)
-        if installment_number == loan.term_months:
-            principal = outstanding_minor
-        else:
-            principal = min(outstanding_minor, fixed_payment_minor - interest)
-        if principal <= 0:
-            raise LoanError("contract payment does not amortize principal")
-        due = cls._due_date(loan.first_due_date, installment_number)
-        return due, principal, interest, principal + interest
-
-    @staticmethod
-    def _fixed_payment_minor(
-        principal_minor: int,
-        annual_rate_bps: int,
-        term_months: int,
-    ) -> int:
-        if annual_rate_bps == 0:
-            return max(
-                1,
-                int(
-                    (Decimal(principal_minor) / Decimal(term_months)).quantize(
-                        Decimal(1), rounding=ROUND_HALF_UP
-                    )
-                ),
-            )
-        with localcontext() as context:
-            context.prec = 50
-            monthly_rate = Decimal(annual_rate_bps) / Decimal(10_000) / Decimal(12)
-            factor = (Decimal(1) + monthly_rate) ** (-term_months)
-            payment = Decimal(principal_minor) * monthly_rate / (Decimal(1) - factor)
-            return max(1, int(payment.quantize(Decimal(1), rounding=ROUND_HALF_UP)))
-
-    @staticmethod
-    def _interest_minor(balance_minor: int, annual_rate_bps: int) -> int:
-        if annual_rate_bps == 0:
-            return 0
-        with localcontext() as context:
-            context.prec = 50
-            value = (
-                Decimal(balance_minor)
-                * Decimal(annual_rate_bps)
-                / Decimal(10_000)
-                / Decimal(12)
-            )
-            return int(value.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    def _has_custom_payment(self, book_id: int, loan_id: int) -> bool:
+        return self._database.connection.execute(
+            "SELECT 1 FROM loan_payments WHERE book_id=? AND loan_id=? AND payment_kind='CUSTOM' LIMIT 1",
+            (book_id, loan_id),
+        ).fetchone() is not None
 
     @staticmethod
     def _due_date(first_due_date: str, installment_number: int) -> date:
@@ -662,4 +855,7 @@ class LoanService:
                 if row["origination_transaction_id"] is None
                 else int(row["origination_transaction_id"])
             ),
+            rate_type=str(row["rate_type"]),
+            amortization_type=str(row["amortization_type"]),
+            recast_strategy=str(row["recast_strategy"]),
         )

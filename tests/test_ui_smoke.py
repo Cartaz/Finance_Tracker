@@ -66,7 +66,7 @@ def test_reconciliation_ui_uses_structured_candidates_and_safe_file_payload() ->
     assert "initial.reconciliationReviewMode" in app_js
 
 
-def test_scheduled_ui_is_backend_driven_and_filters_counter_types() -> None:
+def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
     app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
 
@@ -77,8 +77,9 @@ def test_scheduled_ui_is_backend_driven_and_filters_counter_types() -> None:
     assert 'call("createScheduledTransaction"' in app_js
     assert 'call("postDueScheduled"' in app_js
     assert 'call("setScheduledActive"' in app_js
-    assert 'a.type === "EXPENSE"' in app_js
-    assert 'a.type === "INCOME"' in app_js
-    assert 'a.currency === source.currency' in app_js
+    assert "source.postingCapabilities?.[kind]" in app_js
+    assert "optionsForAccountIds" in app_js
+    assert 'a.type === "INCOME"' not in app_js
+    assert 'a.currency === source.currency' not in app_js
     assert "setInterval(" not in app_js
     assert "setTimeout(() => $(\"toast\")" in app_js

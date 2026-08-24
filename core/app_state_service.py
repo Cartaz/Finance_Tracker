@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.account_service import Account, AccountService
+from core.currency_registry import CurrencyRegistry
 from core.database import Database
 from core.posting_policy import PostingPolicy
 
@@ -11,6 +12,7 @@ class AppStateService:
     def __init__(self, database: Database, accounts: AccountService) -> None:
         self._database = database
         self._accounts = accounts
+        self._currencies = CurrencyRegistry(database.connection)
 
     def snapshot(
         self,
@@ -38,12 +40,9 @@ class AppStateService:
         }
 
     def supported_currencies(self) -> list[dict[str, object]]:
-        rows = self._database.connection.execute(
-            "SELECT code, minor_unit_digits FROM currencies WHERE active = 1 ORDER BY code"
-        ).fetchall()
         return [
-            {"code": str(row["code"]), "minorUnitDigits": int(row["minor_unit_digits"])}
-            for row in rows
+            {"code": item.code, "minorUnitDigits": item.minor_unit_digits}
+            for item in self._currencies.list_active()
         ]
 
     def _account_payload(

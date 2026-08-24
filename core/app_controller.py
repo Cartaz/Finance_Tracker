@@ -12,8 +12,10 @@ from core.errors import FinanceTrackerError, ValidationError
 from core.forecast_service import ForecastService
 from core.fx_service import FxService
 from core.ledger_service import LedgerService
+from core.loan_service import LoanService
 from core.money import parse_money_magnitude
 from core.payee_service import PayeeService
+from core.rates import parse_annual_rate_bps
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
@@ -38,6 +40,7 @@ class AppController:
         app_state_service: AppStateService | None = None,
         budget_service: BudgetService | None = None,
         forecast_service: ForecastService | None = None,
+        loan_service: LoanService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -64,6 +67,7 @@ class AppController:
             CategoryService(database, account_service),
         )
         self._forecast = forecast_service or ForecastService(self._scheduled, self._fx)
+        self._loans = loan_service or LoanService(database, account_service, ledger_service)
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -118,6 +122,74 @@ class AppController:
                 granularity=str(payload.get("granularity", "MONTH")),
             )
         )
+
+    def create_loan(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        liability_id = self._positive_id(payload.get("liabilityAccountId"))
+        liability = self._accounts.get_account(book.id, liability_id)
+        if liability.currency_code is None:
+            raise ValidationError("loan liability must have a native currency")
+        mode = str(payload.get("mode", "EXISTING_BALANCE")).strip().upper()
+        principal_minor = None
+        funding_account_id = None
+        start_date = None
+        if mode == "NEW_DISBURSEMENT":
+            principal_minor = parse_money_magnitude(
+                payload.get("principal", ""),
+                self._database.currency(liability.currency_code),
+            )
+            funding_account_id = self._positive_id(payload.get("fundingAccountId"))
+            start_date = str(payload.get("startDate", ""))
+        loan = self._loans.create_loan(
+            book_id=book.id,
+            name=str(payload.get("name", "")),
+            liability_account_id=liability_id,
+            payment_account_id=self._positive_id(payload.get("paymentAccountId")),
+            interest_expense_account_id=self._positive_id(
+                payload.get("interestExpenseAccountId")
+            ),
+            annual_rate_bps=parse_annual_rate_bps(payload.get("annualRate", "")),
+            term_months=self._integer(payload.get("termMonths"), "termMonths"),
+            first_due_date=str(payload.get("firstDueDate", "")),
+            mode=mode,
+            principal_minor=principal_minor,
+            funding_account_id=funding_account_id,
+            start_date=start_date,
+        )
+        return TransportSerializer.serialize(self._loans.status(book.id, loan.id))
+
+    def list_loans(self) -> list[dict[str, object]]:
+        book = self._require_book()
+        return TransportSerializer.serialize(self._loans.list_loans(book.id))
+
+    def loan_plan(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._loans.amortization_plan(
+                book.id,
+                self._positive_id(payload.get("loanId")),
+            )
+        )
+
+    def loan_payments(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._loans.list_payments(
+                book.id,
+                self._positive_id(payload.get("loanId")),
+            )
+        )
+
+    def post_next_loan_payment(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        payment = self._loans.post_next_payment(
+            book_id=book.id,
+            loan_id=self._positive_id(payload.get("loanId")),
+        )
+        return {
+            "payment": TransportSerializer.serialize(payment),
+            "state": self.snapshot(),
+        }
 
     def account_history(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -426,6 +498,15 @@ class AppController:
         if parsed < 1:
             raise ValidationError("invalid identifier")
         return parsed
+
+    @staticmethod
+    def _integer(value: object, field: str) -> int:
+        if isinstance(value, bool):
+            raise ValidationError(f"invalid {field}")
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(f"invalid {field}") from exc
 
     @staticmethod
     def error_payload(exc: Exception) -> dict[str, object]:

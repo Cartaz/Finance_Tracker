@@ -5,6 +5,8 @@ from config.settings import Settings
 from core.account_service import AccountService
 from core.app_state_service import AppStateService
 from core.book_service import BookService
+from core.budget_service import BudgetService
+from core.category_service import CategoryService
 from core.database import Database
 from core.errors import FinanceTrackerError, ValidationError
 from core.fx_service import FxService
@@ -33,6 +35,7 @@ class AppController:
         reconciliation_service: ReconciliationService | None = None,
         scheduled_service: ScheduledTransactionService | None = None,
         app_state_service: AppStateService | None = None,
+        budget_service: BudgetService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -51,6 +54,13 @@ class AppController:
             database, account_service, ledger_service, payee_service
         )
         self._app_state = app_state_service or AppStateService(database, account_service)
+        self._budgets = budget_service or BudgetService(
+            database,
+            self._reporting,
+            self._fx,
+            account_service,
+            CategoryService(database, account_service),
+        )
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -104,6 +114,41 @@ class AppController:
             end_date=str(payload.get("endDate", "")),
         )
         return TransportSerializer.serialize(result)
+
+    def set_budget(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        amount = parse_money(
+            payload.get("amount", ""), self._database.currency(book.base_currency_code)
+        )
+        item = self._budgets.set_budget(
+            book_id=book.id,
+            category_account_id=self._positive_id(payload.get("categoryAccountId")),
+            period=str(payload.get("period", "")),
+            amount_minor=amount,
+        )
+        return TransportSerializer.serialize(
+            {
+                "id": item.id,
+                "categoryAccountId": item.category_account_id,
+                "period": item.period,
+                "amountMinor": item.amount_minor,
+            }
+        )
+
+    def budget_status(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._budgets.period_status(
+                book_id=book.id,
+                period=str(payload.get("period", "")),
+            )
+        )
+
+    def delete_budget(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        budget_id = self._positive_id(payload.get("budgetId"))
+        self._budgets.delete_budget(book_id=book.id, budget_id=budget_id)
+        return {"deletedBudgetId": budget_id}
 
     def set_fx_rate(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()

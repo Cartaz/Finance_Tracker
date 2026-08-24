@@ -123,6 +123,10 @@ class AppController:
             )
         )
 
+    def loan_capabilities(self) -> dict[str, object]:
+        book = self._require_book()
+        return TransportSerializer.serialize(self._loans.creation_capabilities(book.id))
+
     def create_loan(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
         liability_id = self._positive_id(payload.get("liabilityAccountId"))

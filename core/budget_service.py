@@ -48,13 +48,17 @@ class BudgetService:
         amount_minor: int,
     ) -> Budget:
         normalized_period = self._period(period)
-        if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
+        if (
+            isinstance(amount_minor, bool)
+            or not isinstance(amount_minor, int)
+            or amount_minor <= 0
+        ):
             raise BudgetError("budget amount_minor must be a positive integer")
         category = self._accounts.get_account(book_id, category_account_id)
         if category.type != "EXPENSE":
             raise BudgetError("budgets require an EXPENSE category")
-        if category.archived or category.placeholder:
-            raise BudgetError("budgets require an active non-placeholder category")
+        if category.archived:
+            raise BudgetError("budgets require a non-archived category")
 
         with self._database.transaction() as conn:
             conn.execute(
@@ -155,7 +159,9 @@ class BudgetService:
                     continue
                 transaction_count += int(item["transactionCount"])
                 for missing_item in item["missingFx"]:
-                    missing.add((str(missing_item["currency"]), str(missing_item["date"])))
+                    missing.add(
+                        (str(missing_item["currency"]), str(missing_item["date"]))
+                    )
                 if not bool(item["complete"]) or item["amountMinor"] is None:
                     complete = False
                 else:
@@ -166,9 +172,11 @@ class BudgetService:
             usage_bps = None
             if complete:
                 usage_bps = int(
-                    (Decimal(spent) * Decimal(10_000) / Decimal(budget.amount_minor)).quantize(
-                        Decimal(1), rounding=ROUND_HALF_UP
-                    )
+                    (
+                        Decimal(spent)
+                        * Decimal(10_000)
+                        / Decimal(budget.amount_minor)
+                    ).quantize(Decimal(1), rounding=ROUND_HALF_UP)
                 )
             overall_missing.update(missing)
             total_budget += budget.amount_minor
@@ -195,7 +203,9 @@ class BudgetService:
                 }
             )
 
-        items.sort(key=lambda item: (str(item["categoryPath"]).casefold(), int(item["id"])))
+        items.sort(
+            key=lambda item: (str(item["categoryPath"]).casefold(), int(item["id"]))
+        )
         return {
             "period": normalized_period,
             "startDate": start,

@@ -115,6 +115,64 @@ def test_controller_and_bridge_transport_minor_units_as_strings(tmp_path) -> Non
         db.close()
 
 
+def test_saving_rate_bps_keeps_precision_across_bridge(tmp_path) -> None:
+    db, accounts, ledger, controller = _controller(tmp_path)
+    try:
+        controller.setup({"userName": "User", "bookName": "Book", "currency": "EUR"})
+        book_id = int(controller.initial_state()["book"]["id"])
+        bank = accounts.create_account(
+            book_id=book_id,
+            account_type="ASSET",
+            name="Bank",
+            currency_code="EUR",
+            tracking_start_date="2026-01-01",
+            tracking_start_time="00:00:00",
+        )
+        income = accounts.create_account(
+            book_id=book_id,
+            account_type="INCOME",
+            name="Income",
+        )
+        expense = accounts.create_account(
+            book_id=book_id,
+            account_type="EXPENSE",
+            name="Expense",
+        )
+        huge_expense = 1_000_000_000_000_000
+        ledger.create_income(
+            book_id=book_id,
+            destination_account_id=bank.id,
+            income_account_id=income.id,
+            amount_minor=1,
+            currency_code="EUR",
+            transaction_date="2026-01-15",
+        )
+        ledger.create_expense(
+            book_id=book_id,
+            source_account_id=bank.id,
+            expense_account_id=expense.id,
+            amount_minor=huge_expense,
+            currency_code="EUR",
+            transaction_date="2026-01-15",
+        )
+        expected_bps = (1 - huge_expense) * 10_000
+        assert abs(expected_bps) > 2**53
+
+        payload = {
+            "startDate": "2026-01-01",
+            "endDate": "2026-01-31",
+            "asOfDate": "2026-01-31",
+        }
+        dashboard = controller.dashboard(payload)
+        assert dashboard["overview"]["savingRateBps"] == str(expected_bps)
+
+        bridged = Bridge(controller).getDashboard(payload)
+        assert bridged["ok"] is True
+        assert bridged["data"]["overview"]["savingRateBps"] == str(expected_bps)
+    finally:
+        db.close()
+
+
 def test_bridge_returns_domain_errors_for_invalid_reporting_and_fx(tmp_path) -> None:
     db, _accounts, _ledger, controller = _controller(tmp_path)
     try:

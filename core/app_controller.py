@@ -9,6 +9,7 @@ from core.budget_service import BudgetService
 from core.category_service import CategoryService
 from core.database import Database
 from core.errors import FinanceTrackerError, ValidationError
+from core.forecast_service import ForecastService
 from core.fx_service import FxService
 from core.ledger_service import LedgerService
 from core.money import parse_money_magnitude
@@ -36,6 +37,7 @@ class AppController:
         scheduled_service: ScheduledTransactionService | None = None,
         app_state_service: AppStateService | None = None,
         budget_service: BudgetService | None = None,
+        forecast_service: ForecastService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -61,6 +63,7 @@ class AppController:
             account_service,
             CategoryService(database, account_service),
         )
+        self._forecast = forecast_service or ForecastService(self._scheduled, self._fx)
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -104,6 +107,17 @@ class AppController:
             as_of_date=str(payload.get("asOfDate", "")),
         )
         return TransportSerializer.serialize(result)
+
+    def forecast(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return TransportSerializer.serialize(
+            self._forecast.cash_flow_forecast(
+                book_id=book.id,
+                start_date=str(payload.get("startDate", "")),
+                end_date=str(payload.get("endDate", "")),
+                granularity=str(payload.get("granularity", "MONTH")),
+            )
+        )
 
     def account_history(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -262,7 +276,10 @@ class AppController:
     def list_scheduled_transactions(self) -> list[dict[str, object]]:
         book = self._require_book()
         return TransportSerializer.serialize(
-            [self._scheduled_payload(item) for item in self._scheduled.list_schedules(book.id)]
+            [
+                self._scheduled_payload(item)
+                for item in self._scheduled.list_schedules(book.id)
+            ]
         )
 
     def set_scheduled_active(self, payload: dict[str, object]) -> dict[str, object]:

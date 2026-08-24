@@ -140,11 +140,7 @@ class AppController:
     def list_fx_rates(self) -> list[dict[str, object]]:
         book = self._require_book()
         return [
-            {
-                "currency": item.currency_code,
-                "date": item.rate_date,
-                "rate": format(item.rate, "f"),
-            }
+            {"currency": item.currency_code, "date": item.rate_date, "rate": format(item.rate, "f")}
             for item in self._fx.list_rates(book.id)
         ]
 
@@ -164,10 +160,11 @@ class AppController:
 
     def import_batch_rows(self, payload: dict[str, object]) -> list[dict[str, object]]:
         book = self._require_book()
-        result = self._reconciliation.batch_rows(
-            book.id, self._positive_id(payload.get("batchId"))
+        return self._transport_money(
+            self._reconciliation.batch_rows(
+                book.id, self._positive_id(payload.get("batchId"))
+            )
         )
-        return self._transport_money(result)
 
     def link_import_row(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -183,7 +180,8 @@ class AppController:
         result = self._reconciliation.post_row(
             book_id=book.id,
             row_id=self._positive_id(payload.get("rowId")),
-            category_account_id=self._positive_id(payload.get("categoryAccountId")),
+            posting_kind=str(payload.get("postingKind", "")),
+            counter_account_id=self._positive_id(payload.get("counterAccountId")),
             payee_id=None if payee in (None, "") else self._positive_id(payee),
         )
         return {**result, "stateSnapshot": self.snapshot()}
@@ -208,9 +206,7 @@ class AppController:
             account_type=account_type,
             name=str(payload.get("name", "")),
             currency_code=currency,
-            tracking_start_date=str(payload.get("trackingStartDate", ""))
-            if currency
-            else None,
+            tracking_start_date=str(payload.get("trackingStartDate", "")) if currency else None,
             tracking_start_time=str(payload["trackingStartTime"])
             if payload.get("trackingStartTime")
             else None,
@@ -282,18 +278,10 @@ class AppController:
 
     def _supported_currencies(self) -> list[dict[str, object]]:
         rows = self._database.connection.execute(
-            """
-            SELECT code, minor_unit_digits
-            FROM currencies
-            WHERE active = 1
-            ORDER BY code
-            """
+            "SELECT code, minor_unit_digits FROM currencies WHERE active = 1 ORDER BY code"
         ).fetchall()
         return [
-            {
-                "code": str(row["code"]),
-                "minorUnitDigits": int(row["minor_unit_digits"]),
-            }
+            {"code": str(row["code"]), "minorUnitDigits": int(row["minor_unit_digits"])}
             for row in rows
         ]
 

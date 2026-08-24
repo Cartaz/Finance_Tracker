@@ -38,6 +38,12 @@ class CategoryService:
         category_type = category_type.upper()
         if category_type not in _CATEGORY_TYPES:
             raise CategoryError("categories must be EXPENSE or INCOME accounts")
+        self._ensure_sibling_name_available(
+            book_id,
+            category_type,
+            parent_id,
+            name,
+        )
         return self._accounts.create_account(
             book_id=book_id,
             account_type=category_type,
@@ -47,15 +53,34 @@ class CategoryService:
         )
 
     def rename_category(self, book_id: int, category_id: int, name: str) -> Account:
-        self._require_category(book_id, category_id)
+        category = self._require_category(book_id, category_id)
+        self._ensure_sibling_name_available(
+            book_id,
+            category.type,
+            category.parent_id,
+            name,
+            ignore_category_id=category_id,
+        )
         return self._accounts.rename_account(book_id, category_id, name)
 
     def move_category(
-        self, book_id: int, category_id: int, new_parent_id: int | None
+        self,
+        book_id: int,
+        category_id: int,
+        new_parent_id: int | None,
     ) -> Account:
-        self._require_category(book_id, category_id)
+        category = self._require_category(book_id, category_id)
         if new_parent_id is not None:
-            self._require_category(book_id, new_parent_id)
+            parent = self._require_category(book_id, new_parent_id)
+            if parent.type != category.type:
+                raise CategoryError("parent and child category types must match")
+        self._ensure_sibling_name_available(
+            book_id,
+            category.type,
+            new_parent_id,
+            category.name,
+            ignore_category_id=category_id,
+        )
         return self._accounts.move_account(book_id, category_id, new_parent_id)
 
     def set_archived(self, book_id: int, category_id: int, archived: bool) -> Account:
@@ -93,9 +118,14 @@ class CategoryService:
 
         if payee_id is not None:
             payee = self._database.connection.execute(
-                "SELECT book_id, archived FROM payees WHERE id = ?", (payee_id,)
+                "SELECT book_id, archived FROM payees WHERE id = ?",
+                (payee_id,),
             ).fetchone()
-            if payee is None or int(payee["book_id"]) != book_id or bool(payee["archived"]):
+            if (
+                payee is None
+                or int(payee["book_id"]) != book_id
+                or bool(payee["archived"])
+            ):
                 raise CategoryError("payee is unavailable in this book")
 
         rows = self._database.connection.execute(
@@ -103,11 +133,15 @@ class CategoryService:
             SELECT a.id, a.name, a.type,
                    COUNT(e.id) AS usage_count,
                    MAX(t.transaction_date || COALESCE('T' || t.transaction_time, '')) AS last_used,
-                   SUM(CASE WHEN ? IS NOT NULL AND t.payee_id = ? THEN 1 ELSE 0 END) AS payee_usage_count
+                   SUM(CASE WHEN ? IS NOT NULL AND t.payee_id = ? THEN 1 ELSE 0 END)
+                       AS payee_usage_count
             FROM accounts a
-            LEFT JOIN entries e ON e.book_id = a.book_id AND e.account_id = a.id
-            LEFT JOIN transactions t ON t.book_id = e.book_id AND t.id = e.transaction_id
-            WHERE a.book_id = ? AND a.type = ? AND a.archived = 0 AND a.placeholder = 0
+            LEFT JOIN entries e
+                ON e.book_id = a.book_id AND e.account_id = a.id
+            LEFT JOIN transactions t
+                ON t.book_id = e.book_id AND t.id = e.transaction_id
+            WHERE a.book_id = ? AND a.type = ?
+              AND a.archived = 0 AND a.placeholder = 0
             GROUP BY a.id
             """,
             (payee_id, payee_id, book_id, category_type),
@@ -133,7 +167,9 @@ class CategoryService:
                     type=str(row["type"]),
                     payee_usage_count=int(row["payee_usage_count"] or 0),
                     usage_count=int(row["usage_count"] or 0),
-                    last_used=None if row["last_used"] is None else str(row["last_used"]),
+                    last_used=(
+                        None if row["last_used"] is None else str(row["last_used"])
+                    ),
                 )
             )
 
@@ -149,3 +185,21 @@ class CategoryService:
         if account.type not in _CATEGORY_TYPES:
             raise CategoryError(f"account {category_id} is not a category")
         return account
+
+    def _ensure_sibling_name_available(
+        self,
+        book_id: int,
+        category_type: str,
+        parent_id: int | None,
+        name: str,
+        *,
+        ignore_category_id: int | None = None,
+    ) -> None:
+        normalized = normalize_payee_text(name)
+        for account in self._accounts.list_accounts(book_id, include_archived=True):
+            if account.id == ignore_category_id:
+                continue
+            if account.type != category_type or account.parent_id != parent_id:
+                continue
+            if normalize_payee_text(account.name) == normalized:
+                raise CategoryError("a sibling category with this name already exists")

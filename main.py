@@ -17,9 +17,12 @@ from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
 from core.book_service import BookService
+from core.category_service import CategoryService
 from core.database import Database
+from core.fx_service import FxService
 from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
+from core.reporting_service import ReportingService
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -59,6 +62,14 @@ def main() -> int:
         ledger_service = LedgerService(database)
         book_service = BookService(database)
         payee_service = PayeeService(database)
+        category_service = CategoryService(database, account_service)
+        fx_service = FxService(database)
+        reporting_service = ReportingService(
+            database,
+            fx_service,
+            account_service,
+            category_service,
+        )
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -68,6 +79,8 @@ def main() -> int:
             ledger_service,
             book_service,
             payee_service,
+            fx_service,
+            reporting_service,
         )
         bridge = Bridge(controller)
         window = MainWindow(bridge)

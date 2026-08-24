@@ -80,3 +80,20 @@ class PayeeCollisionError(PayeeError):
 
 class CategoryError(ValidationError):
     """Raised when a category operation is invalid."""
+
+
+class FxRateError(ValidationError):
+    """Raised when an FX rate is invalid or unavailable."""
+
+
+class FxRateMissingError(FxRateError):
+    """Raised when reporting needs an FX rate that has not been recorded."""
+
+    def __init__(self, currency_code: str, rate_date: str) -> None:
+        self.currency_code = currency_code
+        self.rate_date = rate_date
+        super().__init__(f"missing FX rate for {currency_code} on or before {rate_date}")
+
+
+class ReportingError(ValidationError):
+    """Raised when reporting input is invalid."""

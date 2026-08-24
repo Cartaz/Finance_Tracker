@@ -26,6 +26,22 @@ class Bridge(QObject):
         return self._call(self._controller.snapshot)
 
     @Slot("QVariant", result="QVariant")
+    def getDashboard(self, payload):
+        return self._call(self._controller.dashboard, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def getAccountHistory(self, payload):
+        return self._call(self._controller.account_history, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def setFxRate(self, payload):
+        return self._call(self._controller.set_fx_rate, dict(payload or {}))
+
+    @Slot(result="QVariant")
+    def listFxRates(self):
+        return self._call(self._controller.list_fx_rates)
+
+    @Slot("QVariant", result="QVariant")
     def setup(self, payload):
         return self._call(self._controller.setup, dict(payload or {}))
 

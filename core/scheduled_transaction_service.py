@@ -142,6 +142,8 @@ class ScheduledTransactionService:
     def set_active(
         self, book_id: int, schedule_id: int, active: bool
     ) -> ScheduledTransaction:
+        if not isinstance(active, bool):
+            raise ScheduledTransactionError("active must be boolean")
         schedule = self.get_schedule(book_id, schedule_id)
         if (
             active

@@ -7,8 +7,9 @@ from datetime import date, timedelta
 from core.account_service import AccountService
 from core.database import Database
 from core.errors import ScheduledTransactionError
-from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
+from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
+from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
 _KINDS = {"EXPENSE", "INCOME", "REFUND", "TRANSFER"}
@@ -81,8 +82,13 @@ class ScheduledTransactionService:
             raise ScheduledTransactionError("source account has no native currency")
         balance_accounts = (source, counter) if normalized_kind == "TRANSFER" else (source,)
         for account in balance_accounts:
-            tracking_start = date.fromisoformat(account.tracking_start_date)
-            if start <= tracking_start:
+            result = TrackingBoundaryPolicy.classify(
+                tracking_start_date=account.tracking_start_date,
+                tracking_start_time=account.tracking_start_time,
+                transaction_date=start.isoformat(),
+                transaction_time=None,
+            )
+            if result.status is not TrackingBoundaryStatus.VALID:
                 raise ScheduledTransactionError(
                     f"scheduled start_date must be after account {account.id} tracking boundary"
                 )
@@ -249,32 +255,39 @@ class ScheduledTransactionService:
         next_due = self._advance(
             due, schedule.frequency, schedule.interval, schedule.start_date
         )
-        amount = schedule.amount_minor
+        common = {
+            "book_id": schedule.book_id,
+            "amount_minor": schedule.amount_minor,
+            "currency_code": schedule.currency_code,
+            "transaction_date": due.isoformat(),
+            "description": schedule.description,
+            "connection": conn,
+        }
         if schedule.kind == "EXPENSE":
-            entries = (
-                EntryDraft(source.id, -amount, -amount),
-                EntryDraft(counter.id, amount, None),
+            transaction = self._ledger.create_expense(
+                source_account_id=source.id,
+                expense_account_id=counter.id,
+                **common,
             )
-        elif schedule.kind in {"INCOME", "REFUND"}:
-            entries = (
-                EntryDraft(source.id, amount, amount),
-                EntryDraft(counter.id, -amount, None),
+        elif schedule.kind == "INCOME":
+            transaction = self._ledger.create_income(
+                destination_account_id=source.id,
+                income_account_id=counter.id,
+                **common,
+            )
+        elif schedule.kind == "REFUND":
+            transaction = self._ledger.create_refund(
+                destination_account_id=source.id,
+                expense_account_id=counter.id,
+                **common,
             )
         else:
-            entries = (
-                EntryDraft(source.id, -amount, -amount),
-                EntryDraft(counter.id, amount, amount),
+            transaction = self._ledger.create_transfer(
+                source_account_id=source.id,
+                destination_account_id=counter.id,
+                **common,
             )
-        draft = TransactionDraft(
-            book_id=schedule.book_id,
-            kind=schedule.kind,
-            transaction_date=due.isoformat(),
-            currency_code=schedule.currency_code,
-            description=schedule.description,
-            entries=entries,
-        )
 
-        transaction = self._ledger.create_transaction(draft, connection=conn)
         if schedule.payee_id is not None:
             self._payees.assign_transaction(
                 book_id=schedule.book_id,

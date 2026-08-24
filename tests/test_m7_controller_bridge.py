@@ -52,6 +52,8 @@ def test_scheduled_bridge_preserves_large_minor_units_and_posts_due(tmp_path) ->
             }
         )
         assert created["ok"] is True
+        assert created["data"]["amountMinor"] == "9007199254740993"
+        assert isinstance(created["data"]["amountMinor"], str)
         scheduled = bridge.listScheduledTransactions()
         assert scheduled["ok"] is True
         assert scheduled["data"][0]["amountMinor"] == "9007199254740993"
@@ -103,6 +105,9 @@ def test_scheduled_bridge_toggle_and_validation_are_domain_safe(tmp_path) -> Non
         resumed = bridge.setScheduledActive({"scheduleId": schedule_id, "active": True})
         assert resumed["ok"] is True
         assert resumed["data"]["active"] is True
+        bad_toggle = bridge.setScheduledActive({"scheduleId": schedule_id, "active": "false"})
+        assert bad_toggle["ok"] is False
+        assert bad_toggle["error"]["code"] == "ValidationError"
 
         invalid = bridge.createScheduledTransaction(
             {

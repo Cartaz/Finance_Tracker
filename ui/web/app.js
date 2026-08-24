@@ -6,7 +6,7 @@
   let currentImportRows = new Map();
   let currentLoanId = null;
   let currentLoans = [];
-  let currentLoanCapabilities = { targets: [], interestExpenseAccounts: [], rateTypes: [], amortizationTypes: [], recastStrategies: [] };
+  let currentLoanCapabilities = { targets: [], interestExpenseAccounts: [], rateTypes: [], amortizationTypes: [], recastStrategies: [], policyCombinations: [] };
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -103,6 +103,19 @@
     return (values || []).map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(labels[value] || value)}</option>`).join("");
   }
 
+  function recastStrategiesFor(rateType, amortizationType) {
+    const combination = (currentLoanCapabilities.policyCombinations || []).find((item) => item.rateType === rateType && item.amortizationType === amortizationType);
+    return combination?.recastStrategies || [];
+  }
+
+  function refreshLoanRecastOptions() {
+    const previous = $("loan-recast-strategy").value;
+    const strategies = recastStrategiesFor($("loan-rate-type").value, $("loan-amortization-type").value);
+    const labels = { REDUCE_PAYMENT: "Ricalcola rata · scadenza invariata", REDUCE_TERM: "Mantieni rata · riduci durata" };
+    $("loan-recast-strategy").innerHTML = simpleOptions(strategies, labels);
+    if ([...$("loan-recast-strategy").options].some((option) => option.value === previous)) $("loan-recast-strategy").value = previous;
+  }
+
   function refreshLoanAccountOptions() {
     const targets = currentLoanCapabilities.targets || [];
     const previousLiability = $("loan-liability").value;
@@ -118,7 +131,7 @@
     if ([...$("loan-mode").options].some((option) => option.value === previousMode)) $("loan-mode").value = previousMode;
     $("loan-rate-type").innerHTML = simpleOptions(currentLoanCapabilities.rateTypes, { FIXED: "Fisso", VARIABLE: "Variabile" });
     $("loan-amortization-type").innerHTML = simpleOptions(currentLoanCapabilities.amortizationTypes, { FRENCH: "Francese · rata tendenzialmente costante", ITALIAN: "Italiano · capitale costante", BULLET: "Bullet · capitale a scadenza" });
-    $("loan-recast-strategy").innerHTML = simpleOptions(currentLoanCapabilities.recastStrategies, { REDUCE_PAYMENT: "Riduci rata", REDUCE_TERM: "Riduci durata" });
+    refreshLoanRecastOptions();
     $("loan-form").querySelector('button[type="submit"]').disabled = !target || !(target.allowedModes || []).length || !(currentLoanCapabilities.interestExpenseAccounts || []).length;
     refreshLoanMode();
   }
@@ -206,9 +219,9 @@
     const truncated = plan.rows.length > visibleRows.length ? `<p class="empty">Mostrate le prime ${visibleRows.length} di ${plan.rows.length} rate residue.</p>` : "";
     const paymentRows = payments.map((row) => `<div class="report-row"><span>#${row.installmentNumber} · ${row.dueDate}</span><span>${row.paymentKind} · capitale ${money(row.principalMinor, plan.currency)}</span><span>Interessi ${money(row.interestMinor, plan.currency)} · ${percentBps(row.annualRateBps)}</span><strong>${money(row.paymentMinor, plan.currency)}</strong></div>`).join("") || `<p class="empty">Nessuna rata registrata.</p>`;
     const revisionRows = revisions.map((row) => `<div class="mini-row"><span>${row.effectiveDate}</span><b>${percentBps(row.annualRateBps)}</b></div>`).join("") || `<p class="empty">Tasso fisso: nessuna revisione.</p>`;
-    const recastOptions = simpleOptions(currentLoanCapabilities.recastStrategies, { REDUCE_PAYMENT: "Riduci rata", REDUCE_TERM: "Riduci durata" });
-    const customForm = loan.closed ? "" : `<form data-loan-custom-form="${loan.id}" class="form-card"><h3>Pagamento personalizzato</h3><p class="empty">Deve coprire gli interessi della prossima scadenza e ridurre il capitale. L'eccedenza rispetto alla rata prevista è rimborso anticipato.</p><label>Importo<input name="amount" inputmode="decimal" required placeholder="${money(loan.nextPaymentMinor, loan.currency)}"></label><label>Ricalcolo<select name="recastStrategy">${recastOptions}</select></label><button type="submit">Registra pagamento</button></form>`;
-    const variableForm = loan.rateType === "VARIABLE" && !loan.closed ? `<form data-loan-rate-form="${loan.id}" class="form-card"><h3>Nuovo tasso</h3><label>Effettivo dal<input name="effectiveDate" type="date" required value="${loan.nextDueDate || localDate()}"></label><label>Tasso annuo %<input name="annualRate" inputmode="decimal" required placeholder="5,25"></label><button type="submit">Salva revisione</button></form>` : "";
+    const recastOptions = simpleOptions(recastStrategiesFor(loan.rateType, loan.amortizationType), { REDUCE_PAYMENT: "Ricalcola rata · scadenza invariata", REDUCE_TERM: "Mantieni rata · riduci durata" });
+    const customForm = loan.closed ? "" : `<form data-loan-custom-form="${loan.id}" class="form-card"><h3>Pagamento personalizzato</h3><p class="empty">Deve essere almeno pari alla prossima rata prevista. L'eccedenza è rimborso anticipato; importi inferiori richiederebbero un modello arretrati e vengono rifiutati.</p><label>Importo<input name="amount" inputmode="decimal" required placeholder="${money(loan.nextPaymentMinor, loan.currency)}"></label><label>Ricalcolo<select name="recastStrategy">${recastOptions}</select></label><button type="submit">Registra pagamento</button></form>`;
+    const variableForm = loan.rateType === "VARIABLE" && !loan.closed ? `<form data-loan-rate-form="${loan.id}" class="form-card"><h3>Nuovo tasso</h3><p class="empty">Il piano usa l'ultima revisione effettiva nota fino a una nuova revisione esplicita: non vengono previsti indici futuri.</p><label>Effettivo dal<input name="effectiveDate" type="date" required value="${loan.nextDueDate || localDate()}"></label><label>Tasso annuo %<input name="annualRate" inputmode="decimal" required placeholder="5,25"></label><button type="submit">Salva revisione</button></form>` : "";
     $("loan-detail").innerHTML = `<div class="report-row"><b>${escapeHtml(loan.name)}</b><span>${loan.rateType} · ${loan.amortizationType} · ${loan.recastStrategy}</span><span>Tasso corrente ${percentBps(loan.currentAnnualRateBps)}</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>Prossima ${loan.closed ? "—" : money(loan.nextPaymentMinor, loan.currency)}</strong><small>${loan.closed ? "ESTINTO" : `Scadenza ${loan.nextDueDate}`}</small></div><div class="history-controls">${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra rata prevista</button>`}</div>${customForm}${variableForm}<h3>Piano residuo</h3>${planRows}${truncated}<p class="empty">Interessi residui previsti: ${money(plan.totalInterestMinor, plan.currency)}</p><h3>Storia tassi</h3>${revisionRows}<h3>Rate registrate</h3>${paymentRows}`;
   }
 
@@ -289,6 +302,8 @@
   $("scheduled-source").addEventListener("change", refreshScheduledCounter);
   $("loan-mode").addEventListener("change", refreshLoanMode);
   $("loan-liability").addEventListener("change", refreshLoanAccountOptions);
+  $("loan-rate-type").addEventListener("change", refreshLoanRecastOptions);
+  $("loan-amortization-type").addEventListener("change", refreshLoanRecastOptions);
   $("apply-report").addEventListener("click", () => refreshReports().catch((error) => toast(error.message, true)));
   $("apply-forecast").addEventListener("click", () => refreshForecast().catch((error) => toast(error.message, true)));
   $("budget-period").addEventListener("change", () => refreshBudgets().catch((error) => toast(error.message, true)));

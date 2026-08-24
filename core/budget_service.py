@@ -59,9 +59,9 @@ class BudgetService:
             raise BudgetError("budgets require an EXPENSE category")
         if category.archived:
             raise BudgetError("budgets require a non-archived category")
-        self._assert_no_overlap(book_id, normalized_period, category_account_id)
 
         with self._database.transaction() as conn:
+            self._assert_no_overlap(book_id, normalized_period, category_account_id)
             conn.execute(
                 """
                 INSERT INTO budgets(

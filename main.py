@@ -22,6 +22,7 @@ from core.database import Database
 from core.fx_service import FxService
 from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
+from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 from ui.bridge import Bridge
 from ui.window import MainWindow
@@ -70,6 +71,12 @@ def main() -> int:
             account_service,
             category_service,
         )
+        reconciliation_service = ReconciliationService(
+            database,
+            account_service,
+            ledger_service,
+            payee_service,
+        )
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -81,6 +88,7 @@ def main() -> int:
             payee_service,
             fx_service,
             reporting_service,
+            reconciliation_service,
         )
         bridge = Bridge(controller)
         window = MainWindow(bridge)

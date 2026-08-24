@@ -45,6 +45,7 @@ class AppController:
             "schemaVersion": SCHEMA_VERSION,
             "bookCurrency": self._settings.book_currency,
             "locale": self._settings.locale,
+            "currencies": self._supported_currencies(),
             "needsSetup": book is None,
             "book": None
             if book is None
@@ -227,6 +228,23 @@ class AppController:
             raise ValidationError("initial setup is required")
         return book
 
+    def _supported_currencies(self) -> list[dict[str, object]]:
+        rows = self._database.connection.execute(
+            """
+            SELECT code, minor_unit_digits
+            FROM currencies
+            WHERE active = 1
+            ORDER BY code
+            """
+        ).fetchall()
+        return [
+            {
+                "code": str(row["code"]),
+                "minorUnitDigits": int(row["minor_unit_digits"]),
+            }
+            for row in rows
+        ]
+
     @classmethod
     def _transport_money(cls, value, key: str | None = None):
         if value is None:
@@ -234,7 +252,10 @@ class AppController:
         if key is not None and key.endswith("Minor") and isinstance(value, int):
             return str(value)
         if isinstance(value, dict):
-            return {item_key: cls._transport_money(item, item_key) for item_key, item in value.items()}
+            return {
+                item_key: cls._transport_money(item, item_key)
+                for item_key, item in value.items()
+            }
         if isinstance(value, list):
             return [cls._transport_money(item) for item in value]
         return value

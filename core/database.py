@@ -78,8 +78,9 @@ class Database:
             return self._connection
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, autocommit=False)
+        conn = sqlite3.connect(self.path, autocommit=True)
         conn.row_factory = sqlite3.Row
+
         conn.execute("PRAGMA foreign_keys = ON")
         enabled = conn.execute("PRAGMA foreign_keys").fetchone()[0]
         if enabled != 1:
@@ -91,6 +92,7 @@ class Database:
             conn.close()
             raise DatabaseIntegrityError(f"SQLite WAL mode unavailable: {journal_mode}")
 
+        conn.autocommit = False
         self._connection = conn
         return conn
 
@@ -110,9 +112,11 @@ class Database:
 
     def migrate(self) -> None:
         conn = self.connection
-        current = conn.execute(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
-        ).fetchone()[0] if self._table_exists("schema_migrations") else 0
+        current = (
+            conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
+            if self._table_exists("schema_migrations")
+            else 0
+        )
 
         if current > SCHEMA_VERSION:
             raise DatabaseIntegrityError(
@@ -160,6 +164,7 @@ class Database:
         if temp.exists():
             temp.unlink()
         source = self.connection
+        source.commit()
         target = sqlite3.connect(temp, autocommit=True)
         try:
             source.backup(target)
@@ -168,6 +173,7 @@ class Database:
 
         verify = sqlite3.connect(temp, autocommit=True)
         try:
+            verify.execute("PRAGMA foreign_keys = ON")
             integrity = verify.execute("PRAGMA integrity_check").fetchone()[0]
             if integrity != "ok":
                 raise DatabaseIntegrityError(f"backup integrity_check failed: {integrity}")

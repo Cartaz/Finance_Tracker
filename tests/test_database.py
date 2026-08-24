@@ -2,9 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import core.database as database_module
 from core.account_service import AccountService
-from core.database import Database
+from core.database import _CURRENCIES, _SCHEMA_V1, _SCHEMA_V2, Database
 from core.errors import UnsupportedCurrencyError
 from core.ledger_service import LedgerService
 
@@ -38,14 +37,23 @@ def test_migration_enables_m3_schema(tmp_path: Path) -> None:
 
 def test_existing_v2_database_with_ledger_data_upgrades_to_v3(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "finance.db"
-    monkeypatch.setattr(database_module, "SCHEMA_VERSION", 2)
     db = Database(path)
     db.open()
-    db.migrate()
     with db.transaction() as conn:
+        conn.executescript(_SCHEMA_V1)
+        conn.executemany(
+            "INSERT OR IGNORE INTO currencies(code, name, symbol, minor_unit_digits) VALUES (?, ?, ?, ?)",
+            _CURRENCIES,
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at, description) VALUES (1, datetime('now'), 'v1 fixture')"
+        )
+        conn.executescript(_SCHEMA_V2)
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at, description) VALUES (2, datetime('now'), 'v2 fixture')"
+        )
         user_id = int(
             conn.execute(
                 "INSERT INTO users(name, created_at, updated_at) VALUES ('User', datetime('now'), datetime('now'))"
@@ -60,6 +68,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v3(
             "INSERT INTO book_members(book_id, user_id, role) VALUES (?, ?, 'OWNER')",
             (book_id, user_id),
         )
+
     accounts = AccountService(db)
     ledger = LedgerService(db)
     bank = accounts.create_account(
@@ -99,9 +108,11 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v3(
     )
     assert db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
     assert db.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 2
+    assert "payee_id" not in {
+        row[1] for row in db.connection.execute("PRAGMA table_info(transactions)").fetchall()
+    }
     db.close()
 
-    monkeypatch.setattr(database_module, "SCHEMA_VERSION", 3)
     upgraded = Database(path)
     try:
         upgraded.open()

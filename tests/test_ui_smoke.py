@@ -38,3 +38,14 @@ def test_percentage_formatting_uses_bigint() -> None:
     assert "BigInt(String(bps))" in app_js
     assert "Math.abs(bps)" not in app_js
     assert "Math.floor(Math.abs(bps)" not in app_js
+
+
+def test_reconciliation_keeps_selected_batch_after_actions() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert 'data-view="reconciliation"' in index
+    assert 'let currentBatchId = null;' in app_js
+    assert 'currentBatchId = String(batchId);' in app_js
+    assert 'if (currentBatchId) await loadImportBatch(currentBatchId);' in app_js
+    assert '.import-batch:focus' not in app_js

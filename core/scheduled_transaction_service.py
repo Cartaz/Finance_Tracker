@@ -79,6 +79,11 @@ class ScheduledTransactionService:
         self._validate_accounts(normalized_kind, source, counter)
         if source.currency_code is None:
             raise ScheduledTransactionError("source account has no native currency")
+        tracking_start = date.fromisoformat(source.tracking_start_date)
+        if start <= tracking_start:
+            raise ScheduledTransactionError(
+                "scheduled start_date must be after the source tracking boundary"
+            )
         if payee_id is not None:
             payee = self._payees.get_payee(book_id, payee_id)
             if payee.archived:
@@ -137,7 +142,10 @@ class ScheduledTransactionService:
     def set_active(
         self, book_id: int, schedule_id: int, active: bool
     ) -> ScheduledTransaction:
-        self.get_schedule(book_id, schedule_id)
+        schedule = self.get_schedule(book_id, schedule_id)
+        if active and schedule.end_date is not None:
+            if date.fromisoformat(schedule.next_due_date) > date.fromisoformat(schedule.end_date):
+                raise ScheduledTransactionError("completed schedule cannot be reactivated")
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE scheduled_transactions SET active=?, updated_at=datetime('now') WHERE id=? AND book_id=?",
@@ -167,26 +175,36 @@ class ScheduledTransactionService:
             if schedule_id is not None
             else self.list_schedules(book_id, include_inactive=False)
         )
+        due_count = sum(self._count_due(item, as_of) for item in schedules if item.active)
+        if due_count > max_occurrences:
+            raise ScheduledTransactionError("due occurrence limit reached")
 
         posted: list[dict[str, object]] = []
         for schedule in schedules:
             if not schedule.active:
                 continue
             current = date.fromisoformat(schedule.next_due_date)
-            end = (
-                None
-                if schedule.end_date is None
-                else date.fromisoformat(schedule.end_date)
-            )
+            end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
             while current <= as_of and (end is None or current <= end):
-                if len(posted) >= max_occurrences:
-                    raise ScheduledTransactionError("due occurrence limit reached")
                 posted.append(self._post_occurrence(schedule, current))
                 schedule = self.get_schedule(book_id, schedule.id)
                 current = date.fromisoformat(schedule.next_due_date)
                 if not schedule.active:
                     break
         return posted
+
+    def _count_due(self, schedule: ScheduledTransaction, as_of: date) -> int:
+        current = date.fromisoformat(schedule.next_due_date)
+        end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+        count = 0
+        while current <= as_of and (end is None or current <= end):
+            count += 1
+            if count > 10_000:
+                return count
+            current = self._advance(
+                current, schedule.frequency, schedule.interval, schedule.start_date
+            )
+        return count
 
     def _post_occurrence(
         self, schedule: ScheduledTransaction, due: date
@@ -207,18 +225,12 @@ class ScheduledTransactionService:
                 "alreadyPosted": True,
             }
 
-        source = self._accounts.get_account(
-            schedule.book_id, schedule.source_account_id
-        )
-        counter = self._accounts.get_account(
-            schedule.book_id, schedule.counter_account_id
-        )
+        source = self._accounts.get_account(schedule.book_id, schedule.source_account_id)
+        counter = self._accounts.get_account(schedule.book_id, schedule.counter_account_id)
         self._validate_accounts(schedule.kind, source, counter)
         if source.currency_code != schedule.currency_code:
             raise ScheduledTransactionError("source account currency changed")
-        next_due = self._advance(
-            due, schedule.frequency, schedule.interval, schedule.start_date
-        )
+        next_due = self._advance(due, schedule.frequency, schedule.interval, schedule.start_date)
         amount = schedule.amount_minor
         if schedule.kind == "EXPENSE":
             entries = (
@@ -272,9 +284,7 @@ class ScheduledTransactionService:
     def _advance_schedule(
         self, schedule: ScheduledTransaction, next_due: date, *, connection=None
     ) -> None:
-        end = (
-            None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
-        )
+        end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
         active = 0 if end is not None and next_due > end else 1
         sql = (
             "UPDATE scheduled_transactions SET next_due_date=?, active=?, "
@@ -345,14 +355,9 @@ class ScheduledTransactionService:
                 "expense/refund counter must be an expense category"
             )
         if kind == "INCOME" and counter.type != "INCOME":
-            raise ScheduledTransactionError(
-                "income counter must be an income category"
-            )
+            raise ScheduledTransactionError("income counter must be an income category")
         if kind == "TRANSFER":
-            if (
-                counter.type not in {"ASSET", "LIABILITY"}
-                or counter.currency_code is None
-            ):
+            if counter.type not in {"ASSET", "LIABILITY"} or counter.currency_code is None:
                 raise ScheduledTransactionError(
                     "transfer counter must be a balance account"
                 )

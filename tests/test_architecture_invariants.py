@@ -73,6 +73,9 @@ def test_database_schema_is_owned_by_migrations_module() -> None:
 
 def test_strategic_review_is_part_of_definition_of_done() -> None:
     directive = (ROOT / "STRATEGIC_PROGRAMMING.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "Mandatory milestone strategic review" in directive
     assert "BLOCKED" in directive
     assert "Green tests without the review are not milestone completion" in directive
+    assert "STRATEGIC_PROGRAMMING.md" in agents
+    assert "A milestone with green tests but without its strategic review is incomplete" in agents

@@ -128,6 +128,8 @@ class BudgetService:
                 "missingFx": [],
             }
 
+        children = self._expense_children(book_id)
+        self._assert_scopes_non_overlapping(budgets, children)
         report = self._reporting.category_report(
             book_id=book_id,
             start_date=start,
@@ -136,7 +138,6 @@ class BudgetService:
             limit=None,
         )
         direct = {int(item["accountId"]): item for item in report}
-        children = self._expense_children(book_id)
 
         items: list[dict[str, object]] = []
         overall_missing: set[tuple[str, str]] = set()
@@ -239,6 +240,26 @@ class BudgetService:
                 continue
             children.setdefault(account.parent_id, []).append(account.id)
         return children
+
+    @classmethod
+    def _assert_scopes_non_overlapping(
+        cls,
+        budgets: list[Budget],
+        children: dict[int, list[int]],
+    ) -> None:
+        subtrees = {
+            budget.category_account_id: cls._subtree_ids(
+                budget.category_account_id, children
+            )
+            for budget in budgets
+        }
+        roots = list(subtrees)
+        for index, left in enumerate(roots):
+            for right in roots[index + 1 :]:
+                if left in subtrees[right] or right in subtrees[left]:
+                    raise BudgetError(
+                        "existing budgets overlap under the current category hierarchy"
+                    )
 
     @staticmethod
     def _period(value: str) -> str:

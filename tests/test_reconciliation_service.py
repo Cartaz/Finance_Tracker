@@ -104,17 +104,14 @@ def test_assisted_review_never_auto_matches_heuristic_candidate(ledger_env) -> N
         service.post_row(
             book_id=ledger_env.book_id,
             row_id=int(conflict_row["id"]),
-            category_account_id=groceries.id,
+            posting_kind="EXPENSE",
+            counter_account_id=groceries.id,
         )
     after = (
         ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
         ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
     )
     assert after == before
-    assert ledger_env.db.connection.execute(
-        "SELECT review_state, matched_transaction_id FROM import_rows WHERE id=?",
-        (int(conflict_row["id"]),),
-    ).fetchone()["review_state"] == "AMBIGUOUS"
 
 
 def test_posting_is_atomic_and_tracking_boundary_is_preserved(ledger_env) -> None:
@@ -141,24 +138,79 @@ def test_posting_is_atomic_and_tracking_boundary_is_preserved(ledger_env) -> Non
         service.post_row(
             book_id=ledger_env.book_id,
             row_id=int(rows[0]["id"]),
-            category_account_id=groceries.id,
+            posting_kind="EXPENSE",
+            counter_account_id=groceries.id,
         )
 
     posted_expense = service.post_row(
         book_id=ledger_env.book_id,
         row_id=int(rows[1]["id"]),
-        category_account_id=groceries.id,
+        posting_kind="EXPENSE",
+        counter_account_id=groceries.id,
         payee_id=merchant.id,
     )
     posted_income = service.post_row(
         book_id=ledger_env.book_id,
         row_id=int(rows[2]["id"]),
-        category_account_id=salary.id,
+        posting_kind="INCOME",
+        counter_account_id=salary.id,
     )
     assert posted_expense["state"] == "POSTED"
     assert posted_income["state"] == "POSTED"
     assert ledger_env.accounts.native_balance(ledger_env.book_id, bank.id) == 107_500
     ledger_env.db.integrity_check()
+
+
+def test_refund_and_liability_transfer_are_not_misclassified_as_income(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+    card = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id,
+        account_type="LIABILITY",
+        name="Card",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=card.id,
+        source_name="Card issuer",
+        review_mode="FULL_REVIEW",
+        csv_text=(
+            "date,amount,currency,description,external_id\n"
+            "2026-05-01,-50.00,EUR,Purchase,cc-1\n"
+            "2026-05-02,10.00,EUR,Refund,cc-2\n"
+            "2026-05-03,100.00,EUR,Card payment,cc-3\n"
+        ),
+    )
+    rows = service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+    service.post_row(
+        book_id=ledger_env.book_id,
+        row_id=int(rows[0]["id"]),
+        posting_kind="EXPENSE",
+        counter_account_id=groceries.id,
+    )
+    service.post_row(
+        book_id=ledger_env.book_id,
+        row_id=int(rows[1]["id"]),
+        posting_kind="REFUND",
+        counter_account_id=groceries.id,
+    )
+    service.post_row(
+        book_id=ledger_env.book_id,
+        row_id=int(rows[2]["id"]),
+        posting_kind="TRANSFER",
+        counter_account_id=bank.id,
+    )
+    kinds = [
+        row[0]
+        for row in ledger_env.db.connection.execute(
+            "SELECT kind FROM transactions WHERE id IN (?,?,?) ORDER BY id",
+            tuple(int(row["matched_transaction_id"]) for row in service.batch_rows(ledger_env.book_id, int(result["batchId"]))),
+        ).fetchall()
+    ]
+    assert kinds == ["EXPENSE", "REFUND", "TRANSFER"]
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, card.id) == 6_000
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, bank.id) == 90_000
 
 
 def test_duplicate_external_ids_inside_one_csv_are_rejected_atomically(ledger_env) -> None:

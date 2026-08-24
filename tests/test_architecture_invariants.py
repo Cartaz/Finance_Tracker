@@ -75,12 +75,14 @@ def test_budget_service_is_read_model_consumer_not_accounting_writer() -> None:
     assert "INSERT INTO entries" not in text
 
 
-def test_budget_frontend_uses_backend_status_not_ledger_math() -> None:
+def test_budget_frontend_uses_backend_status_and_target_capabilities() -> None:
     text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
     assert 'call("getBudgetStatus"' in text
     assert 'call("setBudget"' in text
     assert "report.totalSpentMinor" in text
     assert "report.totalRemainingMinor" in text
+    assert "report.targets" in text
+    assert '$("budget-category").innerHTML = snapshot.accounts.filter' not in text
 
 
 def test_transport_contract_is_explicit_not_suffix_driven() -> None:

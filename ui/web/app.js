@@ -2,13 +2,19 @@
   "use strict";
   let backend = null;
   let state = null;
+  let currencySpecs = new Map();
+  let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
   const call = (method, ...args) => new Promise((resolve) => backend[method](...args, resolve));
   const toast = (message, bad = false) => { $("toast").textContent = message; $("toast").className = bad ? "show bad" : "show"; setTimeout(() => $("toast").className = "", 2800); };
   const unwrap = (result) => { if (!result?.ok) throw new Error(result?.error?.message || "Operazione fallita"); return result.data; };
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
   const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  const currencyDigits = (currency) => new Intl.NumberFormat("it-IT", { style: "currency", currency }).resolvedOptions().maximumFractionDigits;
+  const currencyDigits = (currency) => {
+    const digits = currencySpecs.get(currency);
+    if (digits == null) throw new Error(`Valuta non supportata: ${currency}`);
+    return digits;
+  };
   const money = (minor, currency) => {
     if (minor == null) return "FX mancante";
     const digits = currencyDigits(currency);
@@ -23,6 +29,20 @@
     return `${negative ? "−" : ""}${wholeText}${fractionText} ${currency}`;
   };
   const percentBps = (bps) => bps == null ? "—" : `${bps < 0 ? "−" : ""}${Math.floor(Math.abs(bps) / 100)},${String(Math.abs(bps) % 100).padStart(2, "0")}%`;
+
+  function currencyOptions(items, selected = null) {
+    return items.map((item) => `<option value="${item.code}"${item.code === selected ? " selected" : ""}>${item.code}</option>`).join("");
+  }
+
+  function configureCurrencies(items, baseCurrency = null, preferredCurrency = null) {
+    supportedCurrencies = items;
+    currencySpecs = new Map(items.map((item) => [item.code, item.minorUnitDigits]));
+    const setupCurrency = preferredCurrency && currencySpecs.has(preferredCurrency) ? preferredCurrency : items[0]?.code;
+    $("setup-form").elements.currency.innerHTML = currencyOptions(items, setupCurrency);
+    $("account-form").elements.currency.innerHTML = currencyOptions(items, baseCurrency || setupCurrency);
+    const fxItems = baseCurrency ? items.filter((item) => item.code !== baseCurrency) : items;
+    $("fx-form").elements.currency.innerHTML = currencyOptions(fxItems);
+  }
 
   function reportPeriod() {
     return { startDate: $("report-start").value, endDate: $("report-end").value, asOfDate: $("report-asof").value };
@@ -87,7 +107,7 @@
   document.querySelectorAll(".nav").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".nav").forEach((b) => b.classList.remove("active")); button.classList.add("active"); document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden")); $(button.dataset.view).classList.remove("hidden"); $("view-title").textContent = button.textContent; }));
   $("account-type").addEventListener("change", (event) => $("balance-fields").classList.toggle("hidden", !["ASSET", "LIABILITY"].includes(event.target.value)));
   $("apply-report").addEventListener("click", () => refreshReports().catch((error) => toast(error.message, true)));
-  $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
+  $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
@@ -98,5 +118,5 @@
 
   initializeDates();
   if (typeof QWebChannel === "undefined" || !window.qt?.webChannelTransport) { $("bridge-status").textContent = "Backend non disponibile"; return; }
-  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
+  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
 })();

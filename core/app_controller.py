@@ -12,6 +12,7 @@ from core.money import parse_money
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
+from core.scheduled_transaction_service import ScheduledTransactionService
 
 
 class AppController:
@@ -28,6 +29,7 @@ class AppController:
         fx_service: FxService | None = None,
         reporting_service: ReportingService | None = None,
         reconciliation_service: ReconciliationService | None = None,
+        scheduled_service: ScheduledTransactionService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -40,6 +42,9 @@ class AppController:
             database, self._fx, account_service
         )
         self._reconciliation = reconciliation_service or ReconciliationService(
+            database, account_service, ledger_service, payee_service
+        )
+        self._scheduled = scheduled_service or ScheduledTransactionService(
             database, account_service, ledger_service, payee_service
         )
 
@@ -141,7 +146,11 @@ class AppController:
     def list_fx_rates(self) -> list[dict[str, object]]:
         book = self._require_book()
         return [
-            {"currency": item.currency_code, "date": item.rate_date, "rate": format(item.rate, "f")}
+            {
+                "currency": item.currency_code,
+                "date": item.rate_date,
+                "rate": format(item.rate, "f"),
+            }
             for item in self._fx.list_rates(book.id)
         ]
 
@@ -196,6 +205,75 @@ class AppController:
             row_id=self._positive_id(payload.get("rowId")),
         )
 
+    def create_scheduled_transaction(
+        self, payload: dict[str, object]
+    ) -> dict[str, object]:
+        book = self._require_book()
+        source_id = self._positive_id(payload.get("sourceAccountId"))
+        source = self._accounts.get_account(book.id, source_id)
+        if source.currency_code is None:
+            raise ValidationError("scheduled source must be a balance account")
+        amount = parse_money(
+            str(payload.get("amount", "")), self._database.currency(source.currency_code)
+        )
+        payee = payload.get("payeeId")
+        try:
+            interval = int(payload.get("interval", 1))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("invalid schedule interval") from exc
+        item = self._scheduled.create_schedule(
+            book_id=book.id,
+            kind=str(payload.get("kind", "")),
+            source_account_id=source_id,
+            counter_account_id=self._positive_id(payload.get("counterAccountId")),
+            amount_minor=amount,
+            frequency=str(payload.get("frequency", "")),
+            interval=interval,
+            start_date=str(payload.get("startDate", "")),
+            end_date=None
+            if payload.get("endDate") in (None, "")
+            else str(payload.get("endDate")),
+            description=str(payload.get("description", "")),
+            payee_id=None if payee in (None, "") else self._positive_id(payee),
+        )
+        return self._scheduled_payload(item)
+
+    def list_scheduled_transactions(self) -> list[dict[str, object]]:
+        book = self._require_book()
+        return self._transport_money(
+            [self._scheduled_payload(item) for item in self._scheduled.list_schedules(book.id)]
+        )
+
+    def set_scheduled_active(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        item = self._scheduled.set_active(
+            book.id,
+            self._positive_id(payload.get("scheduleId")),
+            bool(payload.get("active", False)),
+        )
+        return self._scheduled_payload(item)
+
+    def post_due_scheduled(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        schedule_id = payload.get("scheduleId")
+        try:
+            max_occurrences = int(payload.get("maxOccurrences", 1000))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("invalid occurrence limit") from exc
+        posted = self._scheduled.post_due(
+            book_id=book.id,
+            as_of_date=str(payload.get("asOfDate", "")),
+            schedule_id=None
+            if schedule_id in (None, "")
+            else self._positive_id(schedule_id),
+            max_occurrences=max_occurrences,
+        )
+        return {
+            "posted": posted,
+            "count": len(posted),
+            "state": self.snapshot(),
+        }
+
     def create_account(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
         account_type = str(payload.get("type", "")).upper()
@@ -209,7 +287,9 @@ class AppController:
             account_type=account_type,
             name=str(payload.get("name", "")),
             currency_code=currency,
-            tracking_start_date=str(payload.get("trackingStartDate", "")) if currency else None,
+            tracking_start_date=str(payload.get("trackingStartDate", ""))
+            if currency
+            else None,
             tracking_start_time=str(payload["trackingStartTime"])
             if payload.get("trackingStartTime")
             else None,
@@ -273,6 +353,28 @@ class AppController:
         item = self._payees.create_payee(book_id=book.id, name=name)
         return {"id": item.id, "name": item.name}
 
+    def _scheduled_payload(self, item) -> dict[str, object]:
+        source = self._accounts.get_account(item.book_id, item.source_account_id)
+        counter = self._accounts.get_account(item.book_id, item.counter_account_id)
+        return {
+            "id": item.id,
+            "kind": item.kind,
+            "sourceAccountId": item.source_account_id,
+            "sourceAccountName": source.name,
+            "counterAccountId": item.counter_account_id,
+            "counterAccountName": counter.name,
+            "amountMinor": item.amount_minor,
+            "currency": item.currency_code,
+            "frequency": item.frequency,
+            "interval": item.interval,
+            "startDate": item.start_date,
+            "nextDueDate": item.next_due_date,
+            "endDate": item.end_date,
+            "description": item.description,
+            "payeeId": item.payee_id,
+            "active": item.active,
+        }
+
     def _require_book(self):
         book = self._books.current_book()
         if book is None:
@@ -284,7 +386,10 @@ class AppController:
             "SELECT code, minor_unit_digits FROM currencies WHERE active = 1 ORDER BY code"
         ).fetchall()
         return [
-            {"code": str(row["code"]), "minorUnitDigits": int(row["minor_unit_digits"])}
+            {
+                "code": str(row["code"]),
+                "minorUnitDigits": int(row["minor_unit_digits"]),
+            }
             for row in rows
         ]
 

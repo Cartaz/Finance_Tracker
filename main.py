@@ -95,8 +95,8 @@ def main() -> int:
             account_service,
             category_service,
         )
-        forecast_service = ForecastService(scheduled_service, fx_service)
         loan_service = LoanService(database, account_service, ledger_service)
+        forecast_service = ForecastService(scheduled_service, fx_service, loan_service)
         app_state_service = AppStateService(database, account_service)
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")

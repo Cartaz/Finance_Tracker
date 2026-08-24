@@ -66,12 +66,24 @@ class ScheduledTransactionService:
     ) -> ScheduledTransaction:
         normalized_kind = self._normalize_kind(kind)
         normalized_frequency = self._normalize_frequency(frequency)
-        if isinstance(interval, bool) or not isinstance(interval, int) or not 1 <= interval <= 365:
+        if (
+            isinstance(interval, bool)
+            or not isinstance(interval, int)
+            or not 1 <= interval <= 365
+        ):
             raise ScheduledTransactionError("interval must be between 1 and 365")
-        if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
+        if (
+            isinstance(amount_minor, bool)
+            or not isinstance(amount_minor, int)
+            or amount_minor <= 0
+        ):
             raise ScheduledTransactionError("amount_minor must be a positive integer")
         start = self._parse_date(start_date, "start_date")
-        end = None if end_date in (None, "") else self._parse_date(str(end_date), "end_date")
+        end = (
+            None
+            if end_date in (None, "")
+            else self._parse_date(str(end_date), "end_date")
+        )
         if end is not None and end < start:
             raise ScheduledTransactionError("end_date cannot precede start_date")
 
@@ -80,7 +92,9 @@ class ScheduledTransactionService:
         self._validate_accounts(normalized_kind, source, counter)
         if source.currency_code is None:
             raise ScheduledTransactionError("source account has no native currency")
-        balance_accounts = (source, counter) if normalized_kind == "TRANSFER" else (source,)
+        balance_accounts = (
+            (source, counter) if normalized_kind == "TRANSFER" else (source,)
+        )
         for account in balance_accounts:
             result = TrackingBoundaryPolicy.classify(
                 tracking_start_date=account.tracking_start_date,
@@ -147,6 +161,77 @@ class ScheduledTransactionService:
         ).fetchall()
         return [self._record(row) for row in rows]
 
+    def project_occurrences(
+        self,
+        *,
+        book_id: int,
+        start_date: str,
+        end_date: str,
+        max_occurrences: int = 10_000,
+    ) -> list[dict[str, object]]:
+        """Project active future occurrences without mutating schedule state."""
+        start = self._parse_date(start_date, "start_date")
+        end = self._parse_date(end_date, "end_date")
+        if end < start:
+            raise ScheduledTransactionError("end_date cannot precede start_date")
+        if (
+            isinstance(max_occurrences, bool)
+            or not isinstance(max_occurrences, int)
+            or not 1 <= max_occurrences <= 10_000
+        ):
+            raise ScheduledTransactionError(
+                "max_occurrences must be between 1 and 10000"
+            )
+
+        projected: list[dict[str, object]] = []
+        for schedule in self.list_schedules(book_id, include_inactive=False):
+            if not schedule.active:
+                continue
+            current = date.fromisoformat(schedule.next_due_date)
+            schedule_end = (
+                None
+                if schedule.end_date is None
+                else date.fromisoformat(schedule.end_date)
+            )
+            while current < start and (
+                schedule_end is None or current <= schedule_end
+            ):
+                current = self._advance(
+                    current,
+                    schedule.frequency,
+                    schedule.interval,
+                    schedule.start_date,
+                )
+            while current <= end and (
+                schedule_end is None or current <= schedule_end
+            ):
+                if len(projected) >= max_occurrences:
+                    raise ScheduledTransactionError(
+                        "projected occurrence limit reached"
+                    )
+                projected.append(
+                    {
+                        "scheduleId": schedule.id,
+                        "dueDate": current.isoformat(),
+                        "kind": schedule.kind,
+                        "sourceAccountId": schedule.source_account_id,
+                        "counterAccountId": schedule.counter_account_id,
+                        "amountMinor": schedule.amount_minor,
+                        "currency": schedule.currency_code,
+                        "description": schedule.description,
+                    }
+                )
+                current = self._advance(
+                    current,
+                    schedule.frequency,
+                    schedule.interval,
+                    schedule.start_date,
+                )
+        projected.sort(
+            key=lambda item: (str(item["dueDate"]), int(item["scheduleId"]))
+        )
+        return projected
+
     def set_active(
         self, book_id: int, schedule_id: int, active: bool
     ) -> ScheduledTransaction:
@@ -189,7 +274,9 @@ class ScheduledTransactionService:
             if schedule_id is not None
             else self.list_schedules(book_id, include_inactive=False)
         )
-        due_count = sum(self._count_due(item, as_of) for item in schedules if item.active)
+        due_count = sum(
+            self._count_due(item, as_of) for item in schedules if item.active
+        )
         if due_count > max_occurrences:
             raise ScheduledTransactionError("due occurrence limit reached")
 
@@ -214,7 +301,11 @@ class ScheduledTransactionService:
 
     def _count_due(self, schedule: ScheduledTransaction, as_of: date) -> int:
         current = date.fromisoformat(schedule.next_due_date)
-        end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+        end = (
+            None
+            if schedule.end_date is None
+            else date.fromisoformat(schedule.end_date)
+        )
         count = 0
         while current <= as_of and (end is None or current <= end):
             count += 1
@@ -247,8 +338,12 @@ class ScheduledTransactionService:
                 "alreadyPosted": True,
             }
 
-        source = self._accounts.get_account(schedule.book_id, schedule.source_account_id)
-        counter = self._accounts.get_account(schedule.book_id, schedule.counter_account_id)
+        source = self._accounts.get_account(
+            schedule.book_id, schedule.source_account_id
+        )
+        counter = self._accounts.get_account(
+            schedule.book_id, schedule.counter_account_id
+        )
         self._validate_accounts(schedule.kind, source, counter)
         if source.currency_code != schedule.currency_code:
             raise ScheduledTransactionError("source account currency changed")
@@ -314,7 +409,11 @@ class ScheduledTransactionService:
     def _advance_schedule(
         self, schedule: ScheduledTransaction, next_due: date, conn
     ) -> None:
-        end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+        end = (
+            None
+            if schedule.end_date is None
+            else date.fromisoformat(schedule.end_date)
+        )
         active = 0 if end is not None and next_due > end else 1
         conn.execute(
             """

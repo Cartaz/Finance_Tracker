@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 
 from core.account_service import AccountService
-from core.database import _CURRENCIES, _SCHEMA_V1, _SCHEMA_V2, Database
+from core.currency_registry import DEFAULT_CURRENCIES
+from core.database import Database
 from core.errors import UnsupportedCurrencyError
 from core.ledger_service import LedgerService
+from core.migrations import _SCHEMA_V1, _SCHEMA_V2
 
 
 def test_migration_enables_m7_schema(tmp_path: Path) -> None:
@@ -58,7 +60,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v6(
         conn.executescript(_SCHEMA_V1)
         conn.executemany(
             "INSERT OR IGNORE INTO currencies(code, name, symbol, minor_unit_digits) VALUES (?, ?, ?, ?)",
-            _CURRENCIES,
+            DEFAULT_CURRENCIES,
         )
         conn.execute(
             "INSERT INTO schema_migrations(version, applied_at, description) VALUES (1, datetime('now'), 'v1 fixture')"

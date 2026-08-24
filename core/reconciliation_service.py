@@ -374,6 +374,7 @@ class ReconciliationService:
         tracking_start_date: str | None,
         tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
+        del tracking_start_time
         if external_id is not None:
             link = self._database.connection.execute(
                 """
@@ -393,7 +394,7 @@ class ReconciliationService:
         if tracking_start_date is not None:
             if transaction_date < tracking_start_date:
                 return "OUTSIDE_TRACKING", None
-            if transaction_date == tracking_start_date and tracking_start_time is not None:
+            if transaction_date == tracking_start_date:
                 return "TRACKING_AMBIGUOUS", None
 
         if external_id is not None:

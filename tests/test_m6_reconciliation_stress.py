@@ -80,20 +80,50 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
         review_mode="FULL_REVIEW",
     )
     assert imported["rowCount"] == 1000
-    assert imported["summary"] == {"REVIEW_REQUIRED": 1000}
+    assert imported["summary"] == {
+        "TRACKING_AMBIGUOUS": 12,
+        "REVIEW_REQUIRED": 988,
+    }
     rows = service.batch_rows(book, int(imported["batchId"]))
     assert len(rows) == 1000
 
-    for index, row in enumerate(rows[:500]):
+    review_rows = [row for row in rows if row["review_state"] == "REVIEW_REQUIRED"]
+    boundary_rows = [row for row in rows if row["review_state"] == "TRACKING_AMBIGUOUS"]
+    assert len(review_rows) == 988
+    assert len(boundary_rows) == 12
+
+    posted_rows = review_rows[:500]
+    ignored_rows = review_rows[500:750]
+    for row in posted_rows:
+        amount_minor = int(row["amount_minor"])
         service.post_row(
             book_id=book,
             row_id=int(row["id"]),
-            posting_kind="EXPENSE" if index % 2 == 0 else "INCOME",
-            counter_account_id=expense.id if index % 2 == 0 else income.id,
-            payee_id=merchant.id if index % 2 == 0 else None,
+            posting_kind="EXPENSE" if amount_minor < 0 else "INCOME",
+            counter_account_id=expense.id if amount_minor < 0 else income.id,
+            payee_id=merchant.id if amount_minor < 0 else None,
         )
-    for row in rows[500:750]:
+    for row in ignored_rows:
         service.ignore_row(book_id=book, row_id=int(row["id"]))
+
+    before_boundary_post = (
+        db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        db.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0],
+    )
+    with pytest.raises(ReconciliationError):
+        service.post_row(
+            book_id=book,
+            row_id=int(boundary_rows[0]["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=expense.id,
+        )
+    after_boundary_post = (
+        db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        db.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0],
+    )
+    assert after_boundary_post == before_boundary_post
 
     transactions_after_valid = db.connection.execute(
         "SELECT COUNT(*) FROM transactions WHERE book_id=?", (book,)
@@ -115,61 +145,75 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
     )
     repeated_rows = service.batch_rows(book, int(repeated["batchId"]))
     assert sum(row["review_state"] == "MATCHED" for row in repeated_rows) == 500
-    assert sum(row["review_state"] == "DUPLICATE_REVIEW" for row in repeated_rows) == 500
+    assert sum(row["review_state"] == "DUPLICATE_REVIEW" for row in repeated_rows) == 488
+    assert sum(row["review_state"] == "TRACKING_AMBIGUOUS" for row in repeated_rows) == 12
 
+    unresolved_rows = review_rows[750:]
+    negative_unresolved = next(
+        row for row in unresolved_rows if int(row["amount_minor"]) < 0
+    )
+    positive_unresolved = next(
+        row for row in unresolved_rows if int(row["amount_minor"]) > 0
+    )
     invalid_cases = (
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[0]["id"]),
+            row_id=int(posted_rows[0]["id"]),
             posting_kind="EXPENSE",
             counter_account_id=expense.id,
         ),
-        lambda: service.ignore_row(book_id=book, row_id=int(rows[1]["id"])),
+        lambda: service.ignore_row(book_id=book, row_id=int(posted_rows[1]["id"])),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[751]["id"]),
+            row_id=int(boundary_rows[0]["id"]),
             posting_kind="EXPENSE",
             counter_account_id=expense.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[752]["id"]),
+            row_id=int(negative_unresolved["id"]),
             posting_kind="INCOME",
             counter_account_id=income.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[754]["id"]),
+            row_id=int(positive_unresolved["id"]),
+            posting_kind="EXPENSE",
+            counter_account_id=expense.id,
+        ),
+        lambda: service.post_row(
+            book_id=book,
+            row_id=int(negative_unresolved["id"]),
             posting_kind="EXPENSE",
             counter_account_id=placeholder.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[756]["id"]),
+            row_id=int(negative_unresolved["id"]),
             posting_kind="EXPENSE",
             counter_account_id=archived.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[758]["id"]),
+            row_id=int(negative_unresolved["id"]),
             posting_kind="EXPENSE",
             counter_account_id=other_book_counter.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[760]["id"]),
+            row_id=int(negative_unresolved["id"]),
             posting_kind="UNKNOWN",
             counter_account_id=expense.id,
         ),
         lambda: service.post_row(
             book_id=book,
-            row_id=int(rows[762]["id"]),
+            row_id=int(negative_unresolved["id"]),
             posting_kind="TRANSFER",
             counter_account_id=bank.id,
         ),
         lambda: service.link_existing(
             book_id=book,
-            row_id=int(rows[753]["id"]),
+            row_id=int(negative_unresolved["id"]),
             transaction_id=999_999_999,
         ),
         lambda: service.batch_rows(book, 999_999_999),

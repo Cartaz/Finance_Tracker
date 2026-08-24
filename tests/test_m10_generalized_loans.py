@@ -180,7 +180,7 @@ def test_custom_payment_recasts_future_payment_and_uses_ledger_balance(tmp_path)
         db.close()
 
 
-def test_reduce_term_does_not_accept_underpayment(tmp_path) -> None:
+def test_custom_payment_below_schedule_fails_closed_instead_of_inventing_arrears(tmp_path) -> None:
     db, book_id, liability_id, bank_id, interest_id, service = _env(tmp_path)
     try:
         loan = _loan(
@@ -192,7 +192,7 @@ def test_reduce_term_does_not_accept_underpayment(tmp_path) -> None:
             recast_strategy="REDUCE_TERM",
         )
         scheduled = int(service.status(book_id, loan.id)["nextPaymentMinor"])
-        with pytest.raises(LoanError, match="cannot be below"):
+        with pytest.raises(LoanError, match="arrears semantics"):
             service.post_custom_payment(
                 book_id=book_id,
                 loan_id=loan.id,
@@ -203,22 +203,41 @@ def test_reduce_term_does_not_accept_underpayment(tmp_path) -> None:
         db.close()
 
 
-def test_custom_payment_cannot_leave_interest_unpaid(tmp_path) -> None:
+def test_incompatible_recast_policy_is_rejected_at_contract_creation(tmp_path) -> None:
     db, book_id, liability_id, bank_id, interest_id, service = _env(tmp_path)
     try:
-        loan = _loan(
-            service,
-            book_id=book_id,
-            liability_id=liability_id,
-            bank_id=bank_id,
-            interest_id=interest_id,
-        )
-        first_interest = int(service.amortization_plan(book_id, loan.id)["rows"][0]["interestMinor"])
-        with pytest.raises(LoanError, match="cover accrued interest"):
-            service.post_custom_payment(
+        with pytest.raises(LoanError, match="not supported"):
+            _loan(
+                service,
                 book_id=book_id,
-                loan_id=loan.id,
-                amount_minor=first_interest,
+                liability_id=liability_id,
+                bank_id=bank_id,
+                interest_id=interest_id,
+                rate_type="VARIABLE",
+                amortization_type="FRENCH",
+                recast_strategy="REDUCE_TERM",
             )
+    finally:
+        db.close()
+
+
+def test_capabilities_expose_policy_compatibility_matrix(tmp_path) -> None:
+    db, book_id, _, _, _, service = _env(tmp_path)
+    try:
+        combinations = service.creation_capabilities(book_id)["policyCombinations"]
+        variable_french = next(
+            item
+            for item in combinations
+            if item["rateType"] == "VARIABLE"
+            and item["amortizationType"] == "FRENCH"
+        )
+        fixed_italian = next(
+            item
+            for item in combinations
+            if item["rateType"] == "FIXED"
+            and item["amortizationType"] == "ITALIAN"
+        )
+        assert variable_french["recastStrategies"] == ["REDUCE_PAYMENT"]
+        assert fixed_italian["recastStrategies"] == ["REDUCE_PAYMENT", "REDUCE_TERM"]
     finally:
         db.close()

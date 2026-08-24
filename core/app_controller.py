@@ -249,7 +249,11 @@ class AppController:
     def _transport_money(cls, value, key: str | None = None):
         if value is None:
             return None
-        if key is not None and key.endswith("Minor") and isinstance(value, int):
+        if (
+            key is not None
+            and key.endswith(("Minor", "Bps"))
+            and isinstance(value, int)
+        ):
             return str(value)
         if isinstance(value, dict):
             return {

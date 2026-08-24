@@ -6,7 +6,7 @@
   let currentImportRows = new Map();
   let currentLoanId = null;
   let currentLoans = [];
-  let currentLoanCapabilities = { targets: [], interestExpenseAccounts: [] };
+  let currentLoanCapabilities = { targets: [], interestExpenseAccounts: [], rateTypes: [], amortizationTypes: [], recastStrategies: [] };
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -99,6 +99,10 @@
     $("scheduled-counter").innerHTML = scheduledCounterOptions($("scheduled-kind").value, $("scheduled-source").value);
   }
 
+  function simpleOptions(values, labels = {}) {
+    return (values || []).map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(labels[value] || value)}</option>`).join("");
+  }
+
   function refreshLoanAccountOptions() {
     const targets = currentLoanCapabilities.targets || [];
     const previousLiability = $("loan-liability").value;
@@ -112,6 +116,9 @@
     const modeLabels = { NEW_DISBURSEMENT: "Nuova erogazione", EXISTING_BALANCE: "Saldo già presente" };
     $("loan-mode").innerHTML = (target?.allowedModes || []).map((mode) => `<option value="${mode}">${modeLabels[mode] || escapeHtml(mode)}</option>`).join("");
     if ([...$("loan-mode").options].some((option) => option.value === previousMode)) $("loan-mode").value = previousMode;
+    $("loan-rate-type").innerHTML = simpleOptions(currentLoanCapabilities.rateTypes, { FIXED: "Fisso", VARIABLE: "Variabile" });
+    $("loan-amortization-type").innerHTML = simpleOptions(currentLoanCapabilities.amortizationTypes, { FRENCH: "Francese · rata tendenzialmente costante", ITALIAN: "Italiano · capitale costante", BULLET: "Bullet · capitale a scadenza" });
+    $("loan-recast-strategy").innerHTML = simpleOptions(currentLoanCapabilities.recastStrategies, { REDUCE_PAYMENT: "Riduci rata", REDUCE_TERM: "Riduci durata" });
     $("loan-form").querySelector('button[type="submit"]').disabled = !target || !(target.allowedModes || []).length || !(currentLoanCapabilities.interestExpenseAccounts || []).length;
     refreshLoanMode();
   }
@@ -189,15 +196,20 @@
     currentLoanId = String(loanId);
     const loan = currentLoans.find((item) => String(item.id) === currentLoanId);
     if (!loan) { $("loan-detail").innerHTML = `<p class="empty">Prestito non disponibile.</p>`; return; }
-    const [plan, payments] = await Promise.all([
+    const [plan, payments, revisions] = await Promise.all([
       call("getLoanPlan", { loanId }).then(unwrap),
       call("getLoanPayments", { loanId }).then(unwrap),
+      call("getLoanRateRevisions", { loanId }).then(unwrap),
     ]);
     const visibleRows = plan.rows.slice(0, 24);
-    const planRows = visibleRows.map((row) => `<div class="report-row"><span>#${row.installmentNumber} · ${row.dueDate}</span><span>Capitale ${money(row.principalMinor, plan.currency)}</span><span>Interessi ${money(row.interestMinor, plan.currency)}</span><strong>${money(row.paymentMinor, plan.currency)}</strong></div>`).join("");
-    const truncated = plan.rows.length > visibleRows.length ? `<p class="empty">Mostrate le prime ${visibleRows.length} di ${plan.rows.length} rate.</p>` : "";
-    const paymentRows = payments.map((row) => `<div class="report-row"><span>#${row.installmentNumber} · ${row.dueDate}</span><span>Capitale ${money(row.principalMinor, plan.currency)}</span><span>Interessi ${money(row.interestMinor, plan.currency)}</span><strong>${money(row.paymentMinor, plan.currency)}</strong></div>`).join("") || `<p class="empty">Nessuna rata registrata.</p>`;
-    $("loan-detail").innerHTML = `<div class="report-row"><b>${escapeHtml(loan.name)}</b><span>Tasso ${percentBps(loan.annualRateBps)}</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>Rata ${money(loan.fixedPaymentMinor, loan.currency)}</strong><small>${loan.closed ? "ESTINTO" : `Prossima ${loan.nextDueDate}`}</small></div><div class="history-controls">${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra prossima rata</button>`}</div><h3>Piano contrattuale</h3>${planRows}${truncated}<p class="empty">Interessi contrattuali totali: ${money(plan.totalInterestMinor, plan.currency)}</p><h3>Rate registrate</h3>${paymentRows}`;
+    const planRows = visibleRows.map((row) => `<div class="report-row"><span>#${row.installmentNumber} · ${row.dueDate}</span><span>Capitale ${money(row.principalMinor, plan.currency)}</span><span>Interessi ${money(row.interestMinor, plan.currency)} · ${percentBps(row.annualRateBps)}</span><strong>${money(row.paymentMinor, plan.currency)}</strong></div>`).join("");
+    const truncated = plan.rows.length > visibleRows.length ? `<p class="empty">Mostrate le prime ${visibleRows.length} di ${plan.rows.length} rate residue.</p>` : "";
+    const paymentRows = payments.map((row) => `<div class="report-row"><span>#${row.installmentNumber} · ${row.dueDate}</span><span>${row.paymentKind} · capitale ${money(row.principalMinor, plan.currency)}</span><span>Interessi ${money(row.interestMinor, plan.currency)} · ${percentBps(row.annualRateBps)}</span><strong>${money(row.paymentMinor, plan.currency)}</strong></div>`).join("") || `<p class="empty">Nessuna rata registrata.</p>`;
+    const revisionRows = revisions.map((row) => `<div class="mini-row"><span>${row.effectiveDate}</span><b>${percentBps(row.annualRateBps)}</b></div>`).join("") || `<p class="empty">Tasso fisso: nessuna revisione.</p>`;
+    const recastOptions = simpleOptions(currentLoanCapabilities.recastStrategies, { REDUCE_PAYMENT: "Riduci rata", REDUCE_TERM: "Riduci durata" });
+    const customForm = loan.closed ? "" : `<form data-loan-custom-form="${loan.id}" class="form-card"><h3>Pagamento personalizzato</h3><p class="empty">Deve coprire gli interessi della prossima scadenza e ridurre il capitale. L'eccedenza rispetto alla rata prevista è rimborso anticipato.</p><label>Importo<input name="amount" inputmode="decimal" required placeholder="${money(loan.nextPaymentMinor, loan.currency)}"></label><label>Ricalcolo<select name="recastStrategy">${recastOptions}</select></label><button type="submit">Registra pagamento</button></form>`;
+    const variableForm = loan.rateType === "VARIABLE" && !loan.closed ? `<form data-loan-rate-form="${loan.id}" class="form-card"><h3>Nuovo tasso</h3><label>Effettivo dal<input name="effectiveDate" type="date" required value="${loan.nextDueDate || localDate()}"></label><label>Tasso annuo %<input name="annualRate" inputmode="decimal" required placeholder="5,25"></label><button type="submit">Salva revisione</button></form>` : "";
+    $("loan-detail").innerHTML = `<div class="report-row"><b>${escapeHtml(loan.name)}</b><span>${loan.rateType} · ${loan.amortizationType} · ${loan.recastStrategy}</span><span>Tasso corrente ${percentBps(loan.currentAnnualRateBps)}</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>Prossima ${loan.closed ? "—" : money(loan.nextPaymentMinor, loan.currency)}</strong><small>${loan.closed ? "ESTINTO" : `Scadenza ${loan.nextDueDate}`}</small></div><div class="history-controls">${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra rata prevista</button>`}</div>${customForm}${variableForm}<h3>Piano residuo</h3>${planRows}${truncated}<p class="empty">Interessi residui previsti: ${money(plan.totalInterestMinor, plan.currency)}</p><h3>Storia tassi</h3>${revisionRows}<h3>Rate registrate</h3>${paymentRows}`;
   }
 
   async function refreshLoanCapabilities() {
@@ -207,7 +219,7 @@
 
   async function refreshLoans() {
     currentLoans = unwrap(await call("listLoans"));
-    $("loan-list").innerHTML = currentLoans.map((loan) => `<div class="card"><div class="report-row"><b>${escapeHtml(loan.name)}</b><span>${percentBps(loan.annualRateBps)} · ${loan.termMonths} mesi</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>${loan.closed ? "ESTINTO" : money(loan.fixedPaymentMinor, loan.currency)}</strong><small>${loan.closed ? `${loan.paidInstallments} rate registrate` : `Prossima ${loan.nextDueDate} · ${loan.remainingInstallments} residue`}</small></div><div class="history-controls"><button type="button" data-loan-detail="${loan.id}">Dettagli</button>${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra rata</button>`}</div></div>`).join("") || `<p class="empty">Nessun prestito configurato.</p>`;
+    $("loan-list").innerHTML = currentLoans.map((loan) => `<div class="card"><div class="report-row"><b>${escapeHtml(loan.name)}</b><span>${loan.rateType} · ${loan.amortizationType} · ${percentBps(loan.currentAnnualRateBps)}</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>${loan.closed ? "ESTINTO" : money(loan.nextPaymentMinor, loan.currency)}</strong><small>${loan.closed ? `${loan.paidInstallments} pagamenti registrati` : `Prossima ${loan.nextDueDate} · max ${loan.remainingInstallments} scadenze`}</small></div><div class="history-controls"><button type="button" data-loan-detail="${loan.id}">Dettagli</button>${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra rata</button>`}</div></div>`).join("") || `<p class="empty">Nessun prestito configurato.</p>`;
     if (currentLoanId && currentLoans.some((item) => String(item.id) === currentLoanId)) await loadLoanDetail(currentLoanId);
     else if (currentLoans.length) await loadLoanDetail(currentLoans[0].id);
     else { currentLoanId = null; $("loan-detail").innerHTML = `<p class="empty">Seleziona un prestito.</p>`; }
@@ -286,8 +298,31 @@
   $("budget-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setBudget", Object.fromEntries(new FormData(event.target)))); const period = event.target.elements.period.value; event.target.elements.amount.value = ""; event.target.elements.period.value = period; await refreshBudgets(); toast("Budget salvato"); } catch (error) { toast(error.message, true); } });
   $("budget-list").addEventListener("click", async (event) => { const button = event.target.closest("[data-budget-delete]"); if (!button) return; try { unwrap(await call("deleteBudget", { budgetId: button.dataset.budgetDelete })); await refreshBudgets(); toast("Budget eliminato"); } catch (error) { toast(error.message, true); } });
   $("loan-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const data = Object.fromEntries(new FormData(event.target)); if (data.mode !== "NEW_DISBURSEMENT") { delete data.principal; delete data.fundingAccountId; delete data.startDate; } const created = unwrap(await call("createLoan", data)); currentLoanId = String(created.id); const firstDue = event.target.elements.firstDueDate.value; event.target.reset(); event.target.elements.termMonths.value = "12"; event.target.elements.firstDueDate.value = firstDue; await refresh(); toast("Prestito creato"); } catch (error) { toast(error.message, true); } });
-  $("loan-list").addEventListener("click", async (event) => { const detail = event.target.closest("[data-loan-detail]"); const post = event.target.closest("[data-loan-post]"); if (!detail && !post) return; try { if (detail) await loadLoanDetail(detail.dataset.loanDetail); else { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets()]); toast("Rata registrata"); } } catch (error) { toast(error.message, true); } });
-  $("loan-detail").addEventListener("click", async (event) => { const post = event.target.closest("[data-loan-post]"); if (!post) return; try { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets()]); toast("Rata registrata"); } catch (error) { toast(error.message, true); } });
+  $("loan-list").addEventListener("click", async (event) => { const detail = event.target.closest("[data-loan-detail]"); const post = event.target.closest("[data-loan-post]"); if (!detail && !post) return; try { if (detail) await loadLoanDetail(detail.dataset.loanDetail); else { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets(), refreshForecast()]); toast("Rata registrata"); } } catch (error) { toast(error.message, true); } });
+  $("loan-detail").addEventListener("click", async (event) => { const post = event.target.closest("[data-loan-post]"); if (!post) return; try { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets(), refreshForecast()]); toast("Rata registrata"); } catch (error) { toast(error.message, true); } });
+  $("loan-detail").addEventListener("submit", async (event) => {
+    const customForm = event.target.closest("[data-loan-custom-form]");
+    const rateForm = event.target.closest("[data-loan-rate-form]");
+    if (!customForm && !rateForm) return;
+    event.preventDefault();
+    try {
+      if (customForm) {
+        const data = Object.fromEntries(new FormData(customForm));
+        data.loanId = customForm.dataset.loanCustomForm;
+        const result = unwrap(await call("postCustomLoanPayment", data));
+        if (result.state) renderSnapshot(result.state);
+        currentLoanId = String(data.loanId);
+        toast("Pagamento personalizzato registrato");
+      } else {
+        const data = Object.fromEntries(new FormData(rateForm));
+        data.loanId = rateForm.dataset.loanRateForm;
+        unwrap(await call("setLoanVariableRate", data));
+        currentLoanId = String(data.loanId);
+        toast("Tasso variabile aggiornato");
+      }
+      await Promise.all([refreshLoans(), refreshReports(), refreshBudgets(), refreshForecast()]);
+    } catch (error) { toast(error.message, true); }
+  });
   $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await Promise.all([refreshScheduled(), refreshForecast()]); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });
   $("post-due-scheduled").addEventListener("click", async () => { try { const result = unwrap(await call("postDueScheduled", { asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshScheduled(), refreshReports(), refreshBudgets(), refreshForecast(), refreshLoans()]); toast(`${result.count} scadenze registrate`); } catch (error) { toast(error.message, true); } });
   $("scheduled-list").addEventListener("click", async (event) => { const toggle = event.target.closest("[data-schedule-toggle]"); const post = event.target.closest("[data-schedule-post]"); if (!toggle && !post) return; try { if (toggle) unwrap(await call("setScheduledActive", { scheduleId: toggle.dataset.scheduleToggle, active: toggle.dataset.active === "1" })); else { const result = unwrap(await call("postDueScheduled", { scheduleId: post.dataset.schedulePost, asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans()]); } await Promise.all([refreshScheduled(), refreshForecast()]); toast("Programmazione aggiornata"); } catch (error) { toast(error.message, true); } });

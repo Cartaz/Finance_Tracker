@@ -83,3 +83,21 @@ def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     assert 'a.currency === source.currency' not in app_js
     assert "setInterval(" not in app_js
     assert "setTimeout(() => $(\"toast\")" in app_js
+
+
+def test_budget_ui_uses_backend_budget_status_and_bigint_money() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert 'data-view="budgets"' in index
+    assert 'id="budget-form"' in index
+    assert 'id="budget-period"' in index
+    assert 'id="budget-category"' in index
+    assert 'call("getBudgetStatus"' in app_js
+    assert 'call("setBudget"' in app_js
+    assert 'call("deleteBudget"' in app_js
+    assert "report.totalSpentMinor" in app_js
+    assert "report.totalRemainingMinor" in app_js
+    assert "item.usageBps" in app_js
+    assert "parseFloat(" not in app_js
+    assert "Number(item.spentMinor" not in app_js

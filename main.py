@@ -16,6 +16,7 @@ from config.constants import (
 from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
+from core.app_state_service import AppStateService
 from core.book_service import BookService
 from core.category_service import CategoryService
 from core.database import Database
@@ -84,6 +85,7 @@ def main() -> int:
             ledger_service,
             payee_service,
         )
+        app_state_service = AppStateService(database, account_service)
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -97,6 +99,7 @@ def main() -> int:
             reporting_service,
             reconciliation_service,
             scheduled_service,
+            app_state_service,
         )
         bridge = Bridge(controller)
         window = MainWindow(bridge)

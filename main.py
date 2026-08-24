@@ -5,19 +5,14 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from config.constants import (
-    BACKUP_DIR,
-    CONFIG_DIR,
-    DATA_DIR,
-    IMPORT_DIR,
-    LOAN_DOCUMENT_DIR,
-    LOG_DIR,
-)
+from config.constants import BACKUP_DIR, CONFIG_DIR, DATA_DIR, IMPORT_DIR, LOAN_DOCUMENT_DIR, LOG_DIR
 from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
+from core.book_service import BookService
 from core.database import Database
 from core.ledger_service import LedgerService
+from core.payee_service import PayeeService
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -33,35 +28,26 @@ def _ensure_directories() -> None:
 
 def _configure_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(LOG_DIR / "finance-tracker.log", encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", handlers=[logging.FileHandler(LOG_DIR / "finance-tracker.log", encoding="utf-8"), logging.StreamHandler()])
 
 
 def main() -> int:
     _ensure_directories()
     _configure_logging()
     log = logging.getLogger(__name__)
-
     settings = SettingsStore().load()
     database = Database()
     try:
         database.open()
         database.migrate()
         database.integrity_check()
-
         account_service = AccountService(database)
         ledger_service = LedgerService(database)
-
+        book_service = BookService(database)
+        payee_service = PayeeService(database)
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
-
-        controller = AppController(database, settings, account_service, ledger_service)
+        controller = AppController(database, settings, account_service, ledger_service, book_service, payee_service)
         bridge = Bridge(controller)
         window = MainWindow(bridge)
         window.show()

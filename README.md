@@ -4,7 +4,7 @@ Local-first personal finance tracker for desktop Linux, built with Python, PySid
 
 ## Current status
 
-Milestones M0 through M4 are implemented on the current development branch.
+Milestones M0 through M5 are implemented and validated.
 
 Implemented:
 
@@ -15,17 +15,21 @@ Implemented:
 - manual account/category creation and manual expense entry;
 - merchant autocomplete limited to five ranked suggestions plus explicit new-payee creation;
 - XDG-based settings/data directories;
-- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v3;
-- currencies, users/books, accounts, transactions, entries, payees and aliases;
+- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v4;
+- currencies, users/books, accounts, transactions, entries, payees, aliases and historical book-scoped FX rates;
 - exact money parsing using integer minor units and `Decimal`; financial `float` values are rejected;
-- `AccountService`, `LedgerService`, `BookService`, `PayeeService` and `CategoryService`;
+- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService` and read-only `ReportingService`;
 - opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings in the domain layer;
 - intraday tracking-boundary validation;
 - deterministic autocomplete ranking and atomic payee merge;
+- FX-aware reporting with fail-closed behavior when required rates are missing;
+- net worth, income, expenses, saving rate, category and merchant reports, cash flow and account history;
+- canonical currency precision supplied by the Python backend; monetary values and basis points cross QWebChannel without JavaScript-number precision loss;
+- deterministic FX rounding for split transactions so report totals reconcile;
 - verified SQLite backup primitive;
-- deterministic stress suites for ledger, M3 and the M4 application workflow, including invalid-state rollback checks.
+- permanent deterministic stress suites across M0-M5, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations and reporting read-only invariants.
 
-The current M4 UI intentionally exposes only the first daily-use subset. Reporting, CSV reconciliation, loans, scheduled transactions, budgets and forecasting belong to later milestones.
+The next planned V1 milestone is CSV import and reconciliation with zero-trust matching. Loans, scheduled transactions, budgets, forecasting and complete backup/restore UX belong to later V1 milestones.
 
 ## Requirements
 

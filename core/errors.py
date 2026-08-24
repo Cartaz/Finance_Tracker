@@ -60,3 +60,23 @@ class TrackingBoundaryError(LedgerValidationError):
 
 class TrackingBoundaryAmbiguousError(LedgerValidationError):
     """Raised when temporal precision cannot resolve a tracking boundary."""
+
+
+class PayeeError(ValidationError):
+    """Base error for invalid payee operations."""
+
+
+class PayeeNotFoundError(PayeeError):
+    """Raised when a payee or alias does not exist."""
+
+
+class PayeeArchivedError(PayeeError):
+    """Raised when an archived payee is used by a mutable operation."""
+
+
+class PayeeCollisionError(PayeeError):
+    """Raised when canonical payee names or aliases collide."""
+
+
+class CategoryError(ValidationError):
+    """Raised when a category operation is invalid."""

@@ -28,7 +28,13 @@
     const fractionText = digits ? `,${fraction.toString().padStart(digits, "0")}` : "";
     return `${negative ? "−" : ""}${wholeText}${fractionText} ${currency}`;
   };
-  const percentBps = (bps) => bps == null ? "—" : `${bps < 0 ? "−" : ""}${Math.floor(Math.abs(bps) / 100)},${String(Math.abs(bps) % 100).padStart(2, "0")}%`;
+  const percentBps = (bps) => {
+    if (bps == null) return "—";
+    const value = BigInt(String(bps));
+    const negative = value < 0n;
+    const absolute = negative ? -value : value;
+    return `${negative ? "−" : ""}${absolute / 100n},${(absolute % 100n).toString().padStart(2, "0")}%`;
+  };
 
   function currencyOptions(items, selected = null) {
     return items.map((item) => `<option value="${item.code}"${item.code === selected ? " selected" : ""}>${item.code}</option>`).join("");

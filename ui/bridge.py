@@ -95,7 +95,7 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def linkImportRow(self, payload):
-        return self._call(self._controller.link_import_row, dict(payload or {}))
+        return self._call(self._controller.link_existing, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
     def postImportRow(self, payload):
@@ -103,7 +103,7 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def ignoreImportRow(self, payload):
-        return self._call(self._controller.ignore_row, dict(payload or {}))
+        return self._call(self._controller.ignore_import_row, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
     def createScheduledTransaction(self, payload):

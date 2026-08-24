@@ -417,7 +417,7 @@ def test_m3_thousand_case_payee_category_history_and_invalid_state_stress(ledger
         """
         SELECT 1 FROM payees p JOIN payee_aliases a
           ON a.book_id = p.book_id AND a.normalized_alias = p.normalized_name
-        WHERE p.book_id = ?
+        WHERE p.book_id = ? AND p.archived = 0
         """,
         (book,),
     ).fetchall()

@@ -124,3 +124,56 @@ def test_scheduled_bridge_toggle_and_validation_are_domain_safe(tmp_path) -> Non
         assert invalid["error"]["code"] == "ScheduledTransactionError"
     finally:
         db.close()
+
+
+def test_controller_money_and_fx_boundaries_do_not_coerce_float_to_text(tmp_path) -> None:
+    db, accounts, controller, bridge = _bridge_env(tmp_path)
+    try:
+        book_id = int(controller.initial_state()["book"]["id"])
+        bank = accounts.create_account(
+            book_id=book_id,
+            account_type="ASSET",
+            name="Bank",
+            currency_code="EUR",
+            tracking_start_date="2026-01-01",
+        )
+        expense = accounts.create_account(
+            book_id=book_id,
+            account_type="EXPENSE",
+            name="Expense",
+        )
+        scheduled = bridge.createScheduledTransaction(
+            {
+                "kind": "EXPENSE",
+                "sourceAccountId": bank.id,
+                "counterAccountId": expense.id,
+                "amount": 1.25,
+                "frequency": "MONTHLY",
+                "interval": 1,
+                "startDate": "2026-02-01",
+            }
+        )
+        assert scheduled["ok"] is False
+        assert scheduled["error"]["code"] == "MoneyParseError"
+
+        manual = bridge.createExpense(
+            {
+                "sourceAccountId": bank.id,
+                "categoryAccountId": expense.id,
+                "amount": 1.25,
+                "date": "2026-02-01",
+            }
+        )
+        assert manual["ok"] is False
+        assert manual["error"]["code"] == "MoneyParseError"
+
+        fx = bridge.setFxRate(
+            {"currency": "USD", "date": "2026-02-01", "rate": 0.92}
+        )
+        assert fx["ok"] is False
+        assert fx["error"]["code"] == "FxRateError"
+        assert db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+        assert db.connection.execute("SELECT COUNT(*) FROM scheduled_transactions").fetchone()[0] == 0
+        assert db.connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
+    finally:
+        db.close()

@@ -135,7 +135,7 @@ class AppController:
             book_id=book.id,
             currency_code=str(payload.get("currency", "")),
             rate_date=str(payload.get("date", "")),
-            rate=str(payload.get("rate", "")),
+            rate=payload.get("rate", ""),
         )
         return {
             "currency": rate.currency_code,
@@ -214,7 +214,7 @@ class AppController:
         if source.currency_code is None:
             raise ValidationError("scheduled source must be a balance account")
         amount = parse_money(
-            str(payload.get("amount", "")), self._database.currency(source.currency_code)
+            payload.get("amount", ""), self._database.currency(source.currency_code)
         )
         payee = payload.get("payeeId")
         try:
@@ -311,7 +311,7 @@ class AppController:
         if category.type != "EXPENSE" or category.placeholder or category.archived:
             raise ValidationError("category must be an active selectable expense account")
         amount = parse_money(
-            str(payload.get("amount", "")), self._database.currency(source.currency_code)
+            payload.get("amount", ""), self._database.currency(source.currency_code)
         )
         if amount <= 0:
             raise ValidationError("expense amount must be positive")

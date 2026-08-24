@@ -2,6 +2,7 @@
   "use strict";
   let backend = null;
   let state = null;
+  let currentBatchId = null;
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -107,6 +108,7 @@
     return state.accounts.filter((a) => a.type === type && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
   }
   async function loadImportBatch(batchId) {
+    currentBatchId = String(batchId);
     const rows = unwrap(await call("getImportBatchRows", { batchId }));
     $("import-rows").innerHTML = rows.map((row) => {
       const resolved = ["MATCHED", "POSTED", "IGNORED"].includes(row.review_state);
@@ -118,6 +120,7 @@
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
     await Promise.all([refreshReports(), refreshFxRates(), refreshImportBatches()]);
+    if (currentBatchId) await loadImportBatch(currentBatchId);
   }
   async function submit(method, form) {
     const data = Object.fromEntries(new FormData(form));
@@ -135,9 +138,9 @@
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
-  $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
+  $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
   $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });
-  $("import-rows").addEventListener("click", async (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; try { const rowId = button.dataset.rowId; if (button.dataset.action === "link") unwrap(await call("linkImportRow", { rowId, transactionId: button.dataset.transactionId })); else if (button.dataset.action === "ignore") unwrap(await call("ignoreImportRow", { rowId })); else if (button.dataset.action === "post") { const category = document.querySelector(`[data-category-row="${rowId}"]`); const result = unwrap(await call("postImportRow", { rowId, categoryAccountId: category?.value })); if (result.stateSnapshot) renderSnapshot(result.stateSnapshot); await refreshReports(); } const batchButton = document.querySelector(".import-batch:focus"); if (batchButton?.dataset.batchId) await loadImportBatch(batchButton.dataset.batchId); else await refreshImportBatches(); toast("Riconciliazione aggiornata"); } catch (error) { toast(error.message, true); } });
+  $("import-rows").addEventListener("click", async (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; try { const rowId = button.dataset.rowId; if (button.dataset.action === "link") unwrap(await call("linkImportRow", { rowId, transactionId: button.dataset.transactionId })); else if (button.dataset.action === "ignore") unwrap(await call("ignoreImportRow", { rowId })); else if (button.dataset.action === "post") { const category = document.querySelector(`[data-category-row="${rowId}"]`); const result = unwrap(await call("postImportRow", { rowId, categoryAccountId: category?.value })); if (result.stateSnapshot) renderSnapshot(result.stateSnapshot); await refreshReports(); } await refreshImportBatches(); if (currentBatchId) await loadImportBatch(currentBatchId); toast("Riconciliazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("load-history").addEventListener("click", async () => { try { const accountId = $("history-account").value; if (!accountId) return; const period = reportPeriod(); const history = unwrap(await call("getAccountHistory", { accountId, startDate: period.startDate, endDate: period.endDate })); $("account-history").innerHTML = `<p><b>${escapeHtml(history.name)}</b> · ${escapeHtml(history.currency)}</p>${history.points.map((point) => `<div class="report-row"><span>${point.date}</span><span>${money(point.balanceMinor, history.currency)}</span><strong>${money(point.baseValueMinor, history.baseCurrency)}</strong></div>`).join("")}`; } catch (error) { toast(error.message, true); } });
   $("refresh").addEventListener("click", () => refresh().catch((error) => toast(error.message, true)));
   $("payee-input").addEventListener("input", async (event) => { $("payee-id").value = ""; const query = event.target.value; if (!query.trim()) { $("payee-results").classList.add("hidden"); return; } try { const items = unwrap(await call("suggestPayees", query)); $("payee-results").innerHTML = items.map((item) => `<button type="button" data-id="${item.id}" data-name="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>${item.usageCount}×</small></button>`).join("") + `<button type="button" data-create="1">+ Usa “${escapeHtml(query)}”</button>`; $("payee-results").classList.remove("hidden"); } catch (error) { toast(error.message, true); } });

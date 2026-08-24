@@ -63,7 +63,7 @@ def test_projection_bounds_work_needed_to_skip_old_occurrences(ledger_env) -> No
         account_type="ASSET",
         name="Long-lived",
         currency_code="EUR",
-        tracking_start_date="1990-01-01",
+        tracking_start_date="1989-12-31",
     )
     category = ledger_env.accounts.create_account(
         book_id=ledger_env.book_id,

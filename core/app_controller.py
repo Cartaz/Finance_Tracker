@@ -10,6 +10,7 @@ from core.fx_service import FxService
 from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
 from core.money import parse_money
 from core.payee_service import PayeeService
+from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 
 
@@ -26,6 +27,7 @@ class AppController:
         payee_service: PayeeService,
         fx_service: FxService | None = None,
         reporting_service: ReportingService | None = None,
+        reconciliation_service: ReconciliationService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -37,6 +39,9 @@ class AppController:
         self._reporting = reporting_service or ReportingService(
             database, self._fx, account_service
         )
+        self._reconciliation = reconciliation_service or ReconciliationService(
+            database, account_service, ledger_service, payee_service
+        )
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -45,6 +50,7 @@ class AppController:
             "schemaVersion": SCHEMA_VERSION,
             "bookCurrency": self._settings.book_currency,
             "locale": self._settings.locale,
+            "reconciliationReviewMode": self._settings.reconciliation_review_mode,
             "currencies": self._supported_currencies(),
             "needsSetup": book is None,
             "book": None
@@ -135,13 +141,60 @@ class AppController:
     def list_fx_rates(self) -> list[dict[str, object]]:
         book = self._require_book()
         return [
-            {
-                "currency": item.currency_code,
-                "date": item.rate_date,
-                "rate": format(item.rate, "f"),
-            }
+            {"currency": item.currency_code, "date": item.rate_date, "rate": format(item.rate, "f")}
             for item in self._fx.list_rates(book.id)
         ]
+
+    def import_csv(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.import_csv(
+            book_id=book.id,
+            account_id=self._positive_id(payload.get("accountId")),
+            source_name=str(payload.get("sourceName", "")),
+            csv_text=str(payload.get("csvText", "")),
+            review_mode=str(
+                payload.get("reviewMode", self._settings.reconciliation_review_mode)
+            ),
+        )
+
+    def list_import_batches(self) -> list[dict[str, object]]:
+        book = self._require_book()
+        return self._reconciliation.list_batches(book.id)
+
+    def import_batch_rows(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        book = self._require_book()
+        return self._transport_money(
+            self._reconciliation.batch_rows(
+                book.id, self._positive_id(payload.get("batchId"))
+            )
+        )
+
+    def link_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.link_existing(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+            transaction_id=self._positive_id(payload.get("transactionId")),
+        )
+
+    def post_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        payee = payload.get("payeeId")
+        result = self._reconciliation.post_row(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+            posting_kind=str(payload.get("postingKind", "")),
+            counter_account_id=self._positive_id(payload.get("counterAccountId")),
+            payee_id=None if payee in (None, "") else self._positive_id(payee),
+        )
+        return {**result, "stateSnapshot": self.snapshot()}
+
+    def ignore_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.ignore_row(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+        )
 
     def create_account(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
@@ -156,9 +209,7 @@ class AppController:
             account_type=account_type,
             name=str(payload.get("name", "")),
             currency_code=currency,
-            tracking_start_date=str(payload.get("trackingStartDate", ""))
-            if currency
-            else None,
+            tracking_start_date=str(payload.get("trackingStartDate", "")) if currency else None,
             tracking_start_time=str(payload["trackingStartTime"])
             if payload.get("trackingStartTime")
             else None,
@@ -230,18 +281,10 @@ class AppController:
 
     def _supported_currencies(self) -> list[dict[str, object]]:
         rows = self._database.connection.execute(
-            """
-            SELECT code, minor_unit_digits
-            FROM currencies
-            WHERE active = 1
-            ORDER BY code
-            """
+            "SELECT code, minor_unit_digits FROM currencies WHERE active = 1 ORDER BY code"
         ).fetchall()
         return [
-            {
-                "code": str(row["code"]),
-                "minorUnitDigits": int(row["minor_unit_digits"]),
-            }
+            {"code": str(row["code"]), "minorUnitDigits": int(row["minor_unit_digits"])}
             for row in rows
         ]
 
@@ -251,7 +294,7 @@ class AppController:
             return None
         if (
             key is not None
-            and key.endswith(("Minor", "Bps"))
+            and key.endswith(("Minor", "Bps", "_minor", "_bps"))
             and isinstance(value, int)
         ):
             return str(value)

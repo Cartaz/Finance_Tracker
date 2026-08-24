@@ -2,6 +2,8 @@
   "use strict";
   let backend = null;
   let state = null;
+  let currentBatchId = null;
+  let importBatchAccounts = new Map();
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -73,6 +75,7 @@
     $("expense-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("expense-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
     $("history-account").innerHTML = balanceAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
   }
 
   function renderDashboard(report) {
@@ -97,9 +100,53 @@
     const items = unwrap(await call("listFxRates"));
     $("fx-rates").innerHTML = items.map((item) => `<div class="mini-row"><span>${item.date}</span><b>${escapeHtml(item.currency)}</b><span>${escapeHtml(item.rate)}</span></div>`).join("") || `<p class="empty">Nessun tasso salvato.</p>`;
   }
+  async function refreshImportBatches() {
+    const items = unwrap(await call("listImportBatches"));
+    importBatchAccounts = new Map(items.map((item) => [String(item.id), Number(item.account_id)]));
+    $("import-batches").innerHTML = items.map((item) => `<button type="button" class="row import-batch" data-batch-id="${item.id}"><b>${escapeHtml(item.source_name)}</b><span>${escapeHtml(item.account_name)}</span><small>${item.review_mode} · ${item.row_count} righe</small></button>`).join("") || `<p class="empty">Nessun import.</p>`;
+  }
+  function postingKindsForRow(amountMinor) {
+    return BigInt(String(amountMinor)) < 0n ? ["EXPENSE", "TRANSFER"] : ["INCOME", "REFUND", "TRANSFER"];
+  }
+  function counterOptionsForRow(row, postingKind) {
+    const sourceAccountId = importBatchAccounts.get(String(currentBatchId));
+    let candidates = [];
+    if (postingKind === "EXPENSE" || postingKind === "REFUND") {
+      candidates = state.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder);
+    } else if (postingKind === "INCOME") {
+      candidates = state.accounts.filter((a) => a.type === "INCOME" && !a.placeholder);
+    } else if (postingKind === "TRANSFER") {
+      candidates = state.accounts.filter((a) => ["ASSET", "LIABILITY"].includes(a.type) && !a.placeholder && a.id !== sourceAccountId && a.currency === row.currency_code);
+    }
+    return candidates.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}${a.currency ? ` · ${a.currency}` : ""}</option>`).join("");
+  }
+  function candidateButton(rowId, candidate) {
+    const detail = candidate.payee_name || candidate.description || candidate.kind || "Transazione";
+    const currency = candidate.currency_code ? ` · ${candidate.currency_code}` : "";
+    return `<button type="button" data-action="link" data-row-id="${rowId}" data-transaction-id="${candidate.id}">Collega #${candidate.id} · ${escapeHtml(detail)}${currency}</button>`;
+  }
+  function postingControls(row) {
+    const kinds = postingKindsForRow(row.amount_minor);
+    const selectedKind = kinds[0];
+    const kindOptions = kinds.map((kind) => `<option value="${kind}">${kind}</option>`).join("");
+    return `<select data-posting-kind-row="${row.id}">${kindOptions}</select><select data-counter-row="${row.id}">${counterOptionsForRow(row, selectedKind)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button>`;
+  }
+  async function loadImportBatch(batchId) {
+    currentBatchId = String(batchId);
+    const rows = unwrap(await call("getImportBatchRows", { batchId }));
+    $("import-rows").innerHTML = rows.map((row) => {
+      const resolved = ["MATCHED", "POSTED", "IGNORED"].includes(row.review_state);
+      const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS", "AMBIGUOUS"].includes(row.review_state);
+      const candidates = (row.candidates || []).map((candidate) => candidateButton(row.id, candidate)).join("");
+      const post = resolved || blocked ? "" : postingControls(row);
+      const ignore = resolved ? "" : `<button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
+      return `<div class="card import-row" data-import-row-id="${row.id}" data-amount-minor="${row.amount_minor}" data-currency-code="${row.currency_code}"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}${ignore}</div></div>`;
+    }).join("") || `<p class="empty">Nessuna riga.</p>`;
+  }
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
-    await Promise.all([refreshReports(), refreshFxRates()]);
+    await Promise.all([refreshReports(), refreshFxRates(), refreshImportBatches()]);
+    if (currentBatchId) await loadImportBatch(currentBatchId);
   }
   async function submit(method, form) {
     const data = Object.fromEntries(new FormData(form));
@@ -117,6 +164,10 @@
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
+  $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
+  $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });
+  $("import-rows").addEventListener("change", (event) => { const kindSelect = event.target.closest("select[data-posting-kind-row]"); if (!kindSelect) return; const rowId = kindSelect.dataset.postingKindRow; const rowElement = document.querySelector(`[data-import-row-id="${rowId}"]`); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!rowElement || !counter) return; counter.innerHTML = counterOptionsForRow({ amount_minor: rowElement.dataset.amountMinor, currency_code: rowElement.dataset.currencyCode }, kindSelect.value); });
+  $("import-rows").addEventListener("click", async (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; try { const rowId = button.dataset.rowId; if (button.dataset.action === "link") unwrap(await call("linkImportRow", { rowId, transactionId: button.dataset.transactionId })); else if (button.dataset.action === "ignore") unwrap(await call("ignoreImportRow", { rowId })); else if (button.dataset.action === "post") { const postingKind = document.querySelector(`[data-posting-kind-row="${rowId}"]`); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!counter?.value) throw new Error("Seleziona una contropartita compatibile"); const result = unwrap(await call("postImportRow", { rowId, postingKind: postingKind?.value, counterAccountId: counter.value })); if (result.stateSnapshot) renderSnapshot(result.stateSnapshot); await refreshReports(); } await refreshImportBatches(); if (currentBatchId) await loadImportBatch(currentBatchId); toast("Riconciliazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("load-history").addEventListener("click", async () => { try { const accountId = $("history-account").value; if (!accountId) return; const period = reportPeriod(); const history = unwrap(await call("getAccountHistory", { accountId, startDate: period.startDate, endDate: period.endDate })); $("account-history").innerHTML = `<p><b>${escapeHtml(history.name)}</b> · ${escapeHtml(history.currency)}</p>${history.points.map((point) => `<div class="report-row"><span>${point.date}</span><span>${money(point.balanceMinor, history.currency)}</span><strong>${money(point.baseValueMinor, history.baseCurrency)}</strong></div>`).join("")}`; } catch (error) { toast(error.message, true); } });
   $("refresh").addEventListener("click", () => refresh().catch((error) => toast(error.message, true)));
   $("payee-input").addEventListener("input", async (event) => { $("payee-id").value = ""; const query = event.target.value; if (!query.trim()) { $("payee-results").classList.add("hidden"); return; } try { const items = unwrap(await call("suggestPayees", query)); $("payee-results").innerHTML = items.map((item) => `<button type="button" data-id="${item.id}" data-name="${escapeHtml(item.name)}">${escapeHtml(item.name)} <small>${item.usageCount}×</small></button>`).join("") + `<button type="button" data-create="1">+ Usa “${escapeHtml(query)}”</button>`; $("payee-results").classList.remove("hidden"); } catch (error) { toast(error.message, true); } });
@@ -124,5 +175,5 @@
 
   initializeDates();
   if (typeof QWebChannel === "undefined" || !window.qt?.webChannelTransport) { $("bridge-status").textContent = "Backend non disponibile"; return; }
-  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
+  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("import-form").elements.reviewMode.value = initial.reconciliationReviewMode; $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
 })();

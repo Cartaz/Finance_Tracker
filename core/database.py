@@ -206,6 +206,66 @@ CREATE INDEX IF NOT EXISTS idx_fx_rates_lookup
     ON fx_rates(book_id, currency_code, rate_date DESC);
 """
 
+_SCHEMA_V5 = """
+CREATE TABLE IF NOT EXISTS import_batches (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    source_name TEXT NOT NULL,
+    review_mode TEXT NOT NULL CHECK (review_mode IN ('FULL_REVIEW', 'ASSISTED_REVIEW')),
+    imported_at TEXT NOT NULL,
+    row_count INTEGER NOT NULL CHECK (row_count >= 0),
+    UNIQUE (id, book_id),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS import_rows (
+    id INTEGER PRIMARY KEY,
+    batch_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    row_number INTEGER NOT NULL,
+    transaction_date TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL CHECK (amount_minor <> 0),
+    currency_code TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    external_id TEXT,
+    fingerprint TEXT NOT NULL,
+    review_state TEXT NOT NULL CHECK (review_state IN (
+        'MATCHED', 'REVIEW_REQUIRED', 'SUGGESTED', 'AMBIGUOUS', 'UNMATCHED',
+        'DUPLICATE_REVIEW', 'OUTSIDE_TRACKING', 'TRACKING_AMBIGUOUS', 'POSTED', 'IGNORED'
+    )),
+    matched_transaction_id INTEGER,
+    created_at TEXT NOT NULL,
+    UNIQUE (batch_id, row_number),
+    FOREIGN KEY (batch_id, book_id) REFERENCES import_batches(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
+    FOREIGN KEY (matched_transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS reconciliation_links (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    source_name TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    transaction_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (book_id, account_id, source_name, external_id),
+    UNIQUE (book_id, account_id, transaction_id),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_import_batches_book_account ON import_batches(book_id, account_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_import_rows_batch_state ON import_rows(batch_id, review_state, row_number);
+CREATE INDEX IF NOT EXISTS idx_import_rows_external ON import_rows(book_id, external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_import_rows_batch_external_unique
+    ON import_rows(batch_id, external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_import_rows_fingerprint ON import_rows(book_id, fingerprint);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_links_external
+    ON reconciliation_links(book_id, account_id, source_name, external_id);
+"""
+
 
 class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
@@ -285,6 +345,14 @@ class Database:
                 tx.execute(
                     "INSERT INTO schema_migrations(version, applied_at, description) VALUES (4, datetime('now'), ?)",
                     ("Book-scoped historical FX rates for reporting",),
+                )
+            current = 4
+        if current < 5:
+            with self.transaction() as tx:
+                tx.executescript(_SCHEMA_V5)
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, description) VALUES (5, datetime('now'), ?)",
+                    ("CSV import staging and zero-trust reconciliation",),
                 )
 
     def _current_schema_version(self) -> int:

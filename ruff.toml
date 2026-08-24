@@ -1,0 +1,5 @@
+# Reconciliation parses bank statement calendar dates, not instants.
+# datetime.strptime(...).date() intentionally discards time semantics, so DTZ007
+# does not apply to this date-only parser.
+[lint.per-file-ignores]
+"core/reconciliation_service.py" = ["DTZ007"]

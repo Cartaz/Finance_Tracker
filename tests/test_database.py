@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -8,14 +9,14 @@ from core.errors import UnsupportedCurrencyError
 from core.ledger_service import LedgerService
 
 
-def test_migration_enables_m4_schema(tmp_path: Path) -> None:
+def test_migration_enables_m6_schema(tmp_path: Path) -> None:
     db = Database(tmp_path / "finance.db")
     try:
         conn = db.open()
         db.migrate()
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
         tables = {
             row[0]
             for row in conn.execute(
@@ -29,6 +30,9 @@ def test_migration_enables_m4_schema(tmp_path: Path) -> None:
             "payees",
             "payee_aliases",
             "fx_rates",
+            "import_batches",
+            "import_rows",
+            "reconciliation_links",
         } <= tables
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
@@ -42,7 +46,7 @@ def test_migration_enables_m4_schema(tmp_path: Path) -> None:
         db.close()
 
 
-def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
+def test_existing_v2_database_with_ledger_data_upgrades_to_v5(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "finance.db"
@@ -126,7 +130,7 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
         upgraded.migrate()
         assert upgraded.connection.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 5
         assert upgraded.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2
         assert upgraded.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 4
         columns = {
@@ -139,12 +143,69 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v4(
         assert upgraded.connection.execute(
             "SELECT COUNT(*) FROM transactions WHERE payee_id IS NOT NULL"
         ).fetchone()[0] == 0
-        assert upgraded.connection.execute(
-            "SELECT COUNT(*) FROM fx_rates"
-        ).fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+        assert upgraded.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0] == 0
         upgraded.integrity_check()
     finally:
         upgraded.close()
+
+
+def test_import_rows_cannot_reference_batch_from_another_book(tmp_path: Path) -> None:
+    db = Database(tmp_path / "cross-book.db")
+    db.open()
+    db.migrate()
+    try:
+        with db.transaction() as conn:
+            user_id = int(
+                conn.execute(
+                    "INSERT INTO users(name, created_at, updated_at) VALUES ('User', datetime('now'), datetime('now'))"
+                ).lastrowid
+            )
+            book_a = int(
+                conn.execute(
+                    "INSERT INTO books(name, base_currency_code, created_at, updated_at) VALUES ('A','EUR',datetime('now'),datetime('now'))"
+                ).lastrowid
+            )
+            book_b = int(
+                conn.execute(
+                    "INSERT INTO books(name, base_currency_code, created_at, updated_at) VALUES ('B','EUR',datetime('now'),datetime('now'))"
+                ).lastrowid
+            )
+            conn.executemany(
+                "INSERT INTO book_members(book_id,user_id,role) VALUES (?,?,'OWNER')",
+                ((book_a, user_id), (book_b, user_id)),
+            )
+        accounts = AccountService(db)
+        account_a = accounts.create_account(
+            book_id=book_a,
+            account_type="ASSET",
+            name="A Bank",
+            currency_code="EUR",
+            tracking_start_date="2026-01-01",
+        )
+        with db.transaction() as conn:
+            batch_id = int(
+                conn.execute(
+                    "INSERT INTO import_batches(book_id,account_id,source_name,review_mode,imported_at,row_count) VALUES (?,?,?,'FULL_REVIEW',datetime('now'),1)",
+                    (book_a, account_a.id, "bank"),
+                ).lastrowid
+            )
+        with pytest.raises(sqlite3.IntegrityError), db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO import_rows(
+                    batch_id,book_id,row_number,transaction_date,amount_minor,currency_code,
+                    description,fingerprint,review_state,created_at
+                ) VALUES (?,?,1,'2026-01-02',-100,'EUR','x','f','REVIEW_REQUIRED',datetime('now'))
+                """,
+                (batch_id, book_b),
+            )
+        assert db.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+        db.integrity_check()
+    finally:
+        db.close()
 
 
 def test_unknown_currency_is_rejected(tmp_path: Path) -> None:
@@ -173,7 +234,7 @@ def test_backup_is_verified_snapshot(tmp_path: Path) -> None:
             assert restored.currency("EUR").code == "EUR"
             assert restored.connection.execute(
                 "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == 4
+            ).fetchone()[0] == 5
         finally:
             restored.close()
     finally:

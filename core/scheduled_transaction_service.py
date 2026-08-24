@@ -9,10 +9,10 @@ from core.database import Database
 from core.errors import ScheduledTransactionError
 from core.ledger_service import LedgerService
 from core.payee_service import PayeeService
+from core.posting_policy import PostingPolicy
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
-_KINDS = {"EXPENSE", "INCOME", "REFUND", "TRANSFER"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,11 +353,12 @@ class ScheduledTransactionService:
 
     @staticmethod
     def _normalize_kind(value: str) -> str:
-        if not isinstance(value, str) or value.strip().upper() not in _KINDS:
+        try:
+            return PostingPolicy.normalize_kind(value)
+        except ValueError as exc:
             raise ScheduledTransactionError(
                 "kind must be EXPENSE, INCOME, REFUND or TRANSFER"
-            )
-        return value.strip().upper()
+            ) from exc
 
     @staticmethod
     def _normalize_frequency(value: str) -> str:
@@ -369,30 +370,25 @@ class ScheduledTransactionService:
 
     @staticmethod
     def _validate_accounts(kind: str, source, counter) -> None:
-        for account in (source, counter):
-            if account.archived or account.placeholder:
-                raise ScheduledTransactionError(
-                    "scheduled accounts must be active and selectable"
-                )
+        if source.archived or source.placeholder:
+            raise ScheduledTransactionError(
+                "scheduled source account must be active and selectable"
+            )
         if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
             raise ScheduledTransactionError("source must be a balance account")
-        if source.id == counter.id:
-            raise ScheduledTransactionError("source and counter account must differ")
-        if kind in {"EXPENSE", "REFUND"} and counter.type != "EXPENSE":
+        if not PostingPolicy.counter_is_eligible(
+            kind,
+            source_account_id=source.id,
+            source_currency=source.currency_code,
+            counter_account_id=counter.id,
+            counter_type=counter.type,
+            counter_currency=counter.currency_code,
+            counter_archived=counter.archived,
+            counter_placeholder=counter.placeholder,
+        ):
             raise ScheduledTransactionError(
-                "expense/refund counter must be an expense category"
+                "counter account is not eligible for this posting kind"
             )
-        if kind == "INCOME" and counter.type != "INCOME":
-            raise ScheduledTransactionError("income counter must be an income category")
-        if kind == "TRANSFER":
-            if counter.type not in {"ASSET", "LIABILITY"} or counter.currency_code is None:
-                raise ScheduledTransactionError(
-                    "transfer counter must be a balance account"
-                )
-            if counter.currency_code != source.currency_code:
-                raise ScheduledTransactionError(
-                    "scheduled cross-currency transfers are not inferred"
-                )
 
     @staticmethod
     def _record(row) -> ScheduledTransaction:

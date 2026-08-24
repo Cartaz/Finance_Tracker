@@ -1,43 +1,16 @@
 <!doctype html>
 <html lang="it">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Finance Tracker</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Finance Tracker</title><link rel="stylesheet" href="styles.css"></head>
 <body>
-  <main class="shell">
-    <section class="card hero" aria-labelledby="app-title">
-      <div>
-        <p class="eyebrow">FOUNDATION · M0/M1</p>
-        <h1 id="app-title">Finance Tracker</h1>
-        <p class="subtitle">Local-first personal finance tracker.</p>
-      </div>
-      <div class="status" id="bridge-status">Connessione al backend…</div>
-    </section>
-
-    <section class="grid" aria-label="Foundation state">
-      <article class="card metric">
-        <span>Book currency</span>
-        <strong id="book-currency">—</strong>
-      </article>
-      <article class="card metric">
-        <span>Locale</span>
-        <strong id="locale">—</strong>
-      </article>
-      <article class="card metric">
-        <span>Schema</span>
-        <strong id="schema-version">—</strong>
-      </article>
-    </section>
-
-    <section class="card notice">
-      <h2>Fondamenta attive</h2>
-      <p>Questa milestone contiene shell desktop, configurazione, SQLite versionato, currencies/users/books e money parser. Il ledger verrà introdotto nella milestone successiva.</p>
-    </section>
-  </main>
-  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="app.js"></script>
-</body>
-</html>
+<div id="toast" role="status" aria-live="polite"></div>
+<section id="setup" class="setup hidden"><form id="setup-form" class="card form-card"><p class="eyebrow">PRIMO AVVIO</p><h1>Configura il tuo book</h1><label>Nome<input name="userName" required value="Francesco"></label><label>Book<input name="bookName" required value="Personale"></label><label>Valuta<select name="currency"><option>EUR</option><option>USD</option><option>GBP</option><option>CHF</option><option>JPY</option></select></label><button type="submit">Crea book</button></form></section>
+<div id="app" class="layout hidden">
+<aside class="sidebar"><h2>Finance<br>Tracker</h2><nav><button class="nav active" data-view="dashboard">Dashboard</button><button class="nav" data-view="transactions">Transazioni</button><button class="nav" data-view="accounts">Conti</button></nav><div id="bridge-status" class="status">Backend…</div></aside>
+<main class="content">
+<header><div><p class="eyebrow" id="book-name">PERSONALE</p><h1 id="view-title">Dashboard</h1></div><button id="refresh">Aggiorna</button></header>
+<section id="dashboard" class="view"><div id="metrics" class="metrics"></div><div class="card"><h3>Movimenti recenti</h3><div id="recent"></div></div></section>
+<section id="transactions" class="view hidden"><div class="split"><form id="expense-form" class="card form-card"><h3>Nuova spesa</h3><label>Conto<select name="sourceAccountId" id="expense-account" required></select></label><label>Categoria<select name="categoryAccountId" id="expense-category" required></select></label><label>Merchant<div class="autocomplete"><input id="payee-input" autocomplete="off" placeholder="Inizia a scrivere…"><div id="payee-results" class="suggestions hidden"></div></div></label><input type="hidden" name="payeeId" id="payee-id"><label>Importo<input name="amount" required inputmode="decimal" placeholder="12,30"></label><label>Data<input name="date" type="date" required></label><label>Ora opzionale<input name="time" type="time"></label><label>Descrizione<input name="description"></label><button type="submit">Registra spesa</button></form><div class="card"><h3>Transazioni</h3><div id="transactions-list"></div></div></div></section>
+<section id="accounts" class="view hidden"><div class="split"><form id="account-form" class="card form-card"><h3>Nuovo conto / categoria</h3><label>Tipo<select name="type" id="account-type"><option>ASSET</option><option>LIABILITY</option><option>EXPENSE</option><option>INCOME</option><option>EQUITY</option></select></label><label>Nome<input name="name" required></label><div id="balance-fields"><label>Valuta<select name="currency"><option>EUR</option><option>USD</option><option>GBP</option><option>CHF</option><option>JPY</option></select></label><label>Tracking start<input name="trackingStartDate" type="date"></label><label>Ora opzionale<input name="trackingStartTime" type="time"></label></div><label class="check"><input name="placeholder" type="checkbox"> Placeholder</label><button type="submit">Crea</button></form><div class="card"><h3>Conti e categorie</h3><div id="accounts-list"></div></div></div></section>
+</main></div>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script><script src="app.js"></script>
+</body></html>

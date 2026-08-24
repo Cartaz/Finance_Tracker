@@ -180,17 +180,22 @@ class ScheduledTransactionService:
             raise ScheduledTransactionError("due occurrence limit reached")
 
         posted: list[dict[str, object]] = []
-        for schedule in schedules:
-            if not schedule.active:
-                continue
-            current = date.fromisoformat(schedule.next_due_date)
-            end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
-            while current <= as_of and (end is None or current <= end):
-                posted.append(self._post_occurrence(schedule, current))
-                schedule = self.get_schedule(book_id, schedule.id)
-                current = date.fromisoformat(schedule.next_due_date)
+        with self._database.transaction() as conn:
+            for schedule in schedules:
                 if not schedule.active:
-                    break
+                    continue
+                current = date.fromisoformat(schedule.next_due_date)
+                end = (
+                    None
+                    if schedule.end_date is None
+                    else date.fromisoformat(schedule.end_date)
+                )
+                while current <= as_of and (end is None or current <= end):
+                    posted.append(self._post_occurrence(schedule, current, conn))
+                    schedule = self.get_schedule(book_id, schedule.id)
+                    current = date.fromisoformat(schedule.next_due_date)
+                    if not schedule.active:
+                        break
         return posted
 
     def _count_due(self, schedule: ScheduledTransaction, as_of: date) -> int:
@@ -206,10 +211,8 @@ class ScheduledTransactionService:
             )
         return count
 
-    def _post_occurrence(
-        self, schedule: ScheduledTransaction, due: date
-    ) -> dict[str, object]:
-        existing = self._database.connection.execute(
+    def _post_occurrence(self, schedule: ScheduledTransaction, due: date, conn) -> dict[str, object]:
+        existing = conn.execute(
             "SELECT transaction_id FROM scheduled_occurrences WHERE schedule_id=? AND due_date=?",
             (schedule.id, due.isoformat()),
         ).fetchone()
@@ -217,7 +220,7 @@ class ScheduledTransactionService:
             next_due = self._advance(
                 due, schedule.frequency, schedule.interval, schedule.start_date
             )
-            self._advance_schedule(schedule, next_due)
+            self._advance_schedule(schedule, next_due, conn)
             return {
                 "scheduleId": schedule.id,
                 "dueDate": due.isoformat(),
@@ -256,24 +259,23 @@ class ScheduledTransactionService:
             entries=entries,
         )
 
-        with self._database.transaction() as conn:
-            transaction = self._ledger.create_transaction(draft, connection=conn)
-            if schedule.payee_id is not None:
-                self._payees.assign_transaction(
-                    book_id=schedule.book_id,
-                    transaction_id=transaction.id,
-                    payee_id=schedule.payee_id,
-                    connection=conn,
-                )
-            conn.execute(
-                """
-                INSERT INTO scheduled_occurrences(
-                    schedule_id, book_id, due_date, transaction_id, created_at
-                ) VALUES (?, ?, ?, ?, datetime('now'))
-                """,
-                (schedule.id, schedule.book_id, due.isoformat(), transaction.id),
+        transaction = self._ledger.create_transaction(draft, connection=conn)
+        if schedule.payee_id is not None:
+            self._payees.assign_transaction(
+                book_id=schedule.book_id,
+                transaction_id=transaction.id,
+                payee_id=schedule.payee_id,
+                connection=conn,
             )
-            self._advance_schedule(schedule, next_due, connection=conn)
+        conn.execute(
+            """
+            INSERT INTO scheduled_occurrences(
+                schedule_id, book_id, due_date, transaction_id, created_at
+            ) VALUES (?, ?, ?, ?, datetime('now'))
+            """,
+            (schedule.id, schedule.book_id, due.isoformat(), transaction.id),
+        )
+        self._advance_schedule(schedule, next_due, conn)
         return {
             "scheduleId": schedule.id,
             "dueDate": due.isoformat(),
@@ -282,20 +284,18 @@ class ScheduledTransactionService:
         }
 
     def _advance_schedule(
-        self, schedule: ScheduledTransaction, next_due: date, *, connection=None
+        self, schedule: ScheduledTransaction, next_due: date, conn
     ) -> None:
         end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
         active = 0 if end is not None and next_due > end else 1
-        sql = (
-            "UPDATE scheduled_transactions SET next_due_date=?, active=?, "
-            "updated_at=datetime('now') WHERE id=? AND book_id=?"
+        conn.execute(
+            """
+            UPDATE scheduled_transactions
+            SET next_due_date=?, active=?, updated_at=datetime('now')
+            WHERE id=? AND book_id=?
+            """,
+            (next_due.isoformat(), active, schedule.id, schedule.book_id),
         )
-        params = (next_due.isoformat(), active, schedule.id, schedule.book_id)
-        if connection is not None:
-            connection.execute(sql, params)
-            return
-        with self._database.transaction() as conn:
-            conn.execute(sql, params)
 
     @staticmethod
     def _advance(

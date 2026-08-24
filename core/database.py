@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS import_rows (
     fingerprint TEXT NOT NULL,
     review_state TEXT NOT NULL CHECK (review_state IN (
         'MATCHED', 'REVIEW_REQUIRED', 'SUGGESTED', 'AMBIGUOUS', 'UNMATCHED',
-        'DUPLICATE_REVIEW', 'OUTSIDE_TRACKING', 'POSTED', 'IGNORED'
+        'DUPLICATE_REVIEW', 'OUTSIDE_TRACKING', 'TRACKING_AMBIGUOUS', 'POSTED', 'IGNORED'
     )),
     matched_transaction_id INTEGER,
     created_at TEXT NOT NULL,
@@ -259,6 +259,8 @@ CREATE TABLE IF NOT EXISTS reconciliation_links (
 CREATE INDEX IF NOT EXISTS idx_import_batches_book_account ON import_batches(book_id, account_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_import_rows_batch_state ON import_rows(batch_id, review_state, row_number);
 CREATE INDEX IF NOT EXISTS idx_import_rows_external ON import_rows(book_id, external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_import_rows_batch_external_unique
+    ON import_rows(batch_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_import_rows_fingerprint ON import_rows(book_id, fingerprint);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_links_external
     ON reconciliation_links(book_id, account_id, source_name, external_id);

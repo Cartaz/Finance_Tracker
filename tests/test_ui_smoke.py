@@ -30,3 +30,11 @@ def test_currency_controls_are_populated_from_backend_metadata() -> None:
     assert "minorUnitDigits" in app_js
     assert "currencySpecs.get(currency)" in app_js
     assert 'style: "currency"' not in app_js
+
+
+def test_percentage_formatting_uses_bigint() -> None:
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "BigInt(String(bps))" in app_js
+    assert "Math.abs(bps)" not in app_js
+    assert "Math.floor(Math.abs(bps)" not in app_js

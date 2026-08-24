@@ -253,6 +253,10 @@ class ReconciliationService:
     ) -> dict[str, object]:
         row, batch = self._require_row(book_id, row_id)
         state = str(row["review_state"])
+        if state == "AMBIGUOUS":
+            raise ReconciliationAmbiguousError(
+                "ambiguous rows must be resolved before posting"
+            )
         if state in _TERMINAL_STATES or state in _BLOCKED_POST_STATES:
             raise ReconciliationError("row cannot be posted in its current state")
         if not isinstance(posting_kind, str):
@@ -368,8 +372,6 @@ class ReconciliationService:
         review_mode: str,
         tracking_start_date: str | None,
     ) -> tuple[str, int | None]:
-        # A persisted bank identity is deterministic evidence and may resolve even
-        # when the CSV itself lacks time precision at the tracking boundary.
         if external_id is not None:
             link = self._database.connection.execute(
                 """
@@ -439,13 +441,6 @@ class ReconciliationService:
         transaction_date: str,
         amount_minor: int,
     ) -> list[dict[str, object]]:
-        """Return compatible ledger candidates using native account quantity.
-
-        The imported statement currency has already been validated against the
-        account's native currency. A ledger transaction may legitimately use a
-        different transaction currency, so matching t.currency_code here would
-        incorrectly hide valid cross-currency transactions.
-        """
         rows = self._database.connection.execute(
             """
             SELECT DISTINCT t.id, t.kind, t.transaction_date, t.currency_code,

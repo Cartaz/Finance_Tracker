@@ -96,6 +96,26 @@ def test_assisted_review_never_auto_matches_heuristic_candidate(ledger_env) -> N
     assert conflict_row["review_state"] == "AMBIGUOUS"
     assert conflict_row["matched_transaction_id"] is None
 
+    before = (
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+    )
+    with pytest.raises(ReconciliationAmbiguousError):
+        service.post_row(
+            book_id=ledger_env.book_id,
+            row_id=int(conflict_row["id"]),
+            category_account_id=groceries.id,
+        )
+    after = (
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+        ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+    )
+    assert after == before
+    assert ledger_env.db.connection.execute(
+        "SELECT review_state, matched_transaction_id FROM import_rows WHERE id=?",
+        (int(conflict_row["id"]),),
+    ).fetchone()["review_state"] == "AMBIGUOUS"
+
 
 def test_posting_is_atomic_and_tracking_boundary_is_preserved(ledger_env) -> None:
     bank, groceries, salary, merchant, service = _setup(ledger_env)

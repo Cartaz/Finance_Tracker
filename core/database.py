@@ -266,6 +266,50 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_links_external
     ON reconciliation_links(book_id, account_id, source_name, external_id);
 """
 
+_SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS scheduled_transactions (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('EXPENSE', 'INCOME', 'REFUND', 'TRANSFER')),
+    source_account_id INTEGER NOT NULL,
+    counter_account_id INTEGER NOT NULL,
+    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+    currency_code TEXT NOT NULL,
+    frequency TEXT NOT NULL CHECK (frequency IN ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')),
+    interval_count INTEGER NOT NULL CHECK (interval_count BETWEEN 1 AND 365),
+    start_date TEXT NOT NULL,
+    next_due_date TEXT NOT NULL,
+    end_date TEXT,
+    description TEXT NOT NULL DEFAULT '',
+    payee_id INTEGER,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (id, book_id),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (source_account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (counter_account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
+    FOREIGN KEY (payee_id, book_id) REFERENCES payees(id, book_id) ON DELETE RESTRICT,
+    CHECK (end_date IS NULL OR end_date >= start_date),
+    CHECK (next_due_date >= start_date)
+);
+CREATE TABLE IF NOT EXISTS scheduled_occurrences (
+    schedule_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    due_date TEXT NOT NULL,
+    transaction_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (schedule_id, due_date),
+    FOREIGN KEY (schedule_id, book_id) REFERENCES scheduled_transactions(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_due
+    ON scheduled_transactions(book_id, active, next_due_date);
+CREATE INDEX IF NOT EXISTS idx_scheduled_occurrence_transaction
+    ON scheduled_occurrences(book_id, transaction_id);
+"""
+
 
 class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
@@ -353,6 +397,14 @@ class Database:
                 tx.execute(
                     "INSERT INTO schema_migrations(version, applied_at, description) VALUES (5, datetime('now'), ?)",
                     ("CSV import staging and zero-trust reconciliation",),
+                )
+            current = 5
+        if current < 6:
+            with self.transaction() as tx:
+                tx.executescript(_SCHEMA_V6)
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, description) VALUES (6, datetime('now'), ?)",
+                    ("Scheduled transaction templates and posted occurrences",),
                 )
 
     def _current_schema_version(self) -> int:

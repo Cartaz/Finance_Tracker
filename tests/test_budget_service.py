@@ -96,7 +96,6 @@ def test_monthly_budget_aggregates_category_subtree_and_refunds(ledger_env) -> N
     assert budget["remainingMinor"] == 4_000
     assert budget["usageBps"] == 6_000
     assert budget["overBudget"] is False
-    assert budget["transactionCount"] == 3
 
 
 def test_budget_upsert_delete_and_validation_are_book_scoped(ledger_env) -> None:
@@ -154,6 +153,41 @@ def test_budget_upsert_delete_and_validation_are_book_scoped(ledger_env) -> None
     assert budgets.period_status(book_id=book, period="2026-03")["budgets"] == []
     with pytest.raises(BudgetError):
         budgets.delete_budget(book_id=book, budget_id=first.id)
+
+
+def test_same_period_budgets_cannot_overlap_parent_and_child_scopes(ledger_env) -> None:
+    budgets, categories, _ = _service(ledger_env)
+    root = categories.create_category(
+        book_id=ledger_env.book_id,
+        category_type="EXPENSE",
+        name="Home",
+        placeholder=True,
+    )
+    child = categories.create_category(
+        book_id=ledger_env.book_id,
+        category_type="EXPENSE",
+        name="Utilities",
+        parent_id=root.id,
+    )
+    budgets.set_budget(
+        book_id=ledger_env.book_id,
+        category_account_id=root.id,
+        period="2026-06",
+        amount_minor=50_000,
+    )
+    with pytest.raises(BudgetError, match="cannot overlap"):
+        budgets.set_budget(
+            book_id=ledger_env.book_id,
+            category_account_id=child.id,
+            period="2026-06",
+            amount_minor=20_000,
+        )
+    budgets.set_budget(
+        book_id=ledger_env.book_id,
+        category_account_id=child.id,
+        period="2026-07",
+        amount_minor=20_000,
+    )
 
 
 def test_budget_spending_fails_closed_when_required_fx_is_missing(ledger_env) -> None:

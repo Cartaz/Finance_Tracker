@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from config.constants import SCHEMA_VERSION
 from core.account_service import AccountService
 from core.database import Database
 from core.errors import LoanError
@@ -114,16 +115,19 @@ def _new_loan(env: LoanEnv, *, rate_bps: int = 1200, term: int = 12):
     )
 
 
-def test_schema_v8_contains_loans_and_payment_constraints(loan_env: LoanEnv) -> None:
+def test_current_schema_contains_loans_and_payment_constraints(loan_env: LoanEnv) -> None:
     env = loan_env
     assert env.db.connection.execute(
         "SELECT MAX(version) FROM schema_migrations"
-    ).fetchone()[0] == 8
+    ).fetchone()[0] == SCHEMA_VERSION
     assert env.db.connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='loans'"
     ).fetchone()
     assert env.db.connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='loan_payments'"
+    ).fetchone()
+    assert env.db.connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='loan_rate_revisions'"
     ).fetchone()
 
 
@@ -142,6 +146,8 @@ def test_creation_capabilities_are_backend_owned_and_balance_sensitive(
     assert env.interest_id in {
         item["id"] for item in empty["interestExpenseAccounts"]
     }
+    assert empty["rateTypes"] == ["FIXED", "VARIABLE"]
+    assert empty["amortizationTypes"] == ["FRENCH", "ITALIAN", "BULLET"]
 
     env.ledger.create_opening_balance(
         book_id=env.book_id,
@@ -171,6 +177,7 @@ def test_new_disbursement_is_atomic_and_ledger_owned(loan_env: LoanEnv) -> None:
     status = env.loans.status(env.book_id, loan.id)
     assert status["outstandingPrincipalMinor"] == 120_000
     assert status["closed"] is False
+    assert status["nextPaymentMinor"] > status["currentAnnualRateBps"]
 
 
 def test_existing_balance_mode_derives_principal_from_ledger(loan_env: LoanEnv) -> None:

@@ -105,3 +105,7 @@ class ReconciliationError(ValidationError):
 
 class ReconciliationAmbiguousError(ReconciliationError):
     """Raised when a reconciliation identity is not uniquely resolvable."""
+
+
+class ScheduledTransactionError(ValidationError):
+    """Raised when a scheduled transaction operation is invalid."""

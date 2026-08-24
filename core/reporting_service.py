@@ -132,7 +132,7 @@ class ReportingService:
         self._validate_limit(limit)
         rows = self._flow_rows(book_id, start, end, account_type=category_type)
         grouped: dict[int, dict[str, object]] = {}
-        for row in rows:
+        for row, converted, row_missing in self._allocated_flow_rows(book_id, rows):
             account_id = int(row["account_id"])
             item = grouped.setdefault(
                 account_id,
@@ -146,7 +146,7 @@ class ReportingService:
                     "transactions": set(),
                 },
             )
-            converted = self._convert_row(book_id, row, item["missing"])
+            item["missing"].update(row_missing)
             if converted is None:
                 item["complete"] = False
             else:
@@ -187,25 +187,26 @@ class ReportingService:
         self._validate_limit(limit)
         rows = self._flow_rows(book_id, start, end, account_type="EXPENSE")
         grouped: dict[int | None, dict[str, object]] = {}
-        for row in rows:
-            payee_id = None if row["payee_id"] is None else int(row["payee_id"])
+        for flow in self._transaction_flow_totals(book_id, rows):
+            payee_id = flow["payeeId"]
             item = grouped.setdefault(
                 payee_id,
                 {
                     "payeeId": payee_id,
-                    "name": str(row["payee_name"] or "Senza merchant"),
+                    "name": str(flow["payeeName"] or "Senza merchant"),
                     "amount": 0,
                     "complete": True,
                     "missing": set(),
                     "transactions": set(),
                 },
             )
-            converted = self._convert_row(book_id, row, item["missing"])
+            item["missing"].update(flow["missing"])
+            converted = flow["converted"]
             if converted is None:
                 item["complete"] = False
             else:
-                item["amount"] = int(item["amount"]) + converted
-            item["transactions"].add(int(row["transaction_id"]))
+                item["amount"] = int(item["amount"]) + int(converted)
+            item["transactions"].add(int(flow["transactionId"]))
 
         result = [
             {
@@ -249,19 +250,25 @@ class ReportingService:
                 "missing": set(),
             }
         )
-        for row in rows:
-            tx_date = str(row["transaction_date"])
-            label = tx_date if granularity == "DAY" else tx_date[:7] if granularity == "MONTH" else tx_date[:4]
+        for flow in self._transaction_flow_totals(book_id, rows):
+            tx_date = str(flow["transactionDate"])
+            if granularity == "DAY":
+                label = tx_date
+            elif granularity == "MONTH":
+                label = tx_date[:7]
+            else:
+                label = tx_date[:4]
             bucket = buckets[label]
-            converted = self._convert_row(book_id, row, bucket["missing"])
-            account_type = str(row["account_type"])
+            bucket["missing"].update(flow["missing"])
+            account_type = str(flow["accountType"])
+            converted = flow["converted"]
             if converted is None:
                 bucket[f"{account_type.lower()}Complete"] = False
                 continue
             if account_type == "INCOME":
-                bucket["income"] = int(bucket["income"]) - converted
+                bucket["income"] = int(bucket["income"]) - int(converted)
             else:
-                bucket["expense"] = int(bucket["expense"]) + converted
+                bucket["expense"] = int(bucket["expense"]) + int(converted)
 
         result = []
         for label in sorted(buckets):
@@ -273,8 +280,12 @@ class ReportingService:
                     "period": label,
                     "incomeMinor": income,
                     "expenseMinor": expense,
-                    "netMinor": None if income is None or expense is None else income - expense,
-                    "complete": bool(bucket["incomeComplete"] and bucket["expenseComplete"]),
+                    "netMinor": None
+                    if income is None or expense is None
+                    else income - expense,
+                    "complete": bool(
+                        bucket["incomeComplete"] and bucket["expenseComplete"]
+                    ),
                     "missingFx": self._missing_payload(bucket["missing"]),
                 }
             )
@@ -437,24 +448,31 @@ class ReportingService:
             "missingFx": self._missing_payload(missing),
         }
 
-    def _period_totals(self, book_id: int, start_date: str, end_date: str) -> dict[str, object]:
+    def _period_totals(
+        self,
+        book_id: int,
+        start_date: str,
+        end_date: str,
+    ) -> dict[str, object]:
         income = 0
         expense = 0
         income_complete = True
         expense_complete = True
         missing: set[tuple[str, str]] = set()
-        for row in self._flow_rows(book_id, start_date, end_date):
-            converted = self._convert_row(book_id, row, missing)
-            account_type = str(row["account_type"])
+        rows = self._flow_rows(book_id, start_date, end_date)
+        for flow in self._transaction_flow_totals(book_id, rows):
+            missing.update(flow["missing"])
+            account_type = str(flow["accountType"])
+            converted = flow["converted"]
             if converted is None:
                 if account_type == "INCOME":
                     income_complete = False
                 else:
                     expense_complete = False
             elif account_type == "INCOME":
-                income -= converted
+                income -= int(converted)
             else:
-                expense += converted
+                expense += int(converted)
         return {
             "incomeMinor": income if income_complete else None,
             "expenseMinor": expense if expense_complete else None,
@@ -478,7 +496,7 @@ class ReportingService:
             params.append(account_type)
         return self._database.connection.execute(
             f"""
-            SELECT e.transaction_id, e.account_id, e.value_minor,
+            SELECT e.id AS entry_id, e.transaction_id, e.account_id, e.value_minor,
                    a.name AS account_name, a.type AS account_type,
                    t.transaction_date, t.currency_code, t.payee_id,
                    p.name AS payee_name
@@ -494,19 +512,100 @@ class ReportingService:
             params,
         ).fetchall()
 
-    def _convert_row(
-        self,
-        book_id: int,
-        row,
-        missing: set[tuple[str, str]],
-    ) -> int | None:
-        return self._convert_amount(
-            book_id,
-            int(row["value_minor"]),
-            str(row["currency_code"]),
-            str(row["transaction_date"]),
-            missing,
-        )
+    def _transaction_flow_totals(self, book_id: int, rows) -> list[dict[str, object]]:
+        groups: dict[tuple[int, str], dict[str, object]] = {}
+        for row in rows:
+            key = (int(row["transaction_id"]), str(row["account_type"]))
+            group = groups.setdefault(
+                key,
+                {
+                    "transactionId": int(row["transaction_id"]),
+                    "accountType": str(row["account_type"]),
+                    "transactionDate": str(row["transaction_date"]),
+                    "currency": str(row["currency_code"]),
+                    "payeeId": None
+                    if row["payee_id"] is None
+                    else int(row["payee_id"]),
+                    "payeeName": None
+                    if row["payee_name"] is None
+                    else str(row["payee_name"]),
+                    "raw": 0,
+                },
+            )
+            group["raw"] = int(group["raw"]) + int(row["value_minor"])
+
+        result: list[dict[str, object]] = []
+        for group in groups.values():
+            missing: set[tuple[str, str]] = set()
+            converted = self._convert_amount(
+                book_id,
+                int(group["raw"]),
+                str(group["currency"]),
+                str(group["transactionDate"]),
+                missing,
+            )
+            result.append(
+                {
+                    **group,
+                    "converted": converted,
+                    "missing": missing,
+                }
+            )
+        return result
+
+    def _allocated_flow_rows(self, book_id: int, rows):
+        groups: dict[tuple[int, str], list] = {}
+        for row in rows:
+            key = (int(row["transaction_id"]), str(row["account_type"]))
+            groups.setdefault(key, []).append(row)
+
+        allocated = []
+        for group_rows in groups.values():
+            group_missing: set[tuple[str, str]] = set()
+            raw_total = sum(int(row["value_minor"]) for row in group_rows)
+            total_converted = self._convert_amount(
+                book_id,
+                raw_total,
+                str(group_rows[0]["currency_code"]),
+                str(group_rows[0]["transaction_date"]),
+                group_missing,
+            )
+
+            rounded_values: list[int | None] = []
+            row_missing_sets: list[set[tuple[str, str]]] = []
+            for row in group_rows:
+                row_missing: set[tuple[str, str]] = set()
+                rounded_values.append(
+                    self._convert_amount(
+                        book_id,
+                        int(row["value_minor"]),
+                        str(row["currency_code"]),
+                        str(row["transaction_date"]),
+                        row_missing,
+                    )
+                )
+                row_missing_sets.append(row_missing)
+                group_missing.update(row_missing)
+
+            if total_converted is not None and all(
+                value is not None for value in rounded_values
+            ):
+                concrete = [int(value) for value in rounded_values if value is not None]
+                residual = int(total_converted) - sum(concrete)
+                if residual:
+                    target = max(
+                        range(len(group_rows)),
+                        key=lambda index: abs(int(group_rows[index]["value_minor"])),
+                    )
+                    concrete[target] += residual
+                rounded_values = concrete
+
+            for index, row in enumerate(group_rows):
+                row_missing_sets[index].update(group_missing)
+                allocated.append(
+                    (row, rounded_values[index], row_missing_sets[index])
+                )
+        return allocated
 
     def _convert_amount(
         self,

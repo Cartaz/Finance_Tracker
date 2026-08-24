@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from core.account_service import AccountService
 from core.database import Database
 from core.errors import ScheduledTransactionError
-from core.ledger_service import LedgerService
+from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
 from core.payee_service import PayeeService
 
 _FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
@@ -124,7 +124,9 @@ class ScheduledTransactionService:
             raise ScheduledTransactionError("unknown scheduled transaction")
         return self._record(row)
 
-    def list_schedules(self, book_id: int, *, include_inactive: bool = True) -> list[ScheduledTransaction]:
+    def list_schedules(
+        self, book_id: int, *, include_inactive: bool = True
+    ) -> list[ScheduledTransaction]:
         clause = "" if include_inactive else " AND active=1"
         rows = self._database.connection.execute(
             f"SELECT * FROM scheduled_transactions WHERE book_id=?{clause} ORDER BY next_due_date, id",
@@ -132,7 +134,9 @@ class ScheduledTransactionService:
         ).fetchall()
         return [self._record(row) for row in rows]
 
-    def set_active(self, book_id: int, schedule_id: int, active: bool) -> ScheduledTransaction:
+    def set_active(
+        self, book_id: int, schedule_id: int, active: bool
+    ) -> ScheduledTransaction:
         self.get_schedule(book_id, schedule_id)
         with self._database.transaction() as conn:
             conn.execute(
@@ -150,19 +154,30 @@ class ScheduledTransactionService:
         max_occurrences: int = 1000,
     ) -> list[dict[str, object]]:
         as_of = self._parse_date(as_of_date, "as_of_date")
-        if isinstance(max_occurrences, bool) or not isinstance(max_occurrences, int) or not 1 <= max_occurrences <= 10_000:
-            raise ScheduledTransactionError("max_occurrences must be between 1 and 10000")
-        if schedule_id is not None:
-            schedules = [self.get_schedule(book_id, schedule_id)]
-        else:
-            schedules = self.list_schedules(book_id, include_inactive=False)
+        if (
+            isinstance(max_occurrences, bool)
+            or not isinstance(max_occurrences, int)
+            or not 1 <= max_occurrences <= 10_000
+        ):
+            raise ScheduledTransactionError(
+                "max_occurrences must be between 1 and 10000"
+            )
+        schedules = (
+            [self.get_schedule(book_id, schedule_id)]
+            if schedule_id is not None
+            else self.list_schedules(book_id, include_inactive=False)
+        )
 
         posted: list[dict[str, object]] = []
         for schedule in schedules:
             if not schedule.active:
                 continue
             current = date.fromisoformat(schedule.next_due_date)
-            end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+            end = (
+                None
+                if schedule.end_date is None
+                else date.fromisoformat(schedule.end_date)
+            )
             while current <= as_of and (end is None or current <= end):
                 if len(posted) >= max_occurrences:
                     raise ScheduledTransactionError("due occurrence limit reached")
@@ -173,13 +188,17 @@ class ScheduledTransactionService:
                     break
         return posted
 
-    def _post_occurrence(self, schedule: ScheduledTransaction, due: date) -> dict[str, object]:
+    def _post_occurrence(
+        self, schedule: ScheduledTransaction, due: date
+    ) -> dict[str, object]:
         existing = self._database.connection.execute(
             "SELECT transaction_id FROM scheduled_occurrences WHERE schedule_id=? AND due_date=?",
             (schedule.id, due.isoformat()),
         ).fetchone()
         if existing is not None:
-            next_due = self._advance(due, schedule.frequency, schedule.interval, schedule.start_date)
+            next_due = self._advance(
+                due, schedule.frequency, schedule.interval, schedule.start_date
+            )
             self._advance_schedule(schedule, next_due)
             return {
                 "scheduleId": schedule.id,
@@ -188,58 +207,45 @@ class ScheduledTransactionService:
                 "alreadyPosted": True,
             }
 
-        source = self._accounts.get_account(schedule.book_id, schedule.source_account_id)
-        counter = self._accounts.get_account(schedule.book_id, schedule.counter_account_id)
+        source = self._accounts.get_account(
+            schedule.book_id, schedule.source_account_id
+        )
+        counter = self._accounts.get_account(
+            schedule.book_id, schedule.counter_account_id
+        )
         self._validate_accounts(schedule.kind, source, counter)
         if source.currency_code != schedule.currency_code:
             raise ScheduledTransactionError("source account currency changed")
-        next_due = self._advance(due, schedule.frequency, schedule.interval, schedule.start_date)
+        next_due = self._advance(
+            due, schedule.frequency, schedule.interval, schedule.start_date
+        )
+        amount = schedule.amount_minor
+        if schedule.kind == "EXPENSE":
+            entries = (
+                EntryDraft(source.id, -amount, -amount),
+                EntryDraft(counter.id, amount, None),
+            )
+        elif schedule.kind in {"INCOME", "REFUND"}:
+            entries = (
+                EntryDraft(source.id, amount, amount),
+                EntryDraft(counter.id, -amount, None),
+            )
+        else:
+            entries = (
+                EntryDraft(source.id, -amount, -amount),
+                EntryDraft(counter.id, amount, amount),
+            )
+        draft = TransactionDraft(
+            book_id=schedule.book_id,
+            kind=schedule.kind,
+            transaction_date=due.isoformat(),
+            currency_code=schedule.currency_code,
+            description=schedule.description,
+            entries=entries,
+        )
 
         with self._database.transaction() as conn:
-            if schedule.kind == "EXPENSE":
-                transaction = self._ledger.create_expense(
-                    book_id=schedule.book_id,
-                    source_account_id=source.id,
-                    expense_account_id=counter.id,
-                    amount_minor=schedule.amount_minor,
-                    currency_code=schedule.currency_code,
-                    transaction_date=due.isoformat(),
-                    description=schedule.description,
-                    connection=conn,
-                )
-            elif schedule.kind == "INCOME":
-                transaction = self._ledger.create_income(
-                    book_id=schedule.book_id,
-                    destination_account_id=source.id,
-                    income_account_id=counter.id,
-                    amount_minor=schedule.amount_minor,
-                    currency_code=schedule.currency_code,
-                    transaction_date=due.isoformat(),
-                    description=schedule.description,
-                    connection=conn,
-                )
-            elif schedule.kind == "REFUND":
-                transaction = self._ledger.create_refund(
-                    book_id=schedule.book_id,
-                    destination_account_id=source.id,
-                    expense_account_id=counter.id,
-                    amount_minor=schedule.amount_minor,
-                    currency_code=schedule.currency_code,
-                    transaction_date=due.isoformat(),
-                    description=schedule.description,
-                    connection=conn,
-                )
-            else:
-                transaction = self._ledger.create_transfer(
-                    book_id=schedule.book_id,
-                    source_account_id=source.id,
-                    destination_account_id=counter.id,
-                    amount_minor=schedule.amount_minor,
-                    currency_code=schedule.currency_code,
-                    transaction_date=due.isoformat(),
-                    description=schedule.description,
-                    connection=conn,
-                )
+            transaction = self._ledger.create_transaction(draft, connection=conn)
             if schedule.payee_id is not None:
                 self._payees.assign_transaction(
                     book_id=schedule.book_id,
@@ -263,8 +269,12 @@ class ScheduledTransactionService:
             "alreadyPosted": False,
         }
 
-    def _advance_schedule(self, schedule: ScheduledTransaction, next_due: date, *, connection=None) -> None:
-        end = None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+    def _advance_schedule(
+        self, schedule: ScheduledTransaction, next_due: date, *, connection=None
+    ) -> None:
+        end = (
+            None if schedule.end_date is None else date.fromisoformat(schedule.end_date)
+        )
         active = 0 if end is not None and next_due > end else 1
         sql = (
             "UPDATE scheduled_transactions SET next_due_date=?, active=?, "
@@ -278,7 +288,9 @@ class ScheduledTransactionService:
             conn.execute(sql, params)
 
     @staticmethod
-    def _advance(current: date, frequency: str, interval: int, anchor_date: str) -> date:
+    def _advance(
+        current: date, frequency: str, interval: int, anchor_date: str
+    ) -> date:
         if frequency == "DAILY":
             return current + timedelta(days=interval)
         if frequency == "WEEKLY":
@@ -304,33 +316,50 @@ class ScheduledTransactionService:
     @staticmethod
     def _normalize_kind(value: str) -> str:
         if not isinstance(value, str) or value.strip().upper() not in _KINDS:
-            raise ScheduledTransactionError("kind must be EXPENSE, INCOME, REFUND or TRANSFER")
+            raise ScheduledTransactionError(
+                "kind must be EXPENSE, INCOME, REFUND or TRANSFER"
+            )
         return value.strip().upper()
 
     @staticmethod
     def _normalize_frequency(value: str) -> str:
         if not isinstance(value, str) or value.strip().upper() not in _FREQUENCIES:
-            raise ScheduledTransactionError("frequency must be DAILY, WEEKLY, MONTHLY or YEARLY")
+            raise ScheduledTransactionError(
+                "frequency must be DAILY, WEEKLY, MONTHLY or YEARLY"
+            )
         return value.strip().upper()
 
     @staticmethod
     def _validate_accounts(kind: str, source, counter) -> None:
         for account in (source, counter):
             if account.archived or account.placeholder:
-                raise ScheduledTransactionError("scheduled accounts must be active and selectable")
+                raise ScheduledTransactionError(
+                    "scheduled accounts must be active and selectable"
+                )
         if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
             raise ScheduledTransactionError("source must be a balance account")
         if source.id == counter.id:
             raise ScheduledTransactionError("source and counter account must differ")
         if kind in {"EXPENSE", "REFUND"} and counter.type != "EXPENSE":
-            raise ScheduledTransactionError("expense/refund counter must be an expense category")
+            raise ScheduledTransactionError(
+                "expense/refund counter must be an expense category"
+            )
         if kind == "INCOME" and counter.type != "INCOME":
-            raise ScheduledTransactionError("income counter must be an income category")
+            raise ScheduledTransactionError(
+                "income counter must be an income category"
+            )
         if kind == "TRANSFER":
-            if counter.type not in {"ASSET", "LIABILITY"} or counter.currency_code is None:
-                raise ScheduledTransactionError("transfer counter must be a balance account")
+            if (
+                counter.type not in {"ASSET", "LIABILITY"}
+                or counter.currency_code is None
+            ):
+                raise ScheduledTransactionError(
+                    "transfer counter must be a balance account"
+                )
             if counter.currency_code != source.currency_code:
-                raise ScheduledTransactionError("scheduled cross-currency transfers are not inferred")
+                raise ScheduledTransactionError(
+                    "scheduled cross-currency transfers are not inferred"
+                )
 
     @staticmethod
     def _record(row) -> ScheduledTransaction:

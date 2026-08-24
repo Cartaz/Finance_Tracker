@@ -5,6 +5,7 @@ from datetime import date
 
 from core.errors import ForecastError, FxRateMissingError
 from core.fx_service import FxService
+from core.posting_policy import PostingPolicy
 from core.scheduled_transaction_service import ScheduledTransactionService
 
 _GRANULARITIES = {"DAY", "MONTH", "YEAR"}
@@ -69,7 +70,10 @@ class ForecastService:
             bucket_key = self._bucket(due_date, normalized_granularity)
             bucket = buckets[bucket_key]
             bucket["occurrenceCount"] = int(bucket["occurrenceCount"]) + 1
-            direction = self._direction(kind)
+            try:
+                direction = PostingPolicy.book_cash_flow_direction(kind)
+            except ValueError as exc:
+                raise ForecastError(f"unsupported scheduled kind: {kind}") from exc
             converted: int | None = None
             missing: tuple[str, str] | None = None
 
@@ -148,16 +152,6 @@ class ForecastService:
             "buckets": bucket_payload,
             "occurrences": details,
         }
-
-    @staticmethod
-    def _direction(kind: str) -> str:
-        if kind == "EXPENSE":
-            return "OUTFLOW"
-        if kind in {"INCOME", "REFUND"}:
-            return "INFLOW"
-        if kind == "TRANSFER":
-            return "TRANSFER"
-        raise ForecastError(f"unsupported scheduled kind: {kind}")
 
     @staticmethod
     def _bucket(due_date: str, granularity: str) -> str:

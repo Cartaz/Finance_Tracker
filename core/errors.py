@@ -20,3 +20,43 @@ class UnsupportedCurrencyError(ValidationError):
 
 class DatabaseIntegrityError(FinanceTrackerError):
     """Raised when database configuration or integrity checks fail."""
+
+
+class AccountError(ValidationError):
+    """Base error for invalid account operations."""
+
+
+class AccountNotFoundError(AccountError):
+    """Raised when an account does not exist in the requested book."""
+
+
+class AccountArchivedError(AccountError):
+    """Raised when an archived account is used for a new posting."""
+
+
+class AccountPlaceholderError(AccountError):
+    """Raised when a placeholder account is used for a new posting."""
+
+
+class AccountHierarchyError(AccountError):
+    """Raised when an account hierarchy operation is invalid."""
+
+
+class CrossBookReferenceError(ValidationError):
+    """Raised when an entity from another book is referenced."""
+
+
+class LedgerValidationError(ValidationError):
+    """Base error for invalid ledger operations."""
+
+
+class UnbalancedTransactionError(LedgerValidationError):
+    """Raised when transaction entry values do not sum to zero."""
+
+
+class TrackingBoundaryError(LedgerValidationError):
+    """Raised when a posting precedes an account tracking boundary."""
+
+
+class TrackingBoundaryAmbiguousError(LedgerValidationError):
+    """Raised when temporal precision cannot resolve a tracking boundary."""

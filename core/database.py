@@ -67,6 +67,85 @@ CREATE INDEX IF NOT EXISTS idx_books_currency ON books(base_currency_code);
 CREATE INDEX IF NOT EXISTS idx_book_members_user ON book_members(user_id);
 """
 
+_SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    parent_id INTEGER,
+    type TEXT NOT NULL CHECK (type IN ('ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'EQUITY')),
+    name TEXT NOT NULL,
+    currency_code TEXT,
+    tracking_start_date TEXT,
+    tracking_start_time TEXT,
+    placeholder INTEGER NOT NULL DEFAULT 0 CHECK (placeholder IN (0, 1)),
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (id, book_id),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
+    FOREIGN KEY (parent_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT,
+    CHECK (
+        (type IN ('ASSET', 'LIABILITY') AND currency_code IS NOT NULL AND tracking_start_date IS NOT NULL)
+        OR
+        (type IN ('INCOME', 'EXPENSE', 'EQUITY') AND currency_code IS NULL AND tracking_start_date IS NULL AND tracking_start_time IS NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (
+        kind IN ('EXPENSE', 'INCOME', 'TRANSFER', 'OPENING_BALANCE', 'ADJUSTMENT', 'REFUND', 'REVERSAL')
+    ),
+    transaction_date TEXT NOT NULL,
+    transaction_time TEXT,
+    currency_code TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    original_amount_minor INTEGER,
+    original_currency_code TEXT,
+    reverses_transaction_id INTEGER,
+    created_by_user_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (id, book_id),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
+    FOREIGN KEY (original_currency_code) REFERENCES currencies(code) ON DELETE RESTRICT,
+    FOREIGN KEY (reverses_transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CHECK (
+        (original_amount_minor IS NULL AND original_currency_code IS NULL)
+        OR
+        (original_amount_minor IS NOT NULL AND original_currency_code IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY,
+    transaction_id INTEGER NOT NULL,
+    book_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    quantity_minor INTEGER,
+    value_minor INTEGER NOT NULL CHECK (value_minor <> 0),
+    posted_date TEXT,
+    posted_time TEXT,
+    memo TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (transaction_id, book_id) REFERENCES transactions(id, book_id) ON DELETE RESTRICT,
+    FOREIGN KEY (account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_book_parent ON accounts(book_id, parent_id);
+CREATE INDEX IF NOT EXISTS idx_accounts_book_type ON accounts(book_id, type);
+CREATE INDEX IF NOT EXISTS idx_transactions_book_date ON transactions(book_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_entries_transaction ON entries(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(book_id, account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_single_reversal
+    ON transactions(reverses_transaction_id)
+    WHERE reverses_transaction_id IS NOT NULL;
+"""
+
 
 class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
@@ -111,18 +190,13 @@ class Database:
             raise
 
     def migrate(self) -> None:
-        conn = self.connection
-        current = (
-            conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
-            if self._table_exists("schema_migrations")
-            else 0
-        )
-
+        current = self._current_schema_version()
         if current > SCHEMA_VERSION:
             raise DatabaseIntegrityError(
                 f"database schema {current} is newer than supported schema {SCHEMA_VERSION}"
             )
-        if current == 0:
+
+        if current < 1:
             with self.transaction() as tx:
                 tx.executescript(_SCHEMA_V1)
                 tx.executemany(
@@ -133,6 +207,24 @@ class Database:
                     "INSERT INTO schema_migrations(version, applied_at, description) VALUES (1, datetime('now'), ?)",
                     ("Initial foundation schema",),
                 )
+            current = 1
+
+        if current < 2:
+            with self.transaction() as tx:
+                tx.executescript(_SCHEMA_V2)
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, applied_at, description) VALUES (2, datetime('now'), ?)",
+                    ("Ledger core schema",),
+                )
+
+    def _current_schema_version(self) -> int:
+        if not self._table_exists("schema_migrations"):
+            return 0
+        return int(
+            self.connection.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+            ).fetchone()[0]
+        )
 
     def _table_exists(self, name: str) -> bool:
         row = self.connection.execute(

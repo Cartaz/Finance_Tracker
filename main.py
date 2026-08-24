@@ -14,8 +14,10 @@ from config.constants import (
     LOG_DIR,
 )
 from config.settings import SettingsStore
+from core.account_service import AccountService
 from core.app_controller import AppController
 from core.database import Database
+from core.ledger_service import LedgerService
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -53,10 +55,13 @@ def main() -> int:
         database.migrate()
         database.integrity_check()
 
+        account_service = AccountService(database)
+        ledger_service = LedgerService(database)
+
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
 
-        controller = AppController(database, settings)
+        controller = AppController(database, settings, account_service, ledger_service)
         bridge = Bridge(controller)
         window = MainWindow(bridge)
         window.show()

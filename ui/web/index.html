@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Finance Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="card hero" aria-labelledby="app-title">
+      <div>
+        <p class="eyebrow">FOUNDATION · M0/M1</p>
+        <h1 id="app-title">Finance Tracker</h1>
+        <p class="subtitle">Local-first personal finance tracker.</p>
+      </div>
+      <div class="status" id="bridge-status">Connessione al backend…</div>
+    </section>
+
+    <section class="grid" aria-label="Foundation state">
+      <article class="card metric">
+        <span>Book currency</span>
+        <strong id="book-currency">—</strong>
+      </article>
+      <article class="card metric">
+        <span>Locale</span>
+        <strong id="locale">—</strong>
+      </article>
+      <article class="card metric">
+        <span>Schema</span>
+        <strong id="schema-version">—</strong>
+      </article>
+    </section>
+
+    <section class="card notice">
+      <h2>Fondamenta attive</h2>
+      <p>Questa milestone contiene shell desktop, configurazione, SQLite versionato, currencies/users/books e money parser. Il ledger verrà introdotto nella milestone successiva.</p>
+    </section>
+  </main>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

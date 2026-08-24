@@ -9,6 +9,15 @@ AMORTIZATION_TYPES = frozenset({"FRENCH", "ITALIAN", "BULLET"})
 RATE_TYPES = frozenset({"FIXED", "VARIABLE"})
 RECAST_STRATEGIES = frozenset({"REDUCE_PAYMENT", "REDUCE_TERM"})
 
+_RECAST_COMPATIBILITY = {
+    ("FIXED", "FRENCH"): ("REDUCE_PAYMENT", "REDUCE_TERM"),
+    ("FIXED", "ITALIAN"): ("REDUCE_PAYMENT", "REDUCE_TERM"),
+    ("FIXED", "BULLET"): ("REDUCE_PAYMENT",),
+    ("VARIABLE", "FRENCH"): ("REDUCE_PAYMENT",),
+    ("VARIABLE", "ITALIAN"): ("REDUCE_PAYMENT", "REDUCE_TERM"),
+    ("VARIABLE", "BULLET"): ("REDUCE_PAYMENT",),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class InstallmentTerms:
@@ -18,7 +27,7 @@ class InstallmentTerms:
 
 
 class AmortizationPolicy:
-    """Pure deterministic amortization math.
+    """Pure deterministic amortization and compatibility policy.
 
     The policy receives canonical principal/rate inputs and never reads or writes
     persistence. All monetary values are integer minor units and all division or
@@ -64,7 +73,11 @@ class AmortizationPolicy:
                 principal = cls.round_minor(
                     Decimal(original_principal_minor) / Decimal(original_term_months)
                 )
-            principal = outstanding_minor if is_last else min(outstanding_minor, max(1, principal))
+            principal = (
+                outstanding_minor
+                if is_last
+                else min(outstanding_minor, max(1, principal))
+            )
             return InstallmentTerms(principal, interest, principal + interest)
 
         if fixed_french_payment_minor is None:
@@ -80,6 +93,49 @@ class AmortizationPolicy:
             raise LoanError("contract payment does not amortize principal")
         principal = outstanding_minor if is_last else min(outstanding_minor, principal)
         return InstallmentTerms(principal, interest, principal + interest)
+
+    @classmethod
+    def allowed_recast_strategies(
+        cls,
+        *,
+        rate_type: str,
+        amortization_type: str,
+    ) -> tuple[str, ...]:
+        rate = cls.normalize_rate_type(rate_type)
+        amortization = cls.normalize_amortization(amortization_type)
+        return _RECAST_COMPATIBILITY[(rate, amortization)]
+
+    @classmethod
+    def validate_contract_policy(
+        cls,
+        *,
+        rate_type: str,
+        amortization_type: str,
+        recast_strategy: str,
+    ) -> None:
+        strategy = cls.normalize_recast_strategy(recast_strategy)
+        allowed = cls.allowed_recast_strategies(
+            rate_type=rate_type,
+            amortization_type=amortization_type,
+        )
+        if strategy not in allowed:
+            raise LoanError(
+                f"{strategy} is not supported for {rate_type.strip().upper()} "
+                f"{amortization_type.strip().upper()} loans"
+            )
+
+    @classmethod
+    def compatibility_payload(cls) -> list[dict[str, object]]:
+        return [
+            {
+                "rateType": rate_type,
+                "amortizationType": amortization_type,
+                "recastStrategies": list(strategies),
+            }
+            for (rate_type, amortization_type), strategies in sorted(
+                _RECAST_COMPATIBILITY.items()
+            )
+        ]
 
     @staticmethod
     def french_payment_minor(

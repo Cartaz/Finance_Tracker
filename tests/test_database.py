@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -149,6 +150,55 @@ def test_existing_v2_database_with_ledger_data_upgrades_to_v5(
         upgraded.integrity_check()
     finally:
         upgraded.close()
+
+
+def test_import_rows_cannot_reference_batch_from_another_book(tmp_path: Path) -> None:
+    db = Database(tmp_path / "cross-book.db")
+    db.open()
+    db.migrate()
+    try:
+        with db.transaction() as conn:
+            user_id = int(conn.execute(
+                "INSERT INTO users(name, created_at, updated_at) VALUES ('User', datetime('now'), datetime('now'))"
+            ).lastrowid)
+            book_a = int(conn.execute(
+                "INSERT INTO books(name, base_currency_code, created_at, updated_at) VALUES ('A','EUR',datetime('now'),datetime('now'))"
+            ).lastrowid)
+            book_b = int(conn.execute(
+                "INSERT INTO books(name, base_currency_code, created_at, updated_at) VALUES ('B','EUR',datetime('now'),datetime('now'))"
+            ).lastrowid)
+            conn.executemany(
+                "INSERT INTO book_members(book_id,user_id,role) VALUES (?,?,'OWNER')",
+                ((book_a, user_id), (book_b, user_id)),
+            )
+        accounts = AccountService(db)
+        account_a = accounts.create_account(
+            book_id=book_a,
+            account_type="ASSET",
+            name="A Bank",
+            currency_code="EUR",
+            tracking_start_date="2026-01-01",
+        )
+        with db.transaction() as conn:
+            batch_id = int(conn.execute(
+                "INSERT INTO import_batches(book_id,account_id,source_name,review_mode,imported_at,row_count) VALUES (?,?,?,'FULL_REVIEW',datetime('now'),1)",
+                (book_a, account_a.id, "bank"),
+            ).lastrowid)
+        with pytest.raises(sqlite3.IntegrityError):
+            with db.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO import_rows(
+                        batch_id,book_id,row_number,transaction_date,amount_minor,currency_code,
+                        description,fingerprint,review_state,created_at
+                    ) VALUES (?,?,1,'2026-01-02',-100,'EUR','x','f','REVIEW_REQUIRED',datetime('now'))
+                    """,
+                    (batch_id, book_b),
+                )
+        assert db.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+        db.integrity_check()
+    finally:
+        db.close()
 
 
 def test_unknown_currency_is_rejected(tmp_path: Path) -> None:

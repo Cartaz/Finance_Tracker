@@ -142,6 +142,7 @@ class ReconciliationService:
                     amount_minor=int(item["amount_minor"]),
                     review_mode=mode,
                     tracking_start_date=account.tracking_start_date,
+                    tracking_start_time=account.tracking_start_time,
                 )
                 conn.execute(
                     """
@@ -371,6 +372,7 @@ class ReconciliationService:
         amount_minor: int,
         review_mode: str,
         tracking_start_date: str | None,
+        tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
         if external_id is not None:
             link = self._database.connection.execute(
@@ -391,7 +393,7 @@ class ReconciliationService:
         if tracking_start_date is not None:
             if transaction_date < tracking_start_date:
                 return "OUTSIDE_TRACKING", None
-            if transaction_date == tracking_start_date:
+            if transaction_date == tracking_start_date and tracking_start_time is not None:
                 return "TRACKING_AMBIGUOUS", None
 
         if external_id is not None:

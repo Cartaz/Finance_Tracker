@@ -6,7 +6,7 @@ import pytest
 
 from core.category_service import CategoryService
 from core.database import Database
-from core.errors import ReconciliationError
+from core.errors import AccountNotFoundError, ReconciliationError
 from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 
@@ -156,68 +156,104 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
         row for row in unresolved_rows if int(row["amount_minor"]) > 0
     )
     invalid_cases = (
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(posted_rows[0]["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=expense.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(posted_rows[0]["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=expense.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.ignore_row(book_id=book, row_id=int(posted_rows[1]["id"])),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(boundary_rows[0]["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=expense.id,
+        (
+            lambda: service.ignore_row(book_id=book, row_id=int(posted_rows[1]["id"])),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="INCOME",
-            counter_account_id=income.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(boundary_rows[0]["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=expense.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(positive_unresolved["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=expense.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="INCOME",
+                counter_account_id=income.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=placeholder.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(positive_unresolved["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=expense.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=archived.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=placeholder.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="EXPENSE",
-            counter_account_id=other_book_counter.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=archived.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="UNKNOWN",
-            counter_account_id=expense.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="EXPENSE",
+                counter_account_id=other_book_counter.id,
+            ),
+            AccountNotFoundError,
         ),
-        lambda: service.post_row(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            posting_kind="TRANSFER",
-            counter_account_id=bank.id,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="UNKNOWN",
+                counter_account_id=expense.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.link_existing(
-            book_id=book,
-            row_id=int(negative_unresolved["id"]),
-            transaction_id=999_999_999,
+        (
+            lambda: service.post_row(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                posting_kind="TRANSFER",
+                counter_account_id=bank.id,
+            ),
+            ReconciliationError,
         ),
-        lambda: service.batch_rows(book, 999_999_999),
-        lambda: service.ignore_row(book_id=book, row_id=999_999_999),
+        (
+            lambda: service.link_existing(
+                book_id=book,
+                row_id=int(negative_unresolved["id"]),
+                transaction_id=999_999_999,
+            ),
+            ReconciliationError,
+        ),
+        (lambda: service.batch_rows(book, 999_999_999), ReconciliationError),
+        (
+            lambda: service.ignore_row(book_id=book, row_id=999_999_999),
+            ReconciliationError,
+        ),
     )
     for index in range(1000):
         before = (
@@ -225,8 +261,9 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
             db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
             db.connection.execute("SELECT COUNT(*) FROM reconciliation_links").fetchone()[0],
         )
-        with pytest.raises(ReconciliationError):
-            invalid_cases[index % len(invalid_cases)]()
+        invalid_case, expected_error = invalid_cases[index % len(invalid_cases)]
+        with pytest.raises(expected_error):
+            invalid_case()
         after = (
             db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
             db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],

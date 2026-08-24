@@ -129,17 +129,18 @@
     const kinds = postingKindsForRow(row.amount_minor);
     const selectedKind = kinds[0];
     const kindOptions = kinds.map((kind) => `<option value="${kind}">${kind}</option>`).join("");
-    return `<select data-posting-kind-row="${row.id}">${kindOptions}</select><select data-counter-row="${row.id}">${counterOptionsForRow(row, selectedKind)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button><button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
+    return `<select data-posting-kind-row="${row.id}">${kindOptions}</select><select data-counter-row="${row.id}">${counterOptionsForRow(row, selectedKind)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button>`;
   }
   async function loadImportBatch(batchId) {
     currentBatchId = String(batchId);
     const rows = unwrap(await call("getImportBatchRows", { batchId }));
     $("import-rows").innerHTML = rows.map((row) => {
       const resolved = ["MATCHED", "POSTED", "IGNORED"].includes(row.review_state);
-      const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"].includes(row.review_state);
+      const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS", "AMBIGUOUS"].includes(row.review_state);
       const candidates = (row.candidates || []).map((candidate) => candidateButton(row.id, candidate)).join("");
       const post = resolved || blocked ? "" : postingControls(row);
-      return `<div class="card import-row" data-import-row-id="${row.id}" data-amount-minor="${row.amount_minor}" data-currency-code="${row.currency_code}"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}</div></div>`;
+      const ignore = resolved ? "" : `<button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
+      return `<div class="card import-row" data-import-row-id="${row.id}" data-amount-minor="${row.amount_minor}" data-currency-code="${row.currency_code}"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}${ignore}</div></div>`;
     }).join("") || `<p class="empty">Nessuna riga.</p>`;
   }
   async function refresh() {
@@ -174,5 +175,5 @@
 
   initializeDates();
   if (typeof QWebChannel === "undefined" || !window.qt?.webChannelTransport) { $("bridge-status").textContent = "Backend non disponibile"; return; }
-  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
+  new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("import-form").elements.reviewMode.value = initial.reconciliationReviewMode; $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });
 })();

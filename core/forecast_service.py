@@ -5,6 +5,7 @@ from datetime import date
 
 from core.errors import ForecastError, FxRateMissingError
 from core.fx_service import FxService
+from core.loan_service import LoanService
 from core.posting_policy import PostingPolicy
 from core.scheduled_transaction_service import ScheduledTransactionService
 
@@ -14,15 +15,17 @@ _MAX_OCCURRENCES = 10_000
 
 
 class ForecastService:
-    """Build deterministic read-only forecasts from canonical scheduled templates."""
+    """Build deterministic read-only forecasts from canonical future obligations."""
 
     def __init__(
         self,
         scheduled: ScheduledTransactionService,
         fx: FxService,
+        loans: LoanService | None = None,
     ) -> None:
         self._scheduled = scheduled
         self._fx = fx
+        self._loans = loans
 
     def cash_flow_forecast(
         self,
@@ -40,11 +43,33 @@ class ForecastService:
             raise ForecastError("forecast horizon cannot exceed 10 years")
         normalized_granularity = self._granularity(granularity)
         base_currency = self._fx.base_currency(book_id)
-        occurrences = self._scheduled.project_occurrences(
-            book_id=book_id,
-            start_date=start.isoformat(),
-            end_date=end.isoformat(),
-            max_occurrences=_MAX_OCCURRENCES,
+        scheduled = [
+            {**item, "source": "SCHEDULED_TRANSACTION"}
+            for item in self._scheduled.project_occurrences(
+                book_id=book_id,
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+                max_occurrences=_MAX_OCCURRENCES,
+            )
+        ]
+        loan_occurrences = (
+            []
+            if self._loans is None
+            else self._loans.project_payments(
+                book_id=book_id,
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+            )
+        )
+        occurrences = scheduled + loan_occurrences
+        if len(occurrences) > _MAX_OCCURRENCES:
+            raise ForecastError("forecast occurrence limit reached")
+        occurrences.sort(
+            key=lambda item: (
+                str(item["dueDate"]),
+                str(item["source"]),
+                int(item.get("scheduleId", item.get("loanId", 0))),
+            )
         )
 
         buckets: dict[str, dict[str, object]] = defaultdict(
@@ -55,6 +80,7 @@ class ForecastService:
                 "missing": set(),
                 "occurrenceCount": 0,
                 "transferCount": 0,
+                "loanInstallmentCount": 0,
             }
         )
         details: list[dict[str, object]] = []
@@ -63,20 +89,28 @@ class ForecastService:
         total_outflow = 0
         total_complete = True
         transfer_count = 0
+        loan_installment_count = 0
 
         for occurrence in occurrences:
             due_date = str(occurrence["dueDate"])
-            kind = str(occurrence["kind"])
+            source = str(occurrence["source"])
             bucket_key = self._bucket(due_date, normalized_granularity)
             bucket = buckets[bucket_key]
             bucket["occurrenceCount"] = int(bucket["occurrenceCount"]) + 1
-            try:
-                direction = PostingPolicy.book_cash_flow_direction(kind)
-            except ValueError as exc:
-                raise ForecastError(f"unsupported scheduled kind: {kind}") from exc
+            if source == "LOAN_INSTALLMENT":
+                direction = "OUTFLOW"
+                kind = "LOAN_PAYMENT"
+                bucket["loanInstallmentCount"] = int(bucket["loanInstallmentCount"]) + 1
+                loan_installment_count += 1
+            else:
+                kind = str(occurrence["kind"])
+                try:
+                    direction = PostingPolicy.book_cash_flow_direction(kind)
+                except ValueError as exc:
+                    raise ForecastError(f"unsupported scheduled kind: {kind}") from exc
+
             converted: int | None = None
             missing: tuple[str, str] | None = None
-
             if direction == "TRANSFER":
                 bucket["transferCount"] = int(bucket["transferCount"]) + 1
                 transfer_count += 1
@@ -105,6 +139,7 @@ class ForecastService:
             details.append(
                 {
                     **occurrence,
+                    "kind": kind,
                     "direction": direction,
                     "baseAmountMinor": converted,
                     "complete": missing is None,
@@ -129,17 +164,22 @@ class ForecastService:
                     "complete": complete,
                     "occurrenceCount": int(bucket["occurrenceCount"]),
                     "transferCount": int(bucket["transferCount"]),
+                    "loanInstallmentCount": int(bucket["loanInstallmentCount"]),
                     "missingFx": self._missing_payload(bucket["missing"]),
                 }
             )
 
+        sources = ["SCHEDULED_TRANSACTIONS"]
+        if self._loans is not None:
+            sources.append("LOAN_INSTALLMENTS")
         return {
             "startDate": start.isoformat(),
             "endDate": end.isoformat(),
             "granularity": normalized_granularity,
             "baseCurrency": base_currency,
             "fxPolicy": "LATEST_KNOWN_ON_OR_BEFORE_DUE_DATE",
-            "scheduledOnly": True,
+            "sources": sources,
+            "scheduledOnly": self._loans is None,
             "complete": total_complete,
             "totalInflowMinor": total_inflow if total_complete else None,
             "totalOutflowMinor": total_outflow if total_complete else None,
@@ -148,6 +188,7 @@ class ForecastService:
             ),
             "occurrenceCount": len(details),
             "transferCount": transfer_count,
+            "loanInstallmentCount": loan_installment_count,
             "missingFx": self._missing_payload(overall_missing),
             "buckets": bucket_payload,
             "occurrences": details,

@@ -35,6 +35,29 @@ def _controller(tmp_path):
     return db, accounts, ledger, controller
 
 
+def test_initial_state_exposes_all_canonical_currency_specs(tmp_path) -> None:
+    db, _accounts, _ledger, controller = _controller(tmp_path)
+    try:
+        initial = controller.initial_state()
+        by_code = {item["code"]: item["minorUnitDigits"] for item in initial["currencies"]}
+        assert by_code == {
+            "BHD": 3,
+            "CHF": 2,
+            "EUR": 2,
+            "GBP": 2,
+            "JPY": 0,
+            "KRW": 0,
+            "KWD": 3,
+            "OMR": 3,
+            "USD": 2,
+        }
+
+        controller.setup({"userName": "User", "bookName": "Book", "currency": "KWD"})
+        assert controller.initial_state()["book"]["currency"] == "KWD"
+    finally:
+        db.close()
+
+
 def test_controller_and_bridge_transport_minor_units_as_strings(tmp_path) -> None:
     db, accounts, ledger, controller = _controller(tmp_path)
     try:
@@ -69,14 +92,22 @@ def test_controller_and_bridge_transport_minor_units_as_strings(tmp_path) -> Non
         assert balance["balanceMinor"] == str(huge)
 
         dashboard = controller.dashboard(
-            {"startDate": "2026-01-01", "endDate": "2026-01-31", "asOfDate": "2026-01-31"}
+            {
+                "startDate": "2026-01-01",
+                "endDate": "2026-01-31",
+                "asOfDate": "2026-01-31",
+            }
         )
         assert dashboard["overview"]["netWorthMinor"] == str(huge)
         assert isinstance(dashboard["overview"]["netWorthMinor"], str)
 
         bridge = Bridge(controller)
         bridged = bridge.getDashboard(
-            {"startDate": "2026-01-01", "endDate": "2026-01-31", "asOfDate": "2026-01-31"}
+            {
+                "startDate": "2026-01-01",
+                "endDate": "2026-01-31",
+                "asOfDate": "2026-01-31",
+            }
         )
         assert bridged["ok"] is True
         assert bridged["data"]["overview"]["netWorthMinor"] == str(huge)
@@ -90,12 +121,18 @@ def test_bridge_returns_domain_errors_for_invalid_reporting_and_fx(tmp_path) -> 
         controller.setup({"userName": "User", "bookName": "Book", "currency": "EUR"})
         bridge = Bridge(controller)
         bad_report = bridge.getDashboard(
-            {"startDate": "2026-02-01", "endDate": "2026-01-01", "asOfDate": "2026-01-31"}
+            {
+                "startDate": "2026-02-01",
+                "endDate": "2026-01-01",
+                "asOfDate": "2026-01-31",
+            }
         )
         assert bad_report["ok"] is False
         assert bad_report["error"]["code"] == "ReportingError"
 
-        bad_fx = bridge.setFxRate({"currency": "USD", "date": "bad", "rate": "1.2"})
+        bad_fx = bridge.setFxRate(
+            {"currency": "USD", "date": "bad", "rate": "1.2"}
+        )
         assert bad_fx["ok"] is False
         assert bad_fx["error"]["code"] == "FxRateError"
     finally:

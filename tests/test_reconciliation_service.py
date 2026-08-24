@@ -64,7 +64,8 @@ def test_assisted_review_never_auto_matches_heuristic_candidate(ledger_env) -> N
     rows = service.batch_rows(ledger_env.book_id, int(result["batchId"]))
     assert rows[0]["review_state"] == "SUGGESTED"
     assert rows[0]["matched_transaction_id"] is None
-    assert rows[0]["candidates"] == [existing.id]
+    assert [item["id"] for item in rows[0]["candidates"]] == [existing.id]
+    assert rows[0]["candidates"][0]["payee_name"] == "Market"
 
     linked = service.link_existing(
         book_id=ledger_env.book_id,
@@ -76,13 +77,24 @@ def test_assisted_review_never_auto_matches_heuristic_candidate(ledger_env) -> N
     repeated = service.import_csv(
         book_id=ledger_env.book_id,
         account_id=bank.id,
-        source_name="Example Bank",
+        source_name="  EXAMPLE   BANK ",
         review_mode="FULL_REVIEW",
         csv_text="date,amount,currency,description,external_id\n2026-03-01,-12.34,EUR,Market,bank-001\n",
     )
     repeated_row = service.batch_rows(ledger_env.book_id, int(repeated["batchId"]))[0]
     assert repeated_row["review_state"] == "MATCHED"
     assert repeated_row["matched_transaction_id"] == existing.id
+
+    conflicting = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="example bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount,currency,description,external_id\n2026-03-02,-99.99,EUR,Conflict,bank-001\n",
+    )
+    conflict_row = service.batch_rows(ledger_env.book_id, int(conflicting["batchId"]))[0]
+    assert conflict_row["review_state"] == "AMBIGUOUS"
+    assert conflict_row["matched_transaction_id"] is None
 
 
 def test_posting_is_atomic_and_tracking_boundary_is_preserved(ledger_env) -> None:
@@ -146,3 +158,24 @@ def test_duplicate_external_ids_inside_one_csv_are_rejected_atomically(ledger_en
         )
     after = ledger_env.db.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0]
     assert after == before
+
+
+def test_reimport_without_external_id_is_never_silently_duplicated(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    csv_text = "date,amount,description\n2026-06-01,-3.50,Coffee\n"
+    first = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text=csv_text,
+    )
+    assert service.batch_rows(ledger_env.book_id, int(first["batchId"]))[0]["review_state"] == "REVIEW_REQUIRED"
+    second = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="BANK",
+        review_mode="ASSISTED_REVIEW",
+        csv_text=csv_text,
+    )
+    assert service.batch_rows(ledger_env.book_id, int(second["batchId"]))[0]["review_state"] == "DUPLICATE_REVIEW"

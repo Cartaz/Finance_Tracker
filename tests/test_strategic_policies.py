@@ -84,3 +84,24 @@ def test_transport_serializer_stringifies_explicit_financial_integers() -> None:
         "savingRateBps": "1234",
         "count": 42,
     }
+
+
+def test_budget_transport_fields_are_explicit_financial_integers() -> None:
+    payload = TransportSerializer.serialize(
+        {
+            "spentMinor": 9_007_199_254_740_993,
+            "remainingMinor": -5,
+            "totalBudgetMinor": 10,
+            "totalSpentMinor": 6,
+            "totalRemainingMinor": 4,
+            "usageBps": 12_345,
+        }
+    )
+    assert payload == {
+        "spentMinor": "9007199254740993",
+        "remainingMinor": "-5",
+        "totalBudgetMinor": "10",
+        "totalSpentMinor": "6",
+        "totalRemainingMinor": "4",
+        "usageBps": "12345",
+    }

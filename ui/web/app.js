@@ -6,6 +6,7 @@
   let currentImportRows = new Map();
   let currentLoanId = null;
   let currentLoans = [];
+  let currentLoanCapabilities = { targets: [], interestExpenseAccounts: [] };
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -99,18 +100,20 @@
   }
 
   function refreshLoanAccountOptions() {
-    if (!state) return;
+    const targets = currentLoanCapabilities.targets || [];
     const previousLiability = $("loan-liability").value;
-    const liabilities = state.accounts.filter((a) => a.type === "LIABILITY" && !a.placeholder);
-    $("loan-liability").innerHTML = liabilities.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    $("loan-liability").innerHTML = targets.map((item) => `<option value="${item.liabilityAccountId}">${escapeHtml(item.name)} · ${escapeHtml(item.currency)}</option>`).join("");
     if ([...$("loan-liability").options].some((option) => option.value === previousLiability)) $("loan-liability").value = previousLiability;
-    const liability = state.accounts.find((a) => String(a.id) === String($("loan-liability").value));
-    const currency = liability?.currency;
-    const assets = state.accounts.filter((a) => a.type === "ASSET" && !a.placeholder && a.currency === currency);
-    const assetOptions = assets.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
-    $("loan-payment-account").innerHTML = assetOptions;
-    $("loan-funding-account").innerHTML = assetOptions;
-    $("loan-interest-account").innerHTML = state.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+    const target = targets.find((item) => String(item.liabilityAccountId) === String($("loan-liability").value));
+    $("loan-payment-account").innerHTML = optionsForAccountIds(target?.paymentAccountIds || []);
+    $("loan-funding-account").innerHTML = optionsForAccountIds(target?.fundingAccountIds || []);
+    $("loan-interest-account").innerHTML = (currentLoanCapabilities.interestExpenseAccounts || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("");
+    const previousMode = $("loan-mode").value;
+    const modeLabels = { NEW_DISBURSEMENT: "Nuova erogazione", EXISTING_BALANCE: "Saldo già presente" };
+    $("loan-mode").innerHTML = (target?.allowedModes || []).map((mode) => `<option value="${mode}">${modeLabels[mode] || escapeHtml(mode)}</option>`).join("");
+    if ([...$("loan-mode").options].some((option) => option.value === previousMode)) $("loan-mode").value = previousMode;
+    $("loan-form").querySelector('button[type="submit"]').disabled = !target || !(target.allowedModes || []).length || !(currentLoanCapabilities.interestExpenseAccounts || []).length;
+    refreshLoanMode();
   }
 
   function refreshLoanMode() {
@@ -135,7 +138,6 @@
     $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("scheduled-source").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     refreshScheduledCounter();
-    refreshLoanAccountOptions();
   }
 
   function renderDashboard(report) {
@@ -198,6 +200,11 @@
     $("loan-detail").innerHTML = `<div class="report-row"><b>${escapeHtml(loan.name)}</b><span>Tasso ${percentBps(loan.annualRateBps)}</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>Rata ${money(loan.fixedPaymentMinor, loan.currency)}</strong><small>${loan.closed ? "ESTINTO" : `Prossima ${loan.nextDueDate}`}</small></div><div class="history-controls">${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra prossima rata</button>`}</div><h3>Piano contrattuale</h3>${planRows}${truncated}<p class="empty">Interessi contrattuali totali: ${money(plan.totalInterestMinor, plan.currency)}</p><h3>Rate registrate</h3>${paymentRows}`;
   }
 
+  async function refreshLoanCapabilities() {
+    currentLoanCapabilities = unwrap(await call("getLoanCapabilities"));
+    refreshLoanAccountOptions();
+  }
+
   async function refreshLoans() {
     currentLoans = unwrap(await call("listLoans"));
     $("loan-list").innerHTML = currentLoans.map((loan) => `<div class="card"><div class="report-row"><b>${escapeHtml(loan.name)}</b><span>${percentBps(loan.annualRateBps)} · ${loan.termMonths} mesi</span><span>Residuo ${money(loan.outstandingPrincipalMinor, loan.currency)}</span><strong>${loan.closed ? "ESTINTO" : money(loan.fixedPaymentMinor, loan.currency)}</strong><small>${loan.closed ? `${loan.paidInstallments} rate registrate` : `Prossima ${loan.nextDueDate} · ${loan.remainingInstallments} residue`}</small></div><div class="history-controls"><button type="button" data-loan-detail="${loan.id}">Dettagli</button>${loan.closed ? "" : `<button type="button" data-loan-post="${loan.id}">Registra rata</button>`}</div></div>`).join("") || `<p class="empty">Nessun prestito configurato.</p>`;
@@ -251,6 +258,7 @@
   }
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
+    await refreshLoanCapabilities();
     await Promise.all([refreshReports(), refreshBudgets(), refreshForecast(), refreshLoans(), refreshFxRates(), refreshScheduled(), refreshImportBatches()]);
     if (currentBatchId) await loadImportBatch(currentBatchId);
   }
@@ -273,11 +281,11 @@
   $("apply-forecast").addEventListener("click", () => refreshForecast().catch((error) => toast(error.message, true)));
   $("budget-period").addEventListener("change", () => refreshBudgets().catch((error) => toast(error.message, true)));
   $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
-  $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans()]); toast("Creato"); } catch (error) { toast(error.message, true); } });
+  $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans(), refreshLoanCapabilities()]); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await Promise.all([refreshReports(), refreshBudgets()]); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("budget-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setBudget", Object.fromEntries(new FormData(event.target)))); const period = event.target.elements.period.value; event.target.elements.amount.value = ""; event.target.elements.period.value = period; await refreshBudgets(); toast("Budget salvato"); } catch (error) { toast(error.message, true); } });
   $("budget-list").addEventListener("click", async (event) => { const button = event.target.closest("[data-budget-delete]"); if (!button) return; try { unwrap(await call("deleteBudget", { budgetId: button.dataset.budgetDelete })); await refreshBudgets(); toast("Budget eliminato"); } catch (error) { toast(error.message, true); } });
-  $("loan-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const data = Object.fromEntries(new FormData(event.target)); if (data.mode !== "NEW_DISBURSEMENT") { delete data.principal; delete data.fundingAccountId; delete data.startDate; } const created = unwrap(await call("createLoan", data)); currentLoanId = String(created.id); const firstDue = event.target.elements.firstDueDate.value; const mode = event.target.elements.mode.value; event.target.reset(); event.target.elements.termMonths.value = "12"; event.target.elements.firstDueDate.value = firstDue; event.target.elements.mode.value = mode; refreshLoanMode(); await refresh(); toast("Prestito creato"); } catch (error) { toast(error.message, true); } });
+  $("loan-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const data = Object.fromEntries(new FormData(event.target)); if (data.mode !== "NEW_DISBURSEMENT") { delete data.principal; delete data.fundingAccountId; delete data.startDate; } const created = unwrap(await call("createLoan", data)); currentLoanId = String(created.id); const firstDue = event.target.elements.firstDueDate.value; event.target.reset(); event.target.elements.termMonths.value = "12"; event.target.elements.firstDueDate.value = firstDue; await refresh(); toast("Prestito creato"); } catch (error) { toast(error.message, true); } });
   $("loan-list").addEventListener("click", async (event) => { const detail = event.target.closest("[data-loan-detail]"); const post = event.target.closest("[data-loan-post]"); if (!detail && !post) return; try { if (detail) await loadLoanDetail(detail.dataset.loanDetail); else { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets()]); toast("Rata registrata"); } } catch (error) { toast(error.message, true); } });
   $("loan-detail").addEventListener("click", async (event) => { const post = event.target.closest("[data-loan-post]"); if (!post) return; try { const result = unwrap(await call("postNextLoanPayment", { loanId: post.dataset.loanPost })); if (result.state) renderSnapshot(result.state); currentLoanId = String(post.dataset.loanPost); await Promise.all([refreshLoans(), refreshReports(), refreshBudgets()]); toast("Rata registrata"); } catch (error) { toast(error.message, true); } });
   $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await Promise.all([refreshScheduled(), refreshForecast()]); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });

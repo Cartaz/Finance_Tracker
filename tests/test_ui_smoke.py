@@ -49,3 +49,12 @@ def test_reconciliation_keeps_selected_batch_after_actions() -> None:
     assert 'currentBatchId = String(batchId);' in app_js
     assert 'if (currentBatchId) await loadImportBatch(currentBatchId);' in app_js
     assert '.import-batch:focus' not in app_js
+
+
+def test_reconciliation_ui_uses_structured_candidates_and_safe_file_payload() -> None:
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert 'data-transaction-id="${candidate.id}"' in app_js
+    assert 'delete data["import-file"]' in app_js
+    assert '"TRACKING_AMBIGUOUS"' in app_js
+    assert 'const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"]' in app_js

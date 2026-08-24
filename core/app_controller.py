@@ -10,6 +10,7 @@ from core.fx_service import FxService
 from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
 from core.money import parse_money
 from core.payee_service import PayeeService
+from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 
 
@@ -26,6 +27,7 @@ class AppController:
         payee_service: PayeeService,
         fx_service: FxService | None = None,
         reporting_service: ReportingService | None = None,
+        reconciliation_service: ReconciliationService | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
@@ -36,6 +38,9 @@ class AppController:
         self._fx = fx_service or FxService(database)
         self._reporting = reporting_service or ReportingService(
             database, self._fx, account_service
+        )
+        self._reconciliation = reconciliation_service or ReconciliationService(
+            database, account_service, ledger_service, payee_service
         )
 
     def initial_state(self) -> dict[str, object]:
@@ -142,6 +147,53 @@ class AppController:
             }
             for item in self._fx.list_rates(book.id)
         ]
+
+    def import_csv(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.import_csv(
+            book_id=book.id,
+            account_id=self._positive_id(payload.get("accountId")),
+            source_name=str(payload.get("sourceName", "")),
+            csv_text=str(payload.get("csvText", "")),
+            review_mode=str(payload.get("reviewMode", "FULL_REVIEW")),
+        )
+
+    def list_import_batches(self) -> list[dict[str, object]]:
+        book = self._require_book()
+        return self._reconciliation.list_batches(book.id)
+
+    def import_batch_rows(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        book = self._require_book()
+        result = self._reconciliation.batch_rows(
+            book.id, self._positive_id(payload.get("batchId"))
+        )
+        return self._transport_money(result)
+
+    def link_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.link_existing(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+            transaction_id=self._positive_id(payload.get("transactionId")),
+        )
+
+    def post_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        payee = payload.get("payeeId")
+        result = self._reconciliation.post_row(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+            category_account_id=self._positive_id(payload.get("categoryAccountId")),
+            payee_id=None if payee in (None, "") else self._positive_id(payee),
+        )
+        return {**result, "stateSnapshot": self.snapshot()}
+
+    def ignore_import_row(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        return self._reconciliation.ignore_row(
+            book_id=book.id,
+            row_id=self._positive_id(payload.get("rowId")),
+        )
 
     def create_account(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()

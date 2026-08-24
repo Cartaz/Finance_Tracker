@@ -103,7 +103,7 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(ledger_env, tmp
         lambda: service.post_row(
             book_id=book,
             row_id=int(rows[751]["id"]),
-            category_account_id=income.id,
+            category_account_id=expense.id,
         ),
         lambda: service.post_row(
             book_id=book,

@@ -16,6 +16,7 @@ from core.money import parse_money
 from core.payee_service import PayeeService
 
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
+_POSTING_KINDS = {"EXPENSE", "INCOME", "REFUND", "TRANSFER"}
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _BLOCKED_POST_STATES = {"OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
@@ -24,20 +25,10 @@ _DATE_HEADERS = ("date", "bookingdate", "transactiondate", "data", "valuedate")
 _AMOUNT_HEADERS = ("amount", "transactionamount", "importo", "value", "ammontare")
 _CURRENCY_HEADERS = ("currency", "currencycode", "valuta", "ccy")
 _DESCRIPTION_HEADERS = (
-    "description",
-    "descrizione",
-    "details",
-    "causale",
-    "memo",
-    "narrative",
+    "description", "descrizione", "details", "causale", "memo", "narrative"
 )
 _EXTERNAL_ID_HEADERS = (
-    "externalid",
-    "transactionid",
-    "bankid",
-    "reference",
-    "riferimento",
-    "id",
+    "externalid", "transactionid", "bankid", "reference", "riferimento", "id"
 )
 
 
@@ -123,11 +114,7 @@ class ReconciliationService:
                     "description": description,
                     "external_id": external_id,
                     "fingerprint": self._fingerprint(
-                        account_id,
-                        transaction_date,
-                        amount_minor,
-                        currency,
-                        description,
+                        account_id, transaction_date, amount_minor, currency, description
                     ),
                 }
             )
@@ -165,16 +152,9 @@ class ReconciliationService:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     (
-                        batch_id,
-                        book_id,
-                        item["row_number"],
-                        item["date"],
-                        item["amount_minor"],
-                        item["currency"],
-                        item["description"],
-                        item["external_id"],
-                        item["fingerprint"],
-                        state,
+                        batch_id, book_id, item["row_number"], item["date"],
+                        item["amount_minor"], item["currency"], item["description"],
+                        item["external_id"], item["fingerprint"], state,
                         matched_transaction_id,
                     ),
                 )
@@ -267,29 +247,56 @@ class ReconciliationService:
         *,
         book_id: int,
         row_id: int,
-        category_account_id: int,
+        posting_kind: str,
+        counter_account_id: int,
         payee_id: int | None = None,
     ) -> dict[str, object]:
         row, batch = self._require_row(book_id, row_id)
         state = str(row["review_state"])
         if state in _TERMINAL_STATES or state in _BLOCKED_POST_STATES:
             raise ReconciliationError("row cannot be posted in its current state")
+        if not isinstance(posting_kind, str):
+            raise ReconciliationError(
+                "posting_kind must be EXPENSE, INCOME, REFUND or TRANSFER"
+            )
+        kind = posting_kind.strip().upper()
+        if kind not in _POSTING_KINDS:
+            raise ReconciliationError(
+                "posting_kind must be EXPENSE, INCOME, REFUND or TRANSFER"
+            )
 
-        account = self._accounts.get_account(book_id, int(batch["account_id"]))
-        category = self._accounts.get_account(book_id, category_account_id)
+        imported_account = self._accounts.get_account(book_id, int(batch["account_id"]))
+        counter = self._accounts.get_account(book_id, counter_account_id)
+        if counter.id == imported_account.id:
+            raise ReconciliationError("counter account must differ from imported account")
+        if counter.archived or counter.placeholder:
+            raise ReconciliationError("counter account must be active and selectable")
         amount = int(row["amount_minor"])
-        if amount < 0:
-            if category.type != "EXPENSE" or category.placeholder or category.archived:
+
+        counter_quantity: int | None = None
+        if kind == "EXPENSE":
+            if amount >= 0 or counter.type != "EXPENSE":
                 raise ReconciliationError(
-                    "negative bank rows require an active expense category"
+                    "EXPENSE requires a negative row and expense category"
                 )
-            kind = "EXPENSE"
+        elif kind == "INCOME":
+            if amount <= 0 or counter.type != "INCOME":
+                raise ReconciliationError(
+                    "INCOME requires a positive row and income category"
+                )
+        elif kind == "REFUND":
+            if amount <= 0 or counter.type != "EXPENSE":
+                raise ReconciliationError(
+                    "REFUND requires a positive row and expense category"
+                )
         else:
-            if category.type != "INCOME" or category.placeholder or category.archived:
+            if counter.type not in {"ASSET", "LIABILITY"} or counter.currency_code is None:
+                raise ReconciliationError("TRANSFER requires another balance account")
+            if counter.currency_code != str(row["currency_code"]):
                 raise ReconciliationError(
-                    "positive bank rows require an active income category"
+                    "cross-currency transfer cannot be inferred from one imported bank row"
                 )
-            kind = "INCOME"
+            counter_quantity = -amount
 
         draft = TransactionDraft(
             book_id=book_id,
@@ -298,8 +305,8 @@ class ReconciliationService:
             currency_code=str(row["currency_code"]),
             description=str(row["description"]),
             entries=(
-                EntryDraft(account.id, amount, amount),
-                EntryDraft(category.id, -amount, None),
+                EntryDraft(imported_account.id, amount, amount),
+                EntryDraft(counter.id, -amount, counter_quantity),
             ),
         )
         with self._database.transaction() as conn:
@@ -315,7 +322,7 @@ class ReconciliationService:
                 self._insert_link(
                     conn,
                     book_id=book_id,
-                    account_id=account.id,
+                    account_id=imported_account.id,
                     source_name=str(batch["source_name"]),
                     external_id=str(row["external_id"]),
                     transaction_id=transaction.id,
@@ -374,11 +381,7 @@ class ReconciliationService:
             if link is not None:
                 linked_id = int(link["transaction_id"])
                 if self._transaction_is_compatible(
-                    book_id,
-                    account_id,
-                    linked_id,
-                    transaction_date,
-                    amount_minor,
+                    book_id, account_id, linked_id, transaction_date, amount_minor
                 ):
                     return "MATCHED", linked_id
                 return "AMBIGUOUS", None
@@ -421,12 +424,7 @@ class ReconciliationService:
         if review_mode == "FULL_REVIEW":
             return "REVIEW_REQUIRED", None
         candidate_count = len(
-            self._candidate_details(
-                book_id,
-                account_id,
-                transaction_date,
-                amount_minor,
-            )
+            self._candidate_details(book_id, account_id, transaction_date, amount_minor)
         )
         if candidate_count == 1:
             return "SUGGESTED", None
@@ -463,13 +461,7 @@ class ReconciliationService:
               )
             ORDER BY t.id
             """,
-            (
-                book_id,
-                account_id,
-                transaction_date,
-                amount_minor,
-                account_id,
-            ),
+            (book_id, account_id, transaction_date, amount_minor, account_id),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -490,13 +482,7 @@ class ReconciliationService:
               AND t.transaction_date=? AND e.quantity_minor=?
             LIMIT 1
             """,
-            (
-                transaction_id,
-                book_id,
-                account_id,
-                transaction_date,
-                amount_minor,
-            ),
+            (transaction_id, book_id, account_id, transaction_date, amount_minor),
         ).fetchone()
         return row is not None
 
@@ -536,13 +522,7 @@ class ReconciliationService:
                     transaction_id, created_at
                 ) VALUES (?, ?, ?, ?, ?, datetime('now'))
                 """,
-                (
-                    book_id,
-                    account_id,
-                    source_name,
-                    external_id,
-                    transaction_id,
-                ),
+                (book_id, account_id, source_name, external_id, transaction_id),
             )
         except sqlite3.IntegrityError as exc:
             raise ReconciliationAmbiguousError(

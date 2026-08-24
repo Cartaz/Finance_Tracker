@@ -107,6 +107,7 @@ class LedgerService:
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, source_account_id, currency_code)
+        self._require_account_type(book_id, expense_account_id, "EXPENSE")
         return self.create_transaction(
             TransactionDraft(
                 book_id=book_id,
@@ -136,6 +137,7 @@ class LedgerService:
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, destination_account_id, currency_code)
+        self._require_account_type(book_id, income_account_id, "INCOME")
         return self.create_transaction(
             TransactionDraft(
                 book_id=book_id,
@@ -195,6 +197,7 @@ class LedgerService:
     ) -> TransactionRecord:
         self._require_nonzero_minor(quantity_minor)
         self._require_native_currency(book_id, account_id, currency_code)
+        self._require_account_type(book_id, equity_account_id, "EQUITY")
         return self.create_transaction(
             TransactionDraft(
                 book_id=book_id,
@@ -442,6 +445,25 @@ class LedgerService:
         if str(row["currency_code"]) != requested:
             raise LedgerValidationError(
                 "convenience transaction currency must match the balance account currency"
+            )
+
+    def _require_account_type(
+        self,
+        book_id: int,
+        account_id: int,
+        expected_type: str,
+    ) -> None:
+        row = self._database.connection.execute(
+            "SELECT book_id, type FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        if row is None:
+            raise AccountNotFoundError(f"unknown account id: {account_id}")
+        if int(row["book_id"]) != book_id:
+            raise CrossBookReferenceError(f"account {account_id} belongs to another book")
+        if str(row["type"]) != expected_type:
+            raise LedgerValidationError(
+                f"account {account_id} must be of type {expected_type}"
             )
 
     @staticmethod

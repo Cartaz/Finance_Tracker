@@ -316,3 +316,36 @@ def test_float_and_invalid_quantity_semantics_are_rejected(ledger_env) -> None:
                 ),
             )
         )
+
+
+def test_convenience_apis_require_semantic_counterpart_types(ledger_env) -> None:
+    bank, _, expense, income, equity = _base_accounts(ledger_env)
+    with pytest.raises(LedgerValidationError):
+        ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=income.id,
+            amount_minor=1000,
+            currency_code="EUR",
+            transaction_date="2026-08-26",
+        )
+    with pytest.raises(LedgerValidationError):
+        ledger_env.ledger.create_income(
+            book_id=ledger_env.book_id,
+            destination_account_id=bank.id,
+            income_account_id=expense.id,
+            amount_minor=1000,
+            currency_code="EUR",
+            transaction_date="2026-08-26",
+        )
+    with pytest.raises(LedgerValidationError):
+        ledger_env.ledger.create_opening_balance(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            equity_account_id=expense.id,
+            quantity_minor=1000,
+            currency_code="EUR",
+            transaction_date="2026-08-25",
+            transaction_time="16:00:00",
+        )
+    assert equity.type == "EQUITY"

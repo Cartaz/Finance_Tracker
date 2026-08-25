@@ -5,7 +5,6 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, Signal, Slot
 
 from core.app_controller import AppController
-from core.backup_controller import BackupController
 from core.errors import BackupError, FinanceTrackerError
 from ui.backup_task_manager import BackupTaskManager
 
@@ -17,15 +16,11 @@ class Bridge(QObject):
     def __init__(
         self,
         controller: AppController,
-        backup_controller: BackupController | None = None,
+        backup_tasks: BackupTaskManager | None = None,
     ) -> None:
         super().__init__()
         self._controller = controller
-        self._backup_tasks = (
-            None
-            if backup_controller is None
-            else BackupTaskManager(backup_controller, controller.error_payload)
-        )
+        self._backup_tasks = backup_tasks
         if self._backup_tasks is not None:
             self._backup_tasks.finished.connect(self.backupTaskFinished.emit)
             self._backup_tasks.maintenanceChanged.connect(self.maintenanceChanged.emit)

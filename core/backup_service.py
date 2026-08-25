@@ -207,6 +207,7 @@ class BackupService:
             self._copy_sqlite_database(self._database.path, temp)
             self._verify_sqlite_file(temp, require_current_schema=True)
             os.replace(temp, destination)
+            self._restrict_file_permissions(destination)
         finally:
             temp.unlink(missing_ok=True)
 
@@ -287,6 +288,13 @@ class BackupService:
             )
         except sqlite3.Error as exc:
             raise BackupError(f"cannot open backup database read-only: {exc}") from exc
+
+    @staticmethod
+    def _restrict_file_permissions(path: Path) -> None:
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
 
     @staticmethod
     def _remove_sidecars(path: Path) -> None:

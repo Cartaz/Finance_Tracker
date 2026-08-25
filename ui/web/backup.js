@@ -53,6 +53,28 @@
     return result;
   }
 
+  function connect(sharedBackend) {
+    if (backend || !sharedBackend) return;
+    backend = sharedBackend;
+    backend.maintenanceChanged.connect((active) => setMaintenance(active));
+    backend.backupTaskFinished.connect(async (result) => {
+      if (!result?.ok) {
+        showToast(result?.error?.message || "Operazione backup fallita", true);
+        return;
+      }
+      if (result.requiresReload) {
+        const safety = result.data?.safetyBackup ? ` Backup di sicurezza: ${result.data.safetyBackup}.` : "";
+        showToast(`Ripristino completato.${safety}`);
+        window.location.reload();
+        return;
+      }
+      if (result.operation === "BACKUP_CREATE") showToast("Backup locale creato");
+      else if (result.operation === "BACKUP_EXPORT") showToast("Backup esportato");
+      try { await refreshBackups(); } catch (error) { showToast(error.message, true); }
+    });
+    refreshBackups().catch((error) => showToast(error.message, true));
+  }
+
   $("backup-create").addEventListener("click", async () => {
     try {
       const task = await start("startManagedBackup");
@@ -86,25 +108,10 @@
     } catch (error) { showToast(error.message, true); }
   });
 
-  if (typeof QWebChannel === "undefined" || !window.qt?.webChannelTransport) return;
-  new QWebChannel(window.qt.webChannelTransport, async (channel) => {
-    backend = channel.objects.backend;
-    backend.maintenanceChanged.connect((active) => setMaintenance(active));
-    backend.backupTaskFinished.connect(async (result) => {
-      if (!result?.ok) {
-        showToast(result?.error?.message || "Operazione backup fallita", true);
-        return;
-      }
-      if (result.requiresReload) {
-        const safety = result.data?.safetyBackup ? ` Backup di sicurezza: ${result.data.safetyBackup}.` : "";
-        showToast(`Ripristino completato.${safety}`);
-        window.location.reload();
-        return;
-      }
-      if (result.operation === "BACKUP_CREATE") showToast("Backup locale creato");
-      else if (result.operation === "BACKUP_EXPORT") showToast("Backup esportato");
-      try { await refreshBackups(); } catch (error) { showToast(error.message, true); }
-    });
-    try { await refreshBackups(); } catch (error) { showToast(error.message, true); }
-  });
+  if (window.financeTrackerBackend) connect(window.financeTrackerBackend);
+  else window.addEventListener(
+    "finance-backend-ready",
+    () => connect(window.financeTrackerBackend),
+    { once: true },
+  );
 })();

@@ -40,6 +40,11 @@ class BackupTaskManager(QObject):
     def maintenance(self) -> bool:
         return self._maintenance
 
+    @property
+    def active(self) -> bool:
+        """Whether this manager still owns persistence work that must finish before close."""
+        return bool(self._tasks) or self._maintenance
+
     def set_file_dialogs(
         self,
         *,

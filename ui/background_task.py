@@ -22,7 +22,7 @@ class BackgroundTask(QRunnable):
     def run(self) -> None:
         try:
             result = self.function()
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001 - worker boundary reports failures to Qt
             self.signals.failed.emit(self.task_id, exc)
         else:
             self.signals.succeeded.emit(self.task_id, result)

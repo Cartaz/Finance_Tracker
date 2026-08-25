@@ -1,21 +1,102 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Slot
+from collections.abc import Callable
+
+from PySide6.QtCore import QObject, Signal, Slot
 
 from core.app_controller import AppController
-from core.errors import FinanceTrackerError
+from core.errors import BackupError, FinanceTrackerError
+from ui.backup_task_manager import BackupTaskManager
 
 
 class Bridge(QObject):
-    def __init__(self, controller: AppController) -> None:
+    backupTaskFinished = Signal("QVariant")
+    maintenanceChanged = Signal(bool)
+
+    def __init__(
+        self,
+        controller: AppController,
+        backup_tasks: BackupTaskManager | None = None,
+    ) -> None:
         super().__init__()
         self._controller = controller
+        self._backup_tasks = backup_tasks
+        if self._backup_tasks is not None:
+            self._backup_tasks.finished.connect(self.backupTaskFinished.emit)
+            self._backup_tasks.maintenanceChanged.connect(self.maintenanceChanged.emit)
+
+    def set_file_dialogs(
+        self,
+        *,
+        export_picker: Callable[[], str | None],
+        restore_picker: Callable[[], str | None],
+    ) -> None:
+        if self._backup_tasks is not None:
+            self._backup_tasks.set_file_dialogs(
+                export_picker=export_picker,
+                restore_picker=restore_picker,
+            )
 
     def _call(self, function, *args):
+        if self._backup_tasks is not None and self._backup_tasks.maintenance:
+            return self._controller.error_payload(
+                BackupError("database restore is in progress")
+            )
         try:
             return {"ok": True, "data": function(*args)}
         except (FinanceTrackerError, TypeError, ValueError) as exc:
             return self._controller.error_payload(exc)
+
+    def _backup_call(self, function, *args):
+        try:
+            return {"ok": True, "data": function(*args)}
+        except (FinanceTrackerError, TypeError, ValueError) as exc:
+            return self._controller.error_payload(exc)
+
+    def _require_backup_tasks(self) -> BackupTaskManager:
+        if self._backup_tasks is None:
+            raise BackupError("backup service is unavailable")
+        return self._backup_tasks
+
+    @Slot(result="QVariant")
+    def listBackups(self):
+        try:
+            manager = self._require_backup_tasks()
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        return self._call(manager.list_backups)
+
+    @Slot(result="QVariant")
+    def startManagedBackup(self):
+        try:
+            manager = self._require_backup_tasks()
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        return self._backup_call(manager.start_managed_backup)
+
+    @Slot(result="QVariant")
+    def startExportBackup(self):
+        try:
+            manager = self._require_backup_tasks()
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        return self._backup_call(manager.start_export_backup)
+
+    @Slot(str, result="QVariant")
+    def startManagedRestore(self, name: str):
+        try:
+            manager = self._require_backup_tasks()
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        return self._backup_call(manager.start_managed_restore, name)
+
+    @Slot(result="QVariant")
+    def startExternalRestore(self):
+        try:
+            manager = self._require_backup_tasks()
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        return self._backup_call(manager.start_external_restore)
 
     @Slot(result="QVariant")
     def getInitialState(self):

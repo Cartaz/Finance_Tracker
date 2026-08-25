@@ -4,10 +4,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-if [[ ! -f requirements.txt ]]; then
-  echo "[ERROR] requirements.txt not found in $ROOT_DIR" >&2
-  exit 1
-fi
+for required_file in requirements.txt requirements-dev.txt; do
+  if [[ ! -f "$required_file" ]]; then
+    echo "[ERROR] $required_file not found in $ROOT_DIR" >&2
+    exit 1
+  fi
+done
 
 PYTHON_BIN=""
 for candidate in python3.14 python3.13 python3.12 python3; do
@@ -30,8 +32,16 @@ fi
 
 echo "[INFO] Using $($PYTHON_BIN --version)"
 
-if [[ ! -x .venv/bin/python ]]; then
-  echo "[INFO] Creating virtual environment"
+venv_usable() {
+  [[ -x .venv/bin/python ]] || return 1
+  .venv/bin/python - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+PY
+}
+
+if ! venv_usable; then
+  echo "[INFO] Creating or repairing virtual environment"
   rm -rf .venv
   "$PYTHON_BIN" -m venv .venv
 fi
@@ -40,10 +50,13 @@ fi
 .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 
 .venv/bin/python - <<'PY'
-import PySide6
 import sqlite3
+import PySide6
+from PySide6.QtWebEngineWidgets import QWebEngineView
+
 print(f"[OK] PySide6 {PySide6.__version__}")
 print(f"[OK] SQLite {sqlite3.sqlite_version}")
+print(f"[OK] Qt WebEngine {QWebEngineView.__name__}")
 PY
 
 echo "[OK] Installation complete"

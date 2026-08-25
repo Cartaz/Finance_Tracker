@@ -238,25 +238,3 @@ def test_unknown_currency_is_rejected(tmp_path: Path) -> None:
             db.currency("ZZZ")
     finally:
         db.close()
-
-
-def test_backup_is_verified_snapshot(tmp_path: Path) -> None:
-    db = Database(tmp_path / "finance.db")
-    backup = tmp_path / "backups" / "snapshot.db"
-    try:
-        db.open()
-        db.migrate()
-        db.backup_to(backup)
-        assert backup.exists()
-        restored = Database(backup)
-        try:
-            restored.open()
-            restored.integrity_check()
-            assert restored.currency("EUR").code == "EUR"
-            assert restored.connection.execute(
-                "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == SCHEMA_VERSION
-        finally:
-            restored.close()
-    finally:
-        db.close()

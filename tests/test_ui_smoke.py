@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl
 from PySide6.QtWidgets import QApplication
 
 from ui.window import LocalOnlyPage
@@ -20,6 +20,7 @@ def test_local_page_accepts_local_frontend() -> None:
         )
     finally:
         page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents()
 
 

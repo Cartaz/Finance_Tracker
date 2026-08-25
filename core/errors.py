@@ -22,6 +22,10 @@ class DatabaseIntegrityError(FinanceTrackerError):
     """Raised when database configuration or integrity checks fail."""
 
 
+class BackupError(FinanceTrackerError):
+    """Raised when backup or restore cannot complete safely."""
+
+
 class AccountError(ValidationError):
     """Base error for invalid account operations."""
 

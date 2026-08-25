@@ -4,81 +4,96 @@ Local-first personal finance tracker for desktop Linux, built with Python, PySid
 
 ## Current status
 
-Milestones M0 through M10 are implemented on stacked feature branches and are under validation before merge to `main`.
+Milestones M0 through M10 are validated on stacked feature branches. M11 implements the final V1 feature set — backup/restore UX and release hardening — and remains under final validation and mandatory strategic review before V1 is declared complete.
 
-Implemented:
+## Implemented
 
-- PySide6/QWebEngine local desktop shell with QWebChannel bridge and blocked in-app remote navigation;
-- dark neumorphic UI (`rgb(20,20,20)` surface, `rgb(255,102,0)` accent), minimum window 1200×800;
-- first-run creation of the local personal book;
-- usable Dashboard, Transactions, Accounts, Budgets, Forecast, Loans, Scheduled Transactions and Reconciliation views;
-- manual account/category creation and manual expense entry;
-- merchant autocomplete limited to five ranked suggestions plus explicit new-payee creation;
-- XDG-based settings/data directories;
-- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v9;
-- currencies, users/books, accounts, transactions, entries, payees, aliases, historical book-scoped FX rates, CSV import staging rows, reconciliation identities, scheduled templates, posted occurrences, monthly budgets, generalized loan contracts, effective-dated variable-rate history and ledger-linked loan payments;
-- exact money parsing using integer minor units and `Decimal`; financial `float` values are rejected;
-- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService`, read-only `ReportingService`, zero-trust `ReconciliationService`, `ScheduledTransactionService`, `BudgetService`, read-only `ForecastService`, `LoanService` and a dedicated application-state read model;
-- opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings in the domain layer;
-- one canonical tracking-boundary policy shared by ledger, reconciliation and scheduled workflows;
-- one canonical posting-capability policy used by backend workflows and exposed to presentation instead of re-derived in JavaScript;
-- deterministic autocomplete ranking and atomic payee merge;
-- FX-aware reporting with fail-closed behavior when required rates are missing;
-- net worth, income, expenses, saving rate, category and merchant reports, cash flow and account history;
-- canonical currency precision supplied by a dedicated currency registry; monetary values and basis points cross QWebChannel without JavaScript-number precision loss;
-- explicit financial transport vocabulary rather than suffix-based serialization heuristics;
-- deterministic FX rounding for split transactions so report totals reconcile;
-- CSV import for balance accounts with `FULL_REVIEW` and `ASSISTED_REVIEW` workflows;
-- imported bank rows remain external staging evidence and never mutate the ledger until an explicit reconciliation action;
-- heuristic reconciliation can produce suggestions or ambiguity but never automatic `MATCHED` status;
-- automatic `MATCHED` status is limited to a previously persisted unique external bank identity that remains compatible with the ledger transaction;
-- normalized bank-source identity, re-import duplicate detection with and without external IDs, fail-closed ambiguous CSV header handling and explicit tracking-boundary ambiguity;
-- reconciliation candidates match native account quantities, including ledger transactions whose accounting transaction currency differs from the account currency;
-- explicit reconciliation posting as expense, income, refund or same-currency transfer, always delegated to semantic `LedgerService` APIs atomically;
-- scheduled expense, income, refund and same-currency transfer templates with daily, weekly, monthly and yearly recurrence;
-- date-only scheduled templates remain separate from the ledger until an explicit due-materialization command;
-- month-end and leap-year recurrence anchoring, optional end dates, pause/resume and durable unique `(schedule, due date)` occurrence identity;
-- scheduled catch-up preflights occurrence limits and materializes an entire requested batch atomically through `LedgerService`, preventing partial posting if a later occurrence fails;
-- monthly expense budgets stored in book-base-currency minor units and compared against canonical FX-aware reporting rather than maintaining a second accounting total;
-- budget scopes can target an expense category subtree, including grouping categories, while same-month ancestor/descendant overlaps are rejected and revalidated after hierarchy changes;
-- budget target capabilities are computed by the backend for the selected month; presentation only renders the allowed category paths;
-- budget actuals, remaining amounts and usage percentages fail closed when historical FX required by the ledger is missing;
-- deterministic cash-flow forecasting with DAY/MONTH/YEAR grouping and horizons up to ten years;
-- forecasting consumes canonical read-only projections from Scheduled Transactions and Loans and never advances schedules, loan state or the ledger;
-- projected EXPENSE is an outflow, INCOME/REFUND an inflow and TRANSFER is book-level flow neutral;
-- loan installments expose the total contractual payment in forecast detail while only the interest component contributes to book-level net flow; principal repayment remains balance-sheet neutral;
-- foreign-currency forecast values use the canonical latest-known FX rate on or before each due date, with the policy surfaced explicitly in the forecast UI and payload;
-- forecast totals fail closed if a required FX conversion is unavailable; no partial total is presented as complete;
-- no statistical trend inference, hidden assumptions or forecast persistence are introduced: the projection is deterministic and based on known future obligations;
-- loans can attach to an existing negative LIABILITY balance or atomically create a new disbursement through `LedgerService`;
-- fixed and variable interest-rate contracts are supported; variable rates use effective-dated revisions, and future projections hold the latest known effective rate until another explicit revision is recorded rather than predicting an index;
-- French (`FRENCH`), Italian (`ITALIAN`) and bullet/interest-only-until-maturity (`BULLET`) amortization are implemented through one pure deterministic `AmortizationPolicy`;
-- a loan never stores a parallel outstanding balance: current principal is derived from the canonical linked LIABILITY ledger balance;
-- loan principal and custom-payment inputs are unsigned positive magnitudes, annual rates are parsed exactly to integer basis points, and amortization/interest math uses `Decimal` with deterministic `ROUND_HALF_UP` rounding;
-- custom payments are explicit events that must cover accrued interest and reduce principal; they can recast the remaining plan while the posted principal/interest split remains permanently linked to the canonical ledger transaction;
-- rate revisions cannot rewrite the rate applied to an already-posted installment; each payment stores the basis-point rate actually applied;
-- arrears, unpaid-interest capitalization, penalties and negative amortization are intentionally not inferred by M10 and fail closed rather than silently inventing contract semantics;
-- loan installment posting and read-only projection share the same canonical remaining-plan calculation, including exact final-principal payoff;
-- payment posting records principal and interest metadata atomically with the canonical ledger transaction; interest flows to an EXPENSE account while principal reduces the LIABILITY;
-- backend-owned loan capabilities decide which liabilities, payment/funding accounts, creation modes, rate types, amortization types and recast strategies are exposed; JavaScript renders those capabilities rather than reproducing domain rules;
-- contradictory/stale loan state fails closed, including archived accounts, positive liability balances, duplicate loan ownership, balances exceeding original principal and residual debt beyond the contractual term;
-- schema v8 fixed/French loan records migrate deterministically to v9 as `FIXED + FRENCH + REDUCE_PAYMENT`, preserving their original meaning;
-- database migrations remain separated from connection, transaction, integrity and backup lifecycle code;
-- verified SQLite backup primitive;
-- permanent deterministic stress suites across M0-M10, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations, reconciliation duplicates/ambiguity, reporting read-only invariants, 1000 scheduled occurrences, invalid-state stress, many-budget deterministic/read-only checks, forecast recurrence/read-only checks and long-loan amortization/projection checks;
-- permanent architecture-invariant tests preventing common tactical regressions.
+### Desktop architecture
 
-The remaining V1 milestone covers complete backup/restore UX and final release hardening.
+- Python 3.12+ with PySide6/Qt6, Qt WebEngine and QWebChannel;
+- local/buildless HTML, CSS and vanilla JavaScript frontend;
+- one main QWebChannel backend proxy shared by frontend modules;
+- local-only in-app navigation, with external HTTP(S) navigation opened in the system browser;
+- dark neumorphic UI using `rgb(20,20,20)` surfaces and `rgb(255,102,0)` accent;
+- minimum window size 1200×800;
+- XDG-based data/config/cache paths;
+- SQLite with foreign-key enforcement, WAL mode and migrations through schema v9.
+
+### Accounting and money
+
+- `LedgerService` is the only writer of accounting transactions and entries;
+- opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings;
+- monetary persistence uses integer minor units; percentage, amortization and FX calculations use `Decimal` with deterministic rounding;
+- user-entered financial amounts are unsigned positive magnitudes; economic direction belongs to transaction/posting semantics;
+- financial `float` values are rejected;
+- currency precision and financial transport fields are explicit, including safe transport beyond JavaScript's `2^53` integer limit;
+- canonical tracking-boundary and posting-capability policies are reused across workflows.
+
+### Accounts, payees and reporting
+
+- accounts/categories with hierarchy, placeholder and archive semantics;
+- merchant/payee autocomplete, aliases and atomic payee merge;
+- historical book-scoped FX rates;
+- FX-aware net worth, income, expenses, saving rate, cash flow, category/merchant reporting and account history;
+- reporting fails closed when a required historical FX rate is missing.
+
+### Reconciliation and scheduled transactions
+
+- CSV import into external staging evidence, never directly into the ledger;
+- full-review and assisted-review reconciliation workflows;
+- persisted external identity matching, duplicate detection and ambiguity handling;
+- explicit posting of reconciled rows through semantic `LedgerService` APIs;
+- scheduled expense, income, refund and same-currency transfer templates;
+- daily, weekly, monthly and yearly recurrence with month-end/leap-year anchoring;
+- pause/resume, optional end dates, durable occurrence identity and atomic catch-up posting;
+- forecast consumes the canonical read-only recurrence projection rather than reimplementing recurrence rules.
+
+### Budgets and forecasting
+
+- monthly expense budgets in the book base currency;
+- category-subtree budget scopes with ancestor/descendant overlap prevention;
+- backend-owned budget targets and FX-aware actuals;
+- deterministic DAY/MONTH/YEAR cash-flow forecasting for known scheduled transactions and loan installments;
+- forecast never persists a second future-state truth and never advances canonical schedule/loan state;
+- transfers and loan-principal repayments are book-level flow neutral; loan interest is an expense flow;
+- foreign-currency forecast uses the latest known FX rate on or before each due date and fails closed when conversion is unavailable.
+
+### Loans and financing
+
+- loans backed by canonical `LIABILITY` ledger balances; no parallel outstanding-balance state;
+- existing-balance attachment or atomic new disbursement;
+- fixed and effective-dated variable rates;
+- French, Italian and bullet amortization through one deterministic `AmortizationPolicy`;
+- contractual installment posting, custom overpayment/prepayment and supported recast strategies;
+- posted installments preserve the actual rate and principal/interest split used;
+- variable-rate history cannot rewrite already-posted periods;
+- future plans use the latest known effective variable rate instead of predicting unknown future indices;
+- arrears, penalties, unpaid-interest capitalization and negative amortization are intentionally not inferred implicitly;
+- schema v8 fixed/French contracts migrate deterministically to v9.
+
+### Backup / restore and release hardening — M11
+
+- dedicated `BackupService` and `BackupController`; `AppController` remains focused on application/domain orchestration;
+- managed local backups plus native Qt export and restore file selection;
+- created backup files are verified SQLite snapshots and are restricted to owner-only permissions (`0600`) when supported;
+- external restore sources are opened read-only;
+- every restore verifies the source, creates a safety backup of the current state, copies to staging, migrates the staged database and performs full integrity/foreign-key checks before touching the live database;
+- the final live swap is rollback-safe: failure to reopen the prepared database restores the previous live file;
+- heavy backup/restore I/O, migration and integrity verification run through a Qt background worker;
+- restore activates maintenance mode so application mutations cannot race the safety snapshot and final swap;
+- backup/export/restore lifecycle operations are serialized;
+- the native window blocks normal application close while owned background persistence I/O is active;
+- restore completion reloads the local frontend so all UI state is rebuilt from the newly canonical database.
 
 ## Strategic programming directive
 
-`STRATEGIC_PROGRAMMING.md` is a binding project invariant. A milestone is not complete merely because its feature tests are green: after every milestone the whole project must undergo the documented strategic review for duplicated knowledge, information leakage, shallow modules, misplaced state ownership, atomicity, UI/domain leakage and new architectural invariants worth automating.
+`STRATEGIC_PROGRAMMING.md` is a binding project invariant. Green feature tests alone do not complete a milestone. After every milestone the whole project is reviewed for duplicated knowledge, information leakage, shallow modules, state ownership, atomicity, concurrency/lifecycle risks, UI/domain leakage and new invariants worth automating.
 
-The milestone review must end as `STRATEGIC`, `STRATEGIC AFTER CLEANUP`, or `BLOCKED`. Routine design debt discovered during the review is fixed inside the milestone rather than silently deferred.
+The review outcome must be `STRATEGIC`, `STRATEGIC AFTER CLEANUP`, or `BLOCKED`. Routine architectural debt discovered during the review is fixed inside the milestone rather than silently deferred.
 
 ## Requirements
 
-- Linux desktop (CachyOS/Arch + KDE is first-class)
+- Linux desktop; CachyOS/Arch + KDE is first-class
 - Python 3.12+
 - Qt runtime dependencies required by PySide6/Qt WebEngine
 

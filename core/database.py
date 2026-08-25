@@ -93,30 +93,20 @@ class Database:
         if fk_rows:
             raise DatabaseIntegrityError("SQLite foreign_key_check reported violations")
 
+    def checkpoint(self) -> None:
+        """Flush committed WAL pages before a native database-file swap."""
+        if self._connection is None:
+            return
+        self._connection.commit()
+        row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if row is not None and int(row[0]) != 0:
+            raise DatabaseIntegrityError("SQLite WAL checkpoint could not complete")
+
     def backup_to(self, destination: Path) -> None:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temp = destination.with_suffix(destination.suffix + ".tmp")
-        if temp.exists():
-            temp.unlink()
-        source = self.connection
-        source.commit()
-        target = sqlite3.connect(temp, autocommit=True)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-        verify = sqlite3.connect(temp, autocommit=True)
-        try:
-            verify.execute("PRAGMA foreign_keys = ON")
-            integrity = verify.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise DatabaseIntegrityError(f"backup integrity_check failed: {integrity}")
-            violations = verify.execute("PRAGMA foreign_key_check").fetchall()
-            if violations:
-                raise DatabaseIntegrityError("backup foreign_key_check reported violations")
-        finally:
-            verify.close()
-        temp.replace(destination)
+        """Compatibility facade; backup semantics live in BackupService."""
+        from core.backup_service import BackupService
+
+        BackupService(self).backup_to(destination)
 
     def close(self) -> None:
         if self._connection is not None:

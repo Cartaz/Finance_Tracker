@@ -17,6 +17,8 @@ from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
 from core.app_state_service import AppStateService
+from core.backup_controller import BackupController
+from core.backup_service import BackupService
 from core.book_service import BookService
 from core.budget_service import BudgetService
 from core.category_service import CategoryService
@@ -29,6 +31,7 @@ from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
+from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -98,6 +101,7 @@ def main() -> int:
         loan_service = LoanService(database, account_service, ledger_service)
         forecast_service = ForecastService(scheduled_service, fx_service, loan_service)
         app_state_service = AppStateService(database, account_service)
+        backup_controller = BackupController(BackupService(database, BACKUP_DIR))
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -116,8 +120,9 @@ def main() -> int:
             forecast_service,
             loan_service,
         )
-        bridge = Bridge(controller)
-        window = MainWindow(bridge)
+        backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
+        bridge = Bridge(controller, backup_tasks)
+        window = MainWindow(bridge, backup_tasks)
         window.show()
         return app.exec()
     except Exception:

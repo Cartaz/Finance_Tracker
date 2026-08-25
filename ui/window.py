@@ -23,7 +23,7 @@ class RemoteRequestBlocker(QWebEngineUrlRequestInterceptor):
 
     _REMOTE_SCHEMES = frozenset({"http", "https", "ftp", "ws", "wss"})
 
-    def interceptRequest(self, info: QWebEngineUrlRequestInfo) -> None:  # noqa: N802 - Qt API
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo) -> None:
         is_main_frame = (
             info.resourceType()
             == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame

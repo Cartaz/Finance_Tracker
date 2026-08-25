@@ -7,7 +7,7 @@ import pytest
 from core.backup_service import BackupService
 from core.book_service import BookService
 from core.database import Database
-from core.errors import BackupError
+from core.errors import BackupError, DatabaseIntegrityError
 
 
 def _database(tmp_path):
@@ -35,7 +35,9 @@ def test_managed_backup_is_verified_and_listed(tmp_path) -> None:
         database.close()
 
 
-def test_restore_replaces_live_state_with_verified_backup(tmp_path) -> None:
+def test_restore_replaces_live_state_and_preserves_pre_restore_safety_snapshot(
+    tmp_path,
+) -> None:
     database = _database(tmp_path)
     try:
         books = BookService(database)
@@ -53,7 +55,51 @@ def test_restore_replaces_live_state_with_verified_backup(tmp_path) -> None:
         result = service.finalize_restore(plan)
 
         assert result["restoredFrom"] == backup["name"]
+        assert result["safetyBackup"] == plan.safety_backup_name
         assert books.current_book().name == "Original"
+        database.integrity_check()
+
+        safety_db = Database(service.managed_path(plan.safety_backup_name))
+        try:
+            safety_db.open()
+            assert BookService(safety_db).current_book().name == "Changed"
+            safety_db.integrity_check()
+        finally:
+            safety_db.close()
+    finally:
+        database.close()
+
+
+def test_finalize_restore_rolls_back_if_new_live_database_cannot_reopen(
+    tmp_path, monkeypatch
+) -> None:
+    database = _database(tmp_path)
+    try:
+        books = BookService(database)
+        book = books.create_personal_book(
+            user_name="User", book_name="Original", currency_code="EUR"
+        )
+        service = BackupService(database, tmp_path / "backups")
+        backup = service.create_managed_backup()
+        with database.transaction() as tx:
+            tx.execute("UPDATE books SET name='Keep me' WHERE id=?", (book.id,))
+        plan = service.prepare_restore(service.managed_path(str(backup["name"])))
+
+        original_open = database.open
+        calls = 0
+
+        def fail_first_reopen():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise DatabaseIntegrityError("simulated reopen failure")
+            return original_open()
+
+        monkeypatch.setattr(database, "open", fail_first_reopen)
+        with pytest.raises(BackupError, match="previous database was restored"):
+            service.finalize_restore(plan)
+
+        assert BookService(database).current_book().name == "Keep me"
         database.integrity_check()
     finally:
         database.close()

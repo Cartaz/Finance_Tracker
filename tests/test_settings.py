@@ -36,3 +36,13 @@ def test_malformed_settings_are_diagnosed_and_fall_back(tmp_path: Path, caplog) 
     assert settings.book_currency == "EUR"
     assert "Could not load settings" in caplog.text
     assert "using defaults" in caplog.text
+
+
+def test_non_object_settings_are_diagnosed_and_fall_back(tmp_path: Path, caplog) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text("[]", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="config.settings"):
+        settings = SettingsStore(path).load()
+    assert settings.book_currency == "EUR"
+    assert "expected a JSON object" in caplog.text
+    assert "using defaults" in caplog.text

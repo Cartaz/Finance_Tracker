@@ -5,12 +5,12 @@ _POSTING_KINDS = {"EXPENSE", "INCOME", "REFUND", "TRANSFER"}
 
 
 class PostingPolicy:
-    """Canonical capability rules shared by workflows and presentation DTOs.
+    """Canonical capability and high-level semantics shared by workflows.
 
     LedgerService remains authoritative for actual posting validity. This policy
     answers which high-level posting choices are meaningful before a ledger
-    mutation is attempted, preventing UI and workflow layers from re-encoding
-    the same decision tables independently.
+    mutation is attempted and exposes semantics that must not be re-derived by
+    consumers such as forecasting or presentation DTOs.
     """
 
     @staticmethod
@@ -19,6 +19,16 @@ class PostingPolicy:
         if normalized not in _POSTING_KINDS:
             raise ValueError("unsupported posting kind")
         return normalized
+
+    @staticmethod
+    def book_cash_flow_direction(kind: str) -> str:
+        """Return the book-level cash-flow direction for a posting kind."""
+        normalized = PostingPolicy.normalize_kind(kind)
+        if normalized == "EXPENSE":
+            return "OUTFLOW"
+        if normalized in {"INCOME", "REFUND"}:
+            return "INFLOW"
+        return "TRANSFER"
 
     @staticmethod
     def allowed_kinds_for_amount(amount_minor: int) -> tuple[str, ...]:
@@ -46,7 +56,11 @@ class PostingPolicy:
             normalized = PostingPolicy.normalize_kind(kind)
         except ValueError:
             return False
-        if counter_archived or counter_placeholder or counter_account_id == source_account_id:
+        if (
+            counter_archived
+            or counter_placeholder
+            or counter_account_id == source_account_id
+        ):
             return False
         if normalized in {"EXPENSE", "REFUND"}:
             return counter_type == "EXPENSE"

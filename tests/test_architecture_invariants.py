@@ -8,7 +8,9 @@ CORE = ROOT / "core"
 
 
 def _python_files(directory: Path) -> list[Path]:
-    return sorted(path for path in directory.rglob("*.py") if "__pycache__" not in path.parts)
+    return sorted(
+        path for path in directory.rglob("*.py") if "__pycache__" not in path.parts
+    )
 
 
 def test_ledger_is_only_core_accounting_writer() -> None:
@@ -45,7 +47,11 @@ def test_bridge_imports_only_controller_and_expected_errors_from_core() -> None:
     tree = ast.parse((ROOT / "ui" / "bridge.py").read_text(encoding="utf-8"))
     core_imports: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("core."):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("core.")
+        ):
             core_imports.add(node.module)
     assert core_imports <= {"core.app_controller", "core.errors"}
 
@@ -85,6 +91,32 @@ def test_budget_frontend_uses_backend_status_and_target_capabilities() -> None:
     assert '$("budget-category").innerHTML = snapshot.accounts.filter' not in text
 
 
+def test_forecast_is_read_only_and_reuses_canonical_domain_policies() -> None:
+    forecast = (CORE / "forecast_service.py").read_text(encoding="utf-8")
+    scheduled = (CORE / "scheduled_transaction_service.py").read_text(encoding="utf-8")
+    assert "ScheduledTransactionService" in forecast
+    assert ".project_occurrences(" in forecast
+    assert "PostingPolicy.book_cash_flow_direction" in forecast
+    assert "LedgerService" not in forecast
+    assert "Database" not in forecast
+    assert "INSERT INTO " not in forecast
+    assert "UPDATE " not in forecast
+    assert "DELETE FROM " not in forecast
+    assert "def project_occurrences(" in scheduled
+    assert "def _advance(" in scheduled
+
+
+def test_forecast_frontend_renders_backend_projection_without_financial_math() -> None:
+    text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+    assert 'call("getForecast"' in text
+    assert "report.totalInflowMinor" in text
+    assert "report.totalOutflowMinor" in text
+    assert "report.totalNetMinor" in text
+    assert "report.buckets" in text
+    assert "report.occurrences" in text
+    assert "Math.random(" not in text
+
+
 def test_transport_contract_is_explicit_not_suffix_driven() -> None:
     controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
     transport = (CORE / "transport.py").read_text(encoding="utf-8")
@@ -98,6 +130,12 @@ def test_transport_contract_is_explicit_not_suffix_driven() -> None:
         '"totalSpentMinor"',
         '"totalRemainingMinor"',
         '"usageBps"',
+        '"baseAmountMinor"',
+        '"inflowMinor"',
+        '"outflowMinor"',
+        '"totalInflowMinor"',
+        '"totalOutflowMinor"',
+        '"totalNetMinor"',
     ):
         assert field in transport
 
@@ -116,4 +154,7 @@ def test_strategic_review_is_part_of_definition_of_done() -> None:
     assert "BLOCKED" in directive
     assert "Green tests without the review are not milestone completion" in directive
     assert "STRATEGIC_PROGRAMMING.md" in agents
-    assert "A milestone with green tests but without its strategic review is incomplete" in agents
+    assert (
+        "A milestone with green tests but without its strategic review is incomplete"
+        in agents
+    )

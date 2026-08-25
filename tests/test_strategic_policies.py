@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.posting_policy import PostingPolicy
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 from core.transport import TransportSerializer
@@ -46,6 +48,15 @@ def test_posting_policy_exposes_signed_amount_capabilities() -> None:
         "TRANSFER",
     )
     assert PostingPolicy.allowed_kinds_for_amount(0) == ()
+
+
+def test_posting_policy_owns_book_cash_flow_direction() -> None:
+    assert PostingPolicy.book_cash_flow_direction("EXPENSE") == "OUTFLOW"
+    assert PostingPolicy.book_cash_flow_direction("INCOME") == "INFLOW"
+    assert PostingPolicy.book_cash_flow_direction("REFUND") == "INFLOW"
+    assert PostingPolicy.book_cash_flow_direction("TRANSFER") == "TRANSFER"
+    with pytest.raises(ValueError, match="unsupported posting kind"):
+        PostingPolicy.book_cash_flow_direction("UNKNOWN")
 
 
 def test_posting_policy_filters_counter_accounts() -> None:

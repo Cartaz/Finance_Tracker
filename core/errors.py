@@ -113,3 +113,7 @@ class ScheduledTransactionError(ValidationError):
 
 class BudgetError(ValidationError):
     """Raised when a budget definition or query is invalid."""
+
+
+class ForecastError(ValidationError):
+    """Raised when a forecast definition or projection is invalid."""

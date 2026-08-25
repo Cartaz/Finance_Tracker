@@ -30,6 +30,10 @@ class Bridge(QObject):
         return self._call(self._controller.dashboard, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
+    def getForecast(self, payload):
+        return self._call(self._controller.forecast, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def getAccountHistory(self, payload):
         return self._call(self._controller.account_history, dict(payload or {}))
 

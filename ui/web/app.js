@@ -57,6 +57,10 @@
     return { startDate: $("report-start").value, endDate: $("report-end").value, asOfDate: $("report-asof").value };
   }
 
+  function forecastPeriod() {
+    return { startDate: $("forecast-start").value, endDate: $("forecast-end").value, granularity: $("forecast-granularity").value };
+  }
+
   function initializeDates() {
     const now = new Date();
     $("report-asof").value = localDate(now);
@@ -66,6 +70,10 @@
     $("scheduled-form").elements.startDate.value = localDate(now);
     $("scheduled-asof").value = localDate(now);
     $("budget-period").value = localMonth(now);
+    $("forecast-start").value = localDate(now);
+    const forecastEnd = new Date(now);
+    forecastEnd.setMonth(forecastEnd.getMonth() + 6);
+    $("forecast-end").value = localDate(forecastEnd);
   }
 
   function optionsForAccountIds(accountIds) {
@@ -130,8 +138,24 @@
     $("budget-list").innerHTML = report.budgets.map((item) => `<div class="card"><div class="report-row"><b>${escapeHtml(item.categoryPath)}</b><span>Utilizzo ${percentBps(item.usageBps)}</span><span>${money(item.spentMinor, currency)} / ${money(item.amountMinor, currency)}</span><strong>${item.remainingMinor == null ? "FX mancante" : `${item.overBudget ? "Oltre di " : "Residuo "}${money(item.overBudget ? -BigInt(String(item.remainingMinor)) : item.remainingMinor, currency)}`}</strong></div><div class="history-controls"><button type="button" data-budget-delete="${item.id}">Elimina</button></div></div>`).join("") || `<p class="empty">Nessun budget per questo mese.</p>`;
   }
 
+  function renderForecast(report) {
+    const currency = report.baseCurrency;
+    $("forecast-metrics").innerHTML = [
+      ["Entrate previste", money(report.totalInflowMinor, currency)],
+      ["Uscite previste", money(report.totalOutflowMinor, currency)],
+      ["Netto previsto", money(report.totalNetMinor, currency)],
+      ["Occorrenze", `${report.occurrenceCount} · ${report.transferCount} trasferimenti`],
+    ].map(([label, value]) => `<article class="card metric"><span>${label}</span><strong>${value}</strong></article>`).join("");
+    const missing = report.missingFx || [];
+    $("forecast-warning").classList.toggle("hidden", missing.length === 0);
+    $("forecast-warning").innerHTML = missing.length ? `<b>Forecast incompleto: tassi FX mancanti</b><div>${missing.map((item) => `${escapeHtml(item.currency)} · ${item.date}`).join(" · ")}</div>` : "";
+    $("forecast-buckets").innerHTML = report.buckets.map((item) => `<div class="report-row"><b>${item.period}</b><span>Entrate ${money(item.inflowMinor, currency)}</span><span>Uscite ${money(item.outflowMinor, currency)}</span><strong>${money(item.netMinor, currency)}</strong><small>${item.occurrenceCount} occorrenze · ${item.transferCount} transfer</small></div>`).join("") || `<p class="empty">Nessun flusso programmato nel periodo.</p>`;
+    $("forecast-occurrences").innerHTML = report.occurrences.map((item) => `<div class="report-row"><span>${item.dueDate}</span><b>${escapeHtml(item.description || item.kind)}</b><span>${item.direction}</span><strong>${item.direction === "TRANSFER" ? money(item.amountMinor, item.currency) : money(item.baseAmountMinor, currency)}</strong><small>${item.kind}${item.currency !== currency ? ` · origine ${money(item.amountMinor, item.currency)}` : ""}</small></div>`).join("") || `<p class="empty">Nessuna occorrenza prevista.</p>`;
+  }
+
   async function refreshReports() { renderDashboard(unwrap(await call("getDashboard", reportPeriod()))); }
   async function refreshBudgets() { renderBudgets(unwrap(await call("getBudgetStatus", { period: $("budget-period").value }))); }
+  async function refreshForecast() { renderForecast(unwrap(await call("getForecast", forecastPeriod()))); }
   async function refreshFxRates() {
     const items = unwrap(await call("listFxRates"));
     $("fx-rates").innerHTML = items.map((item) => `<div class="mini-row"><span>${item.date}</span><b>${escapeHtml(item.currency)}</b><span>${escapeHtml(item.rate)}</span></div>`).join("") || `<p class="empty">Nessun tasso salvato.</p>`;
@@ -174,7 +198,7 @@
   }
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
-    await Promise.all([refreshReports(), refreshBudgets(), refreshFxRates(), refreshScheduled(), refreshImportBatches()]);
+    await Promise.all([refreshReports(), refreshBudgets(), refreshForecast(), refreshFxRates(), refreshScheduled(), refreshImportBatches()]);
     if (currentBatchId) await loadImportBatch(currentBatchId);
   }
   async function submit(method, form) {
@@ -191,16 +215,17 @@
   $("scheduled-kind").addEventListener("change", refreshScheduledCounter);
   $("scheduled-source").addEventListener("change", refreshScheduledCounter);
   $("apply-report").addEventListener("click", () => refreshReports().catch((error) => toast(error.message, true)));
+  $("apply-forecast").addEventListener("click", () => refreshForecast().catch((error) => toast(error.message, true)));
   $("budget-period").addEventListener("change", () => refreshBudgets().catch((error) => toast(error.message, true)));
   $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await Promise.all([refreshReports(), refreshBudgets()]); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await Promise.all([refreshReports(), refreshBudgets()]); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("budget-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setBudget", Object.fromEntries(new FormData(event.target)))); const period = event.target.elements.period.value; event.target.elements.amount.value = ""; event.target.elements.period.value = period; await refreshBudgets(); toast("Budget salvato"); } catch (error) { toast(error.message, true); } });
   $("budget-list").addEventListener("click", async (event) => { const button = event.target.closest("[data-budget-delete]"); if (!button) return; try { unwrap(await call("deleteBudget", { budgetId: button.dataset.budgetDelete })); await refreshBudgets(); toast("Budget eliminato"); } catch (error) { toast(error.message, true); } });
-  $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await refreshScheduled(); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });
-  $("post-due-scheduled").addEventListener("click", async () => { try { const result = unwrap(await call("postDueScheduled", { asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshScheduled(), refreshReports(), refreshBudgets()]); toast(`${result.count} scadenze registrate`); } catch (error) { toast(error.message, true); } });
-  $("scheduled-list").addEventListener("click", async (event) => { const toggle = event.target.closest("[data-schedule-toggle]"); const post = event.target.closest("[data-schedule-post]"); if (!toggle && !post) return; try { if (toggle) unwrap(await call("setScheduledActive", { scheduleId: toggle.dataset.scheduleToggle, active: toggle.dataset.active === "1" })); else { const result = unwrap(await call("postDueScheduled", { scheduleId: post.dataset.schedulePost, asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshReports(), refreshBudgets()]); } await refreshScheduled(); toast("Programmazione aggiornata"); } catch (error) { toast(error.message, true); } });
-  $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshBudgets(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
+  $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await Promise.all([refreshScheduled(), refreshForecast()]); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });
+  $("post-due-scheduled").addEventListener("click", async () => { try { const result = unwrap(await call("postDueScheduled", { asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshScheduled(), refreshReports(), refreshBudgets(), refreshForecast()]); toast(`${result.count} scadenze registrate`); } catch (error) { toast(error.message, true); } });
+  $("scheduled-list").addEventListener("click", async (event) => { const toggle = event.target.closest("[data-schedule-toggle]"); const post = event.target.closest("[data-schedule-post]"); if (!toggle && !post) return; try { if (toggle) unwrap(await call("setScheduledActive", { scheduleId: toggle.dataset.scheduleToggle, active: toggle.dataset.active === "1" })); else { const result = unwrap(await call("postDueScheduled", { scheduleId: post.dataset.schedulePost, asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshReports(), refreshBudgets()]); } await Promise.all([refreshScheduled(), refreshForecast()]); toast("Programmazione aggiornata"); } catch (error) { toast(error.message, true); } });
+  $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshBudgets(), refreshForecast(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
   $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
   $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });
   $("import-rows").addEventListener("change", (event) => { const kindSelect = event.target.closest("select[data-posting-kind-row]"); if (!kindSelect) return; const rowId = kindSelect.dataset.postingKindRow; const row = currentImportRows.get(String(rowId)); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!row || !counter) return; counter.innerHTML = counterOptionsForRow(row, kindSelect.value); });

@@ -21,6 +21,8 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - User-entered transaction/budget amounts are unsigned, strictly positive monetary magnitudes. Economic direction belongs to transaction/posting semantics, never to a user-entered `+` or `-` sign. Signed monetary parsing remains available only for external data where the sign is part of the source evidence.
 - Temporal tracking-boundary semantics have one canonical policy.
 - Posting capability rules have one canonical policy; presentation renders capabilities rather than re-deriving accounting decisions.
+- Scheduled recurrence has one canonical owner. Forecasting and other projections consume the scheduled service's read-only occurrence projection rather than reimplementing recurrence rules.
+- Forecasting is a deterministic read model: it must not write ledger/schedule state, must expose material assumptions, and must fail closed when a required financial conversion cannot be supported by canonical data.
 - QWebChannel transport must preserve financial integer precision explicitly.
 - `AppController` coordinates; it must not accumulate SQL or become the owner of domain rules.
 - `ui/bridge.py` validates transport shape and delegates; it does not implement business rules.

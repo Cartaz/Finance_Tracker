@@ -37,6 +37,7 @@ class RestorePlan:
     source: Path
     staged_database: Path
     source_schema_version: int
+    safety_backup_name: str
 
 
 class BackupService:
@@ -80,7 +81,11 @@ class BackupService:
             raise BackupError("invalid managed backup identifier")
         path = (self._backup_dir / name).resolve()
         root = self._backup_dir.resolve()
-        if path.parent != root or not name.startswith(_BACKUP_PREFIX) or not name.endswith(_BACKUP_SUFFIX):
+        if (
+            path.parent != root
+            or not name.startswith(_BACKUP_PREFIX)
+            or not name.endswith(_BACKUP_SUFFIX)
+        ):
             raise BackupError("invalid managed backup identifier")
         if not path.is_file():
             raise BackupError("backup file does not exist")
@@ -106,7 +111,11 @@ class BackupService:
         if source == self._database.path.expanduser().resolve():
             raise BackupError("cannot restore the live database onto itself")
         source_schema = self._verify_sqlite_file(source)
-        staging = self._database.path.parent / f".{self._database.path.name}.restore-{uuid4().hex}.tmp"
+        safety = self.create_managed_backup()
+        staging = (
+            self._database.path.parent
+            / f".{self._database.path.name}.restore-{uuid4().hex}.tmp"
+        )
         try:
             self._copy_sqlite_database(source, staging)
             staged = Database(staging)
@@ -119,7 +128,12 @@ class BackupService:
         except Exception:
             staging.unlink(missing_ok=True)
             raise
-        return RestorePlan(source=source, staged_database=staging, source_schema_version=source_schema)
+        return RestorePlan(
+            source=source,
+            staged_database=staging,
+            source_schema_version=source_schema,
+            safety_backup_name=str(safety["name"]),
+        )
 
     def cancel_restore(self, plan: RestorePlan) -> None:
         plan.staged_database.unlink(missing_ok=True)
@@ -168,6 +182,7 @@ class BackupService:
 
         return {
             "restoredFrom": plan.source.name,
+            "safetyBackup": plan.safety_backup_name,
             "sourceSchemaVersion": plan.source_schema_version,
             "schemaVersion": SCHEMA_VERSION,
         }
@@ -217,7 +232,9 @@ class BackupService:
             if table is None:
                 raise BackupError("file is not a Finance Tracker database")
             schema_version = int(
-                conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
+                conn.execute(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                ).fetchone()[0]
             )
         except sqlite3.Error as exc:
             raise BackupError(f"backup verification failed: {exc}") from exc

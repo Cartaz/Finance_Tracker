@@ -4,7 +4,7 @@ Local-first personal finance tracker for desktop Linux, built with Python, PySid
 
 ## Current status
 
-Milestones M0 through M10 are validated on stacked feature branches. M11 implements the final V1 feature set — backup/restore UX and release hardening — and remains under final validation and mandatory strategic review before V1 is declared complete.
+V1 is implemented and integrated on `main` through M11. The final post-merge integration gate passes installation, compile, the full 236-test suite (including stress and architecture invariants) and Ruff. The mandatory M11 strategic review concluded `STRATEGIC AFTER CLEANUP`, with no known correctness or architectural blocker remaining for the implemented V1 scope.
 
 ## Implemented
 

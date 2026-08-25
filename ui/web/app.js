@@ -3,7 +3,7 @@
   let backend = null;
   let state = null;
   let currentBatchId = null;
-  let importBatchAccounts = new Map();
+  let currentImportRows = new Map();
   let currencySpecs = new Map();
   let supportedCurrencies = [];
   const $ = (id) => document.getElementById(id);
@@ -62,6 +62,24 @@
     $("report-end").value = localDate(now);
     $("report-start").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
     $("fx-form").elements.date.value = localDate(now);
+    $("scheduled-form").elements.startDate.value = localDate(now);
+    $("scheduled-asof").value = localDate(now);
+  }
+
+  function optionsForAccountIds(accountIds) {
+    const allowed = new Set((accountIds || []).map(String));
+    return (state?.accounts || []).filter((item) => allowed.has(String(item.id))).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}${a.currency ? ` · ${a.currency}` : ""}</option>`).join("");
+  }
+
+  function scheduledCounterOptions(kind, sourceId) {
+    const source = state?.accounts.find((item) => String(item.id) === String(sourceId));
+    if (!source) return "";
+    return optionsForAccountIds(source.postingCapabilities?.[kind] || []);
+  }
+
+  function refreshScheduledCounter() {
+    if (!state) return;
+    $("scheduled-counter").innerHTML = scheduledCounterOptions($("scheduled-kind").value, $("scheduled-source").value);
   }
 
   function renderSnapshot(snapshot) {
@@ -76,6 +94,8 @@
     $("expense-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
     $("history-account").innerHTML = balanceAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    $("scheduled-source").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    refreshScheduledCounter();
   }
 
   function renderDashboard(report) {
@@ -100,25 +120,16 @@
     const items = unwrap(await call("listFxRates"));
     $("fx-rates").innerHTML = items.map((item) => `<div class="mini-row"><span>${item.date}</span><b>${escapeHtml(item.currency)}</b><span>${escapeHtml(item.rate)}</span></div>`).join("") || `<p class="empty">Nessun tasso salvato.</p>`;
   }
+  async function refreshScheduled() {
+    const items = unwrap(await call("listScheduledTransactions"));
+    $("scheduled-list").innerHTML = items.map((item) => `<div class="card"><div class="report-row"><b>${escapeHtml(item.description || item.kind)}</b><span>${escapeHtml(item.sourceAccountName)} → ${escapeHtml(item.counterAccountName)}</span><strong>${money(item.amountMinor, item.currency)}</strong><small>${item.frequency} × ${item.interval} · prossima ${item.nextDueDate}${item.endDate ? ` · fine ${item.endDate}` : ""} · ${item.active ? "ATTIVA" : "PAUSA"}</small></div><div class="history-controls"><button type="button" data-schedule-toggle="${item.id}" data-active="${item.active ? "0" : "1"}">${item.active ? "Pausa" : "Riattiva"}</button><button type="button" data-schedule-post="${item.id}">Registra dovute</button></div></div>`).join("") || `<p class="empty">Nessuna transazione programmata.</p>`;
+  }
   async function refreshImportBatches() {
     const items = unwrap(await call("listImportBatches"));
-    importBatchAccounts = new Map(items.map((item) => [String(item.id), Number(item.account_id)]));
     $("import-batches").innerHTML = items.map((item) => `<button type="button" class="row import-batch" data-batch-id="${item.id}"><b>${escapeHtml(item.source_name)}</b><span>${escapeHtml(item.account_name)}</span><small>${item.review_mode} · ${item.row_count} righe</small></button>`).join("") || `<p class="empty">Nessun import.</p>`;
   }
-  function postingKindsForRow(amountMinor) {
-    return BigInt(String(amountMinor)) < 0n ? ["EXPENSE", "TRANSFER"] : ["INCOME", "REFUND", "TRANSFER"];
-  }
   function counterOptionsForRow(row, postingKind) {
-    const sourceAccountId = importBatchAccounts.get(String(currentBatchId));
-    let candidates = [];
-    if (postingKind === "EXPENSE" || postingKind === "REFUND") {
-      candidates = state.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder);
-    } else if (postingKind === "INCOME") {
-      candidates = state.accounts.filter((a) => a.type === "INCOME" && !a.placeholder);
-    } else if (postingKind === "TRANSFER") {
-      candidates = state.accounts.filter((a) => ["ASSET", "LIABILITY"].includes(a.type) && !a.placeholder && a.id !== sourceAccountId && a.currency === row.currency_code);
-    }
-    return candidates.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}${a.currency ? ` · ${a.currency}` : ""}</option>`).join("");
+    return optionsForAccountIds(row.postingCapabilities?.[postingKind] || []);
   }
   function candidateButton(rowId, candidate) {
     const detail = candidate.payee_name || candidate.description || candidate.kind || "Transazione";
@@ -126,7 +137,8 @@
     return `<button type="button" data-action="link" data-row-id="${rowId}" data-transaction-id="${candidate.id}">Collega #${candidate.id} · ${escapeHtml(detail)}${currency}</button>`;
   }
   function postingControls(row) {
-    const kinds = postingKindsForRow(row.amount_minor);
+    const kinds = Object.keys(row.postingCapabilities || {});
+    if (!kinds.length) return "";
     const selectedKind = kinds[0];
     const kindOptions = kinds.map((kind) => `<option value="${kind}">${kind}</option>`).join("");
     return `<select data-posting-kind-row="${row.id}">${kindOptions}</select><select data-counter-row="${row.id}">${counterOptionsForRow(row, selectedKind)}</select><button type="button" data-action="post" data-row-id="${row.id}">Registra nel ledger</button>`;
@@ -134,18 +146,19 @@
   async function loadImportBatch(batchId) {
     currentBatchId = String(batchId);
     const rows = unwrap(await call("getImportBatchRows", { batchId }));
+    currentImportRows = new Map(rows.map((row) => [String(row.id), row]));
     $("import-rows").innerHTML = rows.map((row) => {
       const resolved = ["MATCHED", "POSTED", "IGNORED"].includes(row.review_state);
       const blocked = ["OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS", "AMBIGUOUS"].includes(row.review_state);
       const candidates = (row.candidates || []).map((candidate) => candidateButton(row.id, candidate)).join("");
       const post = resolved || blocked ? "" : postingControls(row);
       const ignore = resolved ? "" : `<button type="button" data-action="ignore" data-row-id="${row.id}">Ignora</button>`;
-      return `<div class="card import-row" data-import-row-id="${row.id}" data-amount-minor="${row.amount_minor}" data-currency-code="${row.currency_code}"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}${ignore}</div></div>`;
+      return `<div class="card import-row" data-import-row-id="${row.id}"><div class="report-row"><span>#${row.row_number} · ${row.transaction_date}</span><b>${escapeHtml(row.description || "—")}</b><strong>${money(row.amount_minor, row.currency_code)}</strong><small>${row.review_state}</small></div><div class="history-controls">${candidates}${post}${ignore}</div></div>`;
     }).join("") || `<p class="empty">Nessuna riga.</p>`;
   }
   async function refresh() {
     renderSnapshot(unwrap(await call("getSnapshot")));
-    await Promise.all([refreshReports(), refreshFxRates(), refreshImportBatches()]);
+    await Promise.all([refreshReports(), refreshFxRates(), refreshScheduled(), refreshImportBatches()]);
     if (currentBatchId) await loadImportBatch(currentBatchId);
   }
   async function submit(method, form) {
@@ -159,14 +172,19 @@
 
   document.querySelectorAll(".nav").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".nav").forEach((b) => b.classList.remove("active")); button.classList.add("active"); document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden")); $(button.dataset.view).classList.remove("hidden"); $("view-title").textContent = button.textContent; }));
   $("account-type").addEventListener("change", (event) => $("balance-fields").classList.toggle("hidden", !["ASSET", "LIABILITY"].includes(event.target.value)));
+  $("scheduled-kind").addEventListener("change", refreshScheduledCounter);
+  $("scheduled-source").addEventListener("change", refreshScheduledCounter);
   $("apply-report").addEventListener("click", () => refreshReports().catch((error) => toast(error.message, true)));
   $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
   $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await refreshReports(); toast("Creato"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await refreshReports(); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
+  $("scheduled-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("createScheduledTransaction", Object.fromEntries(new FormData(event.target)))); const startDate = event.target.elements.startDate.value; event.target.reset(); event.target.elements.interval.value = "1"; event.target.elements.startDate.value = startDate; refreshScheduledCounter(); await refreshScheduled(); toast("Programmazione creata"); } catch (error) { toast(error.message, true); } });
+  $("post-due-scheduled").addEventListener("click", async () => { try { const result = unwrap(await call("postDueScheduled", { asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await Promise.all([refreshScheduled(), refreshReports()]); toast(`${result.count} scadenze registrate`); } catch (error) { toast(error.message, true); } });
+  $("scheduled-list").addEventListener("click", async (event) => { const toggle = event.target.closest("[data-schedule-toggle]"); const post = event.target.closest("[data-schedule-post]"); if (!toggle && !post) return; try { if (toggle) unwrap(await call("setScheduledActive", { scheduleId: toggle.dataset.scheduleToggle, active: toggle.dataset.active === "1" })); else { const result = unwrap(await call("postDueScheduled", { scheduleId: post.dataset.schedulePost, asOfDate: $("scheduled-asof").value })); if (result.state) renderSnapshot(result.state); await refreshReports(); } await refreshScheduled(); toast("Programmazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("fx-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setFxRate", Object.fromEntries(new FormData(event.target)))); await Promise.all([refreshReports(), refreshFxRates()]); toast("Tasso FX salvato"); } catch (error) { toast(error.message, true); } });
   $("import-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const file = $("import-file").files[0]; if (!file) throw new Error("Seleziona un CSV"); const data = Object.fromEntries(new FormData(event.target)); delete data["import-file"]; data.csvText = await file.text(); const result = unwrap(await call("importCsv", data)); await refreshImportBatches(); await loadImportBatch(result.batchId); toast(`Importate ${result.rowCount} righe`); } catch (error) { toast(error.message, true); } });
   $("import-batches").addEventListener("click", (event) => { const button = event.target.closest("[data-batch-id]"); if (button) loadImportBatch(button.dataset.batchId).catch((error) => toast(error.message, true)); });
-  $("import-rows").addEventListener("change", (event) => { const kindSelect = event.target.closest("select[data-posting-kind-row]"); if (!kindSelect) return; const rowId = kindSelect.dataset.postingKindRow; const rowElement = document.querySelector(`[data-import-row-id="${rowId}"]`); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!rowElement || !counter) return; counter.innerHTML = counterOptionsForRow({ amount_minor: rowElement.dataset.amountMinor, currency_code: rowElement.dataset.currencyCode }, kindSelect.value); });
+  $("import-rows").addEventListener("change", (event) => { const kindSelect = event.target.closest("select[data-posting-kind-row]"); if (!kindSelect) return; const rowId = kindSelect.dataset.postingKindRow; const row = currentImportRows.get(String(rowId)); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!row || !counter) return; counter.innerHTML = counterOptionsForRow(row, kindSelect.value); });
   $("import-rows").addEventListener("click", async (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; try { const rowId = button.dataset.rowId; if (button.dataset.action === "link") unwrap(await call("linkImportRow", { rowId, transactionId: button.dataset.transactionId })); else if (button.dataset.action === "ignore") unwrap(await call("ignoreImportRow", { rowId })); else if (button.dataset.action === "post") { const postingKind = document.querySelector(`[data-posting-kind-row="${rowId}"]`); const counter = document.querySelector(`[data-counter-row="${rowId}"]`); if (!counter?.value) throw new Error("Seleziona una contropartita compatibile"); const result = unwrap(await call("postImportRow", { rowId, postingKind: postingKind?.value, counterAccountId: counter.value })); if (result.stateSnapshot) renderSnapshot(result.stateSnapshot); await refreshReports(); } await refreshImportBatches(); if (currentBatchId) await loadImportBatch(currentBatchId); toast("Riconciliazione aggiornata"); } catch (error) { toast(error.message, true); } });
   $("load-history").addEventListener("click", async () => { try { const accountId = $("history-account").value; if (!accountId) return; const period = reportPeriod(); const history = unwrap(await call("getAccountHistory", { accountId, startDate: period.startDate, endDate: period.endDate })); $("account-history").innerHTML = `<p><b>${escapeHtml(history.name)}</b> · ${escapeHtml(history.currency)}</p>${history.points.map((point) => `<div class="report-row"><span>${point.date}</span><span>${money(point.balanceMinor, history.currency)}</span><strong>${money(point.baseValueMinor, history.baseCurrency)}</strong></div>`).join("")}`; } catch (error) { toast(error.message, true); } });
   $("refresh").addEventListener("click", () => refresh().catch((error) => toast(error.message, true)));

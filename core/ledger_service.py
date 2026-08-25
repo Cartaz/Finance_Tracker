@@ -15,6 +15,7 @@ from core.errors import (
     TrackingBoundaryError,
     UnbalancedTransactionError,
 )
+from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _TRANSACTION_KINDS = {
     "EXPENSE",
@@ -104,6 +105,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, source_account_id, currency_code)
@@ -120,7 +122,8 @@ class LedgerService:
                     EntryDraft(source_account_id, -amount_minor, -amount_minor),
                     EntryDraft(expense_account_id, amount_minor, None),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_income(
@@ -134,6 +137,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, destination_account_id, currency_code)
@@ -150,7 +154,8 @@ class LedgerService:
                     EntryDraft(destination_account_id, amount_minor, amount_minor),
                     EntryDraft(income_account_id, -amount_minor, None),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_refund(
@@ -164,6 +169,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, destination_account_id, currency_code)
@@ -180,7 +186,8 @@ class LedgerService:
                     EntryDraft(destination_account_id, amount_minor, amount_minor),
                     EntryDraft(expense_account_id, -amount_minor, None),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_transfer(
@@ -194,6 +201,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_positive_minor(amount_minor)
         self._require_native_currency(book_id, source_account_id, currency_code)
@@ -210,7 +218,8 @@ class LedgerService:
                     EntryDraft(source_account_id, -amount_minor, -amount_minor),
                     EntryDraft(destination_account_id, amount_minor, amount_minor),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_opening_balance(
@@ -224,6 +233,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "Opening Balance",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_nonzero_minor(quantity_minor)
         self._require_native_currency(book_id, account_id, currency_code)
@@ -240,7 +250,8 @@ class LedgerService:
                     EntryDraft(account_id, quantity_minor, quantity_minor),
                     EntryDraft(equity_account_id, -quantity_minor, None),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_adjustment(
@@ -254,6 +265,7 @@ class LedgerService:
         transaction_date: str,
         transaction_time: str | None = None,
         description: str = "Adjustment",
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         self._require_nonzero_minor(quantity_minor)
         self._require_native_currency(book_id, account_id, currency_code)
@@ -270,7 +282,8 @@ class LedgerService:
                     EntryDraft(account_id, quantity_minor, quantity_minor),
                     EntryDraft(equity_account_id, -quantity_minor, None),
                 ),
-            )
+            ),
+            connection=connection,
         )
 
     def create_reversal(
@@ -280,8 +293,9 @@ class LedgerService:
         transaction_id: int,
         transaction_date: str,
         transaction_time: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
-        original = self.get_transaction(book_id, transaction_id)
+        original = self.get_transaction(book_id, transaction_id, connection=connection)
         entries = tuple(
             EntryDraft(
                 account_id=entry.account_id,
@@ -303,7 +317,8 @@ class LedgerService:
                 description=f"Reversal of transaction {transaction_id}",
                 entries=entries,
                 reverses_transaction_id=transaction_id,
-            )
+            ),
+            connection=connection,
         )
 
     def get_transaction(
@@ -575,30 +590,24 @@ class LedgerService:
     ) -> None:
         if str(account["type"]) not in _BALANCE_TYPES:
             return
-        start_date_text = str(account["tracking_start_date"])
-        start_time_text = (
-            None
-            if account["tracking_start_time"] is None
-            else str(account["tracking_start_time"])
+        result = TrackingBoundaryPolicy.classify(
+            tracking_start_date=str(account["tracking_start_date"]),
+            tracking_start_time=(
+                None
+                if account["tracking_start_time"] is None
+                else str(account["tracking_start_time"])
+            ),
+            transaction_date=draft.transaction_date,
+            transaction_time=draft.transaction_time,
+            opening_balance=normalized_kind == "OPENING_BALANCE",
         )
-        transaction_date = date.fromisoformat(draft.transaction_date)
-        start_date = date.fromisoformat(start_date_text)
-        if transaction_date < start_date:
+        if result.status is TrackingBoundaryStatus.BEFORE_BOUNDARY:
             raise TrackingBoundaryError(
                 f"transaction precedes tracking start for account {account['id']}"
             )
-        if transaction_date > start_date:
-            return
-
-        if normalized_kind == "OPENING_BALANCE" and draft.transaction_time == start_time_text:
-            return
-        if start_time_text is None or draft.transaction_time is None:
+        if result.status is TrackingBoundaryStatus.AMBIGUOUS:
             raise TrackingBoundaryAmbiguousError(
                 f"time precision is insufficient for account {account['id']} tracking boundary"
-            )
-        if time.fromisoformat(draft.transaction_time) < time.fromisoformat(start_time_text):
-            raise TrackingBoundaryError(
-                f"transaction precedes tracking start for account {account['id']}"
             )
 
     @staticmethod

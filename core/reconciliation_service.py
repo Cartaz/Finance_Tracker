@@ -6,17 +6,18 @@ import io
 import re
 import sqlite3
 import unicodedata
-from datetime import date, datetime
+from datetime import date
 
 from core.account_service import AccountService
 from core.database import Database
 from core.errors import ReconciliationAmbiguousError, ReconciliationError
-from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
+from core.ledger_service import LedgerService
 from core.money import parse_money
 from core.payee_service import PayeeService
+from core.posting_policy import PostingPolicy
+from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
-_POSTING_KINDS = {"EXPENSE", "INCOME", "REFUND", "TRANSFER"}
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _BLOCKED_POST_STATES = {"OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
@@ -179,6 +180,8 @@ class ReconciliationService:
 
     def batch_rows(self, book_id: int, batch_id: int) -> list[dict[str, object]]:
         batch = self._require_batch(book_id, batch_id)
+        accounts = self._accounts.list_accounts(book_id)
+        source_account_id = int(batch["account_id"])
         rows = self._database.connection.execute(
             """
             SELECT id, row_number, transaction_date, amount_minor, currency_code,
@@ -192,9 +195,15 @@ class ReconciliationService:
                 **dict(row),
                 "candidates": self._candidate_details(
                     book_id,
-                    int(batch["account_id"]),
+                    source_account_id,
                     str(row["transaction_date"]),
                     int(row["amount_minor"]),
+                ),
+                "postingCapabilities": self._posting_capabilities(
+                    source_account_id=source_account_id,
+                    currency_code=str(row["currency_code"]),
+                    amount_minor=int(row["amount_minor"]),
+                    accounts=accounts,
                 ),
             }
             for row in rows
@@ -260,62 +269,81 @@ class ReconciliationService:
             )
         if state in _TERMINAL_STATES or state in _BLOCKED_POST_STATES:
             raise ReconciliationError("row cannot be posted in its current state")
-        if not isinstance(posting_kind, str):
+
+        amount = int(row["amount_minor"])
+        try:
+            kind = PostingPolicy.normalize_kind(posting_kind)
+        except ValueError as exc:
             raise ReconciliationError(
                 "posting_kind must be EXPENSE, INCOME, REFUND or TRANSFER"
-            )
-        kind = posting_kind.strip().upper()
-        if kind not in _POSTING_KINDS:
-            raise ReconciliationError(
-                "posting_kind must be EXPENSE, INCOME, REFUND or TRANSFER"
-            )
+            ) from exc
+        if kind not in PostingPolicy.allowed_kinds_for_amount(amount):
+            raise ReconciliationError("posting kind is incompatible with imported amount sign")
 
         imported_account = self._accounts.get_account(book_id, int(batch["account_id"]))
         counter = self._accounts.get_account(book_id, counter_account_id)
-        if counter.id == imported_account.id:
-            raise ReconciliationError("counter account must differ from imported account")
-        if counter.archived or counter.placeholder:
-            raise ReconciliationError("counter account must be active and selectable")
-        amount = int(row["amount_minor"])
+        if imported_account.currency_code is None:
+            raise ReconciliationError("imported account has no native currency")
+        if not PostingPolicy.counter_is_eligible(
+            kind,
+            source_account_id=imported_account.id,
+            source_currency=imported_account.currency_code,
+            counter_account_id=counter.id,
+            counter_type=counter.type,
+            counter_currency=counter.currency_code,
+            counter_archived=counter.archived,
+            counter_placeholder=counter.placeholder,
+        ):
+            raise ReconciliationError("counter account is not eligible for this posting kind")
 
-        counter_quantity: int | None = None
-        if kind == "EXPENSE":
-            if amount >= 0 or counter.type != "EXPENSE":
-                raise ReconciliationError(
-                    "EXPENSE requires a negative row and expense category"
-                )
-        elif kind == "INCOME":
-            if amount <= 0 or counter.type != "INCOME":
-                raise ReconciliationError(
-                    "INCOME requires a positive row and income category"
-                )
-        elif kind == "REFUND":
-            if amount <= 0 or counter.type != "EXPENSE":
-                raise ReconciliationError(
-                    "REFUND requires a positive row and expense category"
-                )
-        else:
-            if counter.type not in {"ASSET", "LIABILITY"} or counter.currency_code is None:
-                raise ReconciliationError("TRANSFER requires another balance account")
-            if counter.currency_code != str(row["currency_code"]):
-                raise ReconciliationError(
-                    "cross-currency transfer cannot be inferred from one imported bank row"
-                )
-            counter_quantity = -amount
-
-        draft = TransactionDraft(
-            book_id=book_id,
-            kind=kind,
-            transaction_date=str(row["transaction_date"]),
-            currency_code=str(row["currency_code"]),
-            description=str(row["description"]),
-            entries=(
-                EntryDraft(imported_account.id, amount, amount),
-                EntryDraft(counter.id, -amount, counter_quantity),
-            ),
-        )
+        common = {
+            "book_id": book_id,
+            "currency_code": str(row["currency_code"]),
+            "transaction_date": str(row["transaction_date"]),
+            "description": str(row["description"]),
+        }
         with self._database.transaction() as conn:
-            transaction = self._ledger.create_transaction(draft, connection=conn)
+            if kind == "EXPENSE":
+                transaction = self._ledger.create_expense(
+                    source_account_id=imported_account.id,
+                    expense_account_id=counter.id,
+                    amount_minor=-amount,
+                    connection=conn,
+                    **common,
+                )
+            elif kind == "INCOME":
+                transaction = self._ledger.create_income(
+                    destination_account_id=imported_account.id,
+                    income_account_id=counter.id,
+                    amount_minor=amount,
+                    connection=conn,
+                    **common,
+                )
+            elif kind == "REFUND":
+                transaction = self._ledger.create_refund(
+                    destination_account_id=imported_account.id,
+                    expense_account_id=counter.id,
+                    amount_minor=amount,
+                    connection=conn,
+                    **common,
+                )
+            elif amount < 0:
+                transaction = self._ledger.create_transfer(
+                    source_account_id=imported_account.id,
+                    destination_account_id=counter.id,
+                    amount_minor=-amount,
+                    connection=conn,
+                    **common,
+                )
+            else:
+                transaction = self._ledger.create_transfer(
+                    source_account_id=counter.id,
+                    destination_account_id=imported_account.id,
+                    amount_minor=amount,
+                    connection=conn,
+                    **common,
+                )
+
             if payee_id is not None:
                 self._payees.assign_transaction(
                     book_id=book_id,
@@ -374,7 +402,6 @@ class ReconciliationService:
         tracking_start_date: str | None,
         tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
-        del tracking_start_time
         if external_id is not None:
             link = self._database.connection.execute(
                 """
@@ -392,9 +419,15 @@ class ReconciliationService:
                 return "AMBIGUOUS", None
 
         if tracking_start_date is not None:
-            if transaction_date < tracking_start_date:
+            boundary = TrackingBoundaryPolicy.classify(
+                tracking_start_date=tracking_start_date,
+                tracking_start_time=tracking_start_time,
+                transaction_date=transaction_date,
+                transaction_time=None,
+            )
+            if boundary.status is TrackingBoundaryStatus.BEFORE_BOUNDARY:
                 return "OUTSIDE_TRACKING", None
-            if transaction_date == tracking_start_date:
+            if boundary.status is TrackingBoundaryStatus.AMBIGUOUS:
                 return "TRACKING_AMBIGUOUS", None
 
         if external_id is not None:
@@ -436,6 +469,32 @@ class ReconciliationService:
         if candidate_count > 1:
             return "AMBIGUOUS", None
         return "UNMATCHED", None
+
+    def _posting_capabilities(
+        self,
+        *,
+        source_account_id: int,
+        currency_code: str,
+        amount_minor: int,
+        accounts,
+    ) -> dict[str, list[int]]:
+        capabilities: dict[str, list[int]] = {}
+        for kind in PostingPolicy.allowed_kinds_for_amount(amount_minor):
+            capabilities[kind] = [
+                account.id
+                for account in accounts
+                if PostingPolicy.counter_is_eligible(
+                    kind,
+                    source_account_id=source_account_id,
+                    source_currency=currency_code,
+                    counter_account_id=account.id,
+                    counter_type=account.type,
+                    counter_currency=account.currency_code,
+                    counter_archived=account.archived,
+                    counter_placeholder=account.placeholder,
+                )
+            ]
+        return capabilities
 
     def _candidate_details(
         self,
@@ -601,15 +660,19 @@ class ReconciliationService:
     @staticmethod
     def _parse_date(value: str, row_number: int) -> str:
         raw = value.strip()
-        for parser in (
-            lambda text: date.fromisoformat(text),
-            lambda text: datetime.strptime(text, "%d/%m/%Y").date(),
-            lambda text: datetime.strptime(text, "%d-%m-%Y").date(),
-        ):
+        try:
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            pass
+        for separator in ("/", "-"):
+            parts = raw.split(separator)
+            if len(parts) != 3:
+                continue
             try:
-                return parser(raw).isoformat()
+                day, month, year = (int(part) for part in parts)
+                return date(year, month, day).isoformat()
             except ValueError:
-                pass
+                continue
         raise ReconciliationError(f"row {row_number}: invalid date")
 
     @staticmethod

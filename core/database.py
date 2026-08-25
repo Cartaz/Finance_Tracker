@@ -102,6 +102,12 @@ class Database:
         if row is not None and int(row[0]) != 0:
             raise DatabaseIntegrityError("SQLite WAL checkpoint could not complete")
 
+    def backup_to(self, destination: Path) -> None:
+        """Compatibility facade; backup semantics live in BackupService."""
+        from core.backup_service import BackupService
+
+        BackupService(self).backup_to(destination)
+
     def close(self) -> None:
         if self._connection is not None:
             self._connection.close()

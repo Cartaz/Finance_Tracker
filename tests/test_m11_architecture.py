@@ -123,13 +123,16 @@ def test_backup_catalog_does_not_run_full_integrity_check_on_ui_path() -> None:
     assert "integrity_check" not in body
 
 
-def test_normal_window_close_is_blocked_until_restore_fully_finishes() -> None:
+def test_normal_window_close_is_blocked_only_by_owned_backup_work() -> None:
+    main = (ROOT / "main.py").read_text(encoding="utf-8")
     window = (UI / "window.py").read_text(encoding="utf-8")
+    manager = (UI / "backup_task_manager.py").read_text(encoding="utf-8")
 
-    assert "bridge.maintenanceChanged.connect(self._set_restore_maintenance)" in window
-    assert "self._restore_maintenance" in window
+    assert "def active(self) -> bool" in manager
+    assert "MainWindow(bridge, backup_tasks)" in main
+    assert "self._backup_tasks.active" in window
+    assert "QThreadPool.globalInstance().activeThreadCount()" not in window
     assert "def closeEvent(" in window
-    assert "QThreadPool.globalInstance().activeThreadCount()" in window
     assert "event.ignore()" in window
     assert "Operazione in corso" in window
 

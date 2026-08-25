@@ -117,3 +117,7 @@ class BudgetError(ValidationError):
 
 class ForecastError(ValidationError):
     """Raised when a forecast definition or projection is invalid."""
+
+
+class LoanError(ValidationError):
+    """Raised when a loan definition, schedule or payment is invalid."""

@@ -18,11 +18,18 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - `LedgerService` is the only writer of accounting transactions and entries.
 - Other workflows may stage evidence or metadata, but accounting mutations delegate to `LedgerService` atomically.
 - Monetary persistence uses integer minor units; financial multiplication, division, percentage and FX math use `Decimal`; financial `float` is prohibited.
-- User-entered transaction/budget amounts are unsigned, strictly positive monetary magnitudes. Economic direction belongs to transaction/posting semantics, never to a user-entered `+` or `-` sign. Signed monetary parsing remains available only for external data where the sign is part of the source evidence.
+- User-entered transaction/budget/loan-principal/custom-payment amounts are unsigned, strictly positive monetary magnitudes. Economic direction belongs to transaction/posting semantics, never to a user-entered `+` or `-` sign. Signed monetary parsing remains available only for external data where the sign is part of the source evidence.
 - Temporal tracking-boundary semantics have one canonical policy.
 - Posting capability rules have one canonical policy; presentation renders capabilities rather than re-deriving accounting decisions.
 - Scheduled recurrence has one canonical owner. Forecasting and other projections consume the scheduled service's read-only occurrence projection rather than reimplementing recurrence rules.
-- Forecasting is a deterministic read model: it must not write ledger/schedule state, must expose material assumptions, and must fail closed when a required financial conversion cannot be supported by canonical data.
+- Forecasting is a deterministic read model: it must not write ledger/schedule/loan state, must expose material assumptions, and must fail closed when a required financial conversion cannot be supported by canonical data.
+- Known future obligations introduced by a domain module expose a read-only projection from their canonical owner when they materially affect forecasting; ForecastService consumes that projection rather than duplicating the domain algorithm.
+- Loan contracts never persist a parallel outstanding balance. Outstanding principal is derived from the canonical linked LIABILITY ledger balance; contract metadata, effective rate history and payment-to-ledger links may be persisted.
+- Loan amortization math has one pure canonical policy owner. `LoanService` orchestrates contract state and delegates arithmetic to that policy rather than encoding separate French/Italian/bullet formulas in posting, forecast or UI paths.
+- Loan installment projection and posting consume the same canonical remaining-plan calculation. Principal repayment remains balance-sheet neutral in book-level flow semantics; interest is the expense component.
+- Variable-rate history is effective-dated and append/update-only for future periods: a revision must never rewrite the rate applied to an already-posted installment. Future variable-rate projections use the latest effective known revision until another explicit revision exists; they do not invent future index values.
+- Custom loan payments are explicit domain events. They must cover accrued interest and reduce principal; arrears, unpaid-interest capitalization, penalties and negative amortization are never inferred silently.
+- Loan creation/account/policy capabilities are backend-owned; JavaScript renders allowed targets and policy values rather than inferring them from account types, currencies, balances or financial formulas.
 - QWebChannel transport must preserve financial integer precision explicitly.
 - `AppController` coordinates; it must not accumulate SQL or become the owner of domain rules.
 - `ui/bridge.py` validates transport shape and delegates; it does not implement business rules.

@@ -8,7 +8,7 @@ from pathlib import Path
 from config.constants import DATABASE_PATH, SCHEMA_VERSION
 from core.currency_registry import CurrencyRegistry
 from core.errors import DatabaseIntegrityError
-from core.migrations import apply_migrations
+from core.migration_catalog import apply_migrations
 from core.money import CurrencySpec
 
 

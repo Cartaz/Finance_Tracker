@@ -4,21 +4,21 @@ Local-first personal finance tracker for desktop Linux, built with Python, PySid
 
 ## Current status
 
-Milestones M0 through M9 are implemented on stacked feature branches and are under validation before merge to `main`.
+Milestones M0 through M10 are implemented on stacked feature branches and are under validation before merge to `main`.
 
 Implemented:
 
 - PySide6/QWebEngine local desktop shell with QWebChannel bridge and blocked in-app remote navigation;
 - dark neumorphic UI (`rgb(20,20,20)` surface, `rgb(255,102,0)` accent), minimum window 1200×800;
 - first-run creation of the local personal book;
-- usable Dashboard, Transactions, Accounts, Budgets, Forecast, Scheduled Transactions and Reconciliation views;
+- usable Dashboard, Transactions, Accounts, Budgets, Forecast, Loans, Scheduled Transactions and Reconciliation views;
 - manual account/category creation and manual expense entry;
 - merchant autocomplete limited to five ranked suggestions plus explicit new-payee creation;
 - XDG-based settings/data directories;
-- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v7;
-- currencies, users/books, accounts, transactions, entries, payees, aliases, historical book-scoped FX rates, CSV import staging rows, reconciliation identities, scheduled templates, posted occurrences and monthly budgets;
+- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v9;
+- currencies, users/books, accounts, transactions, entries, payees, aliases, historical book-scoped FX rates, CSV import staging rows, reconciliation identities, scheduled templates, posted occurrences, monthly budgets, generalized loan contracts, effective-dated variable-rate history and ledger-linked loan payments;
 - exact money parsing using integer minor units and `Decimal`; financial `float` values are rejected;
-- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService`, read-only `ReportingService`, zero-trust `ReconciliationService`, `ScheduledTransactionService`, `BudgetService`, read-only `ForecastService` and a dedicated application-state read model;
+- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService`, read-only `ReportingService`, zero-trust `ReconciliationService`, `ScheduledTransactionService`, `BudgetService`, read-only `ForecastService`, `LoanService` and a dedicated application-state read model;
 - opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings in the domain layer;
 - one canonical tracking-boundary policy shared by ledger, reconciliation and scheduled workflows;
 - one canonical posting-capability policy used by backend workflows and exposed to presentation instead of re-derived in JavaScript;
@@ -43,18 +43,32 @@ Implemented:
 - budget scopes can target an expense category subtree, including grouping categories, while same-month ancestor/descendant overlaps are rejected and revalidated after hierarchy changes;
 - budget target capabilities are computed by the backend for the selected month; presentation only renders the allowed category paths;
 - budget actuals, remaining amounts and usage percentages fail closed when historical FX required by the ledger is missing;
-- deterministic scheduled cash-flow forecasting with DAY/MONTH/YEAR grouping and horizons up to ten years;
-- forecasting consumes the canonical scheduled recurrence projection and never advances schedules or writes ledger state;
-- projected EXPENSE is an outflow, INCOME/REFUND an inflow and TRANSFER is book-level cash-flow neutral;
-- foreign-currency forecast values use the canonical latest-known FX rate on or before each due date, with the policy surfaced explicitly in the forecast payload;
+- deterministic cash-flow forecasting with DAY/MONTH/YEAR grouping and horizons up to ten years;
+- forecasting consumes canonical read-only projections from Scheduled Transactions and Loans and never advances schedules, loan state or the ledger;
+- projected EXPENSE is an outflow, INCOME/REFUND an inflow and TRANSFER is book-level flow neutral;
+- loan installments expose the total contractual payment in forecast detail while only the interest component contributes to book-level net flow; principal repayment remains balance-sheet neutral;
+- foreign-currency forecast values use the canonical latest-known FX rate on or before each due date, with the policy surfaced explicitly in the forecast UI and payload;
 - forecast totals fail closed if a required FX conversion is unavailable; no partial total is presented as complete;
-- no statistical trend inference, hidden assumptions or forecast persistence are introduced in M9: the projection is intentionally scheduled-only and deterministic;
-- database migrations isolated from connection, transaction, integrity and backup lifecycle code;
+- no statistical trend inference, hidden assumptions or forecast persistence are introduced: the projection is deterministic and based on known future obligations;
+- loans can attach to an existing negative LIABILITY balance or atomically create a new disbursement through `LedgerService`;
+- fixed and variable interest-rate contracts are supported; variable rates use effective-dated revisions, and future projections hold the latest known effective rate until another explicit revision is recorded rather than predicting an index;
+- French (`FRENCH`), Italian (`ITALIAN`) and bullet/interest-only-until-maturity (`BULLET`) amortization are implemented through one pure deterministic `AmortizationPolicy`;
+- a loan never stores a parallel outstanding balance: current principal is derived from the canonical linked LIABILITY ledger balance;
+- loan principal and custom-payment inputs are unsigned positive magnitudes, annual rates are parsed exactly to integer basis points, and amortization/interest math uses `Decimal` with deterministic `ROUND_HALF_UP` rounding;
+- custom payments are explicit events that must cover accrued interest and reduce principal; they can recast the remaining plan while the posted principal/interest split remains permanently linked to the canonical ledger transaction;
+- rate revisions cannot rewrite the rate applied to an already-posted installment; each payment stores the basis-point rate actually applied;
+- arrears, unpaid-interest capitalization, penalties and negative amortization are intentionally not inferred by M10 and fail closed rather than silently inventing contract semantics;
+- loan installment posting and read-only projection share the same canonical remaining-plan calculation, including exact final-principal payoff;
+- payment posting records principal and interest metadata atomically with the canonical ledger transaction; interest flows to an EXPENSE account while principal reduces the LIABILITY;
+- backend-owned loan capabilities decide which liabilities, payment/funding accounts, creation modes, rate types, amortization types and recast strategies are exposed; JavaScript renders those capabilities rather than reproducing domain rules;
+- contradictory/stale loan state fails closed, including archived accounts, positive liability balances, duplicate loan ownership, balances exceeding original principal and residual debt beyond the contractual term;
+- schema v8 fixed/French loan records migrate deterministically to v9 as `FIXED + FRENCH + REDUCE_PAYMENT`, preserving their original meaning;
+- database migrations remain separated from connection, transaction, integrity and backup lifecycle code;
 - verified SQLite backup primitive;
-- permanent deterministic stress suites across M0-M9, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations, reconciliation duplicates/ambiguity, reporting read-only invariants, 1000 scheduled occurrences, invalid-state stress, many-budget deterministic/read-only checks and forecast recurrence/read-only checks;
+- permanent deterministic stress suites across M0-M10, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations, reconciliation duplicates/ambiguity, reporting read-only invariants, 1000 scheduled occurrences, invalid-state stress, many-budget deterministic/read-only checks, forecast recurrence/read-only checks and long-loan amortization/projection checks;
 - permanent architecture-invariant tests preventing common tactical regressions.
 
-Later V1 milestones cover loans/financing and complete backup/restore UX.
+The remaining V1 milestone covers complete backup/restore UX and final release hardening.
 
 ## Strategic programming directive
 

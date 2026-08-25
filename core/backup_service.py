@@ -73,21 +73,25 @@ class BackupService:
         items.sort(key=lambda item: item.modified_utc, reverse=True)
         return [item.payload() for item in items]
 
+    def backup_to(self, destination: Path) -> dict[str, object]:
+        """Create one verified snapshot at the exact destination path."""
+        destination = destination.expanduser().resolve()
+        if destination == self._database.path.expanduser().resolve():
+            raise BackupError("backup destination cannot be the live database")
+        self._backup_live_database(destination)
+        return self.inspect(destination).payload()
+
     def create_managed_backup(self) -> dict[str, object]:
         self._backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         destination = self._backup_dir / f"{_BACKUP_PREFIX}{stamp}{_BACKUP_SUFFIX}"
-        self._backup_live_database(destination)
-        return self.inspect(destination).payload()
+        return self.backup_to(destination)
 
     def export_backup(self, destination: Path) -> dict[str, object]:
         destination = destination.expanduser().resolve()
-        if destination == self._database.path.expanduser().resolve():
-            raise BackupError("backup destination cannot be the live database")
         if destination.suffix.lower() != _BACKUP_SUFFIX:
             destination = destination.with_suffix(_BACKUP_SUFFIX)
-        self._backup_live_database(destination)
-        return self.inspect(destination).payload()
+        return self.backup_to(destination)
 
     def managed_path(self, name: str) -> Path:
         if not name or Path(name).name != name:
@@ -280,9 +284,10 @@ class BackupService:
     def _connect_readonly(path: Path) -> sqlite3.Connection:
         if not path.is_file():
             raise BackupError("backup file does not exist")
+        mode = "?mode=ro"
         try:
             return sqlite3.connect(
-                f"{path.resolve().as_uri()}?mode=ro",
+                f"{path.resolve().as_uri()}{mode}",
                 uri=True,
                 autocommit=True,
             )

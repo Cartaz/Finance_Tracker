@@ -55,7 +55,7 @@ class Bridge(QObject):
             return {"ok": True, "data": function(*args)}
         except (FinanceTrackerError, TypeError, ValueError) as exc:
             return self._controller.error_payload(exc)
-        except Exception as exc:  # noqa: BLE001 - bridge boundary must sanitize failures
+        except Exception as exc:
             log.error(
                 "unexpected QWebChannel bridge failure",
                 exc_info=(type(exc), exc, exc.__traceback__),

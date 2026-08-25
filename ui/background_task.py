@@ -22,7 +22,7 @@ class BackgroundTask(QRunnable):
     def run(self) -> None:
         try:
             result = self.function()
-        except Exception as exc:
+        except BaseException as exc:
             self.signals.failed.emit(self.task_id, exc)
         else:
             self.signals.succeeded.emit(self.task_id, result)

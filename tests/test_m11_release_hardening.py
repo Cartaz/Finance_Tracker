@@ -20,7 +20,7 @@ def test_installer_repairs_venv_and_verifies_webengine() -> None:
     assert ".venv/bin/python main.py" in installer
 
 
-def test_ci_uses_current_node24_actions() -> None:
+def test_ci_exercises_external_cwd_and_supported_python_range() -> None:
     workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(
         encoding="utf-8"
     )
@@ -29,6 +29,8 @@ def test_ci_uses_current_node24_actions() -> None:
     assert "actions/setup-python@v7" in workflow
     assert "actions/checkout@v4" not in workflow
     assert "actions/setup-python@v5" not in workflow
+    assert "cd /tmp" in workflow
+    assert 'python-version: ["3.12", "3.14"]' in workflow
 
 
 def test_remote_navigation_stays_outside_embedded_webview(monkeypatch) -> None:
@@ -44,10 +46,25 @@ def test_remote_navigation_stays_outside_embedded_webview(monkeypatch) -> None:
         assert page.acceptNavigationRequest(remote, None, True) is False
         assert opened == [remote]
         assert page.acceptNavigationRequest(QUrl("file:///tmp/index.html"), None, True)
+        assert page.acceptNavigationRequest(
+            QUrl("qrc:///qtwebchannel/qwebchannel.js"), None, True
+        )
+        assert page.acceptNavigationRequest(QUrl("about:blank"), None, True)
+        assert page.acceptNavigationRequest(QUrl("data:text/html,test"), None, True) is False
+        assert page.acceptNavigationRequest(QUrl("javascript:alert(1)"), None, True) is False
     finally:
         page.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents()
+
+
+def test_remote_subrequests_are_explicitly_blocked() -> None:
+    window = (ROOT / "ui" / "window.py").read_text(encoding="utf-8")
+
+    assert "class RemoteRequestBlocker" in window
+    assert 'frozenset({"http", "https", "ftp", "ws", "wss"})' in window
+    assert "info.block(True)" in window
+    assert "setUrlRequestInterceptor" in window
 
 
 def test_backup_ui_discloses_destructive_restore_and_maintenance() -> None:

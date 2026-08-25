@@ -17,7 +17,7 @@ def _database(tmp_path):
     return database
 
 
-def test_managed_backup_is_verified_and_listed(tmp_path) -> None:
+def test_managed_backup_is_verified_listed_and_private(tmp_path) -> None:
     database = _database(tmp_path)
     try:
         BookService(database).create_personal_book(
@@ -31,6 +31,8 @@ def test_managed_backup_is_verified_and_listed(tmp_path) -> None:
         assert created["name"].endswith(".sqlite3")
         assert created["schemaVersion"] > 0
         assert listed == [created]
+        path = service.managed_path(str(created["name"]))
+        assert path.stat().st_mode & 0o777 == 0o600
     finally:
         database.close()
 
@@ -119,6 +121,21 @@ def test_prepare_restore_rejects_non_finance_tracker_database(tmp_path) -> None:
         service = BackupService(database, tmp_path / "backups")
         with pytest.raises(BackupError, match="not a Finance Tracker"):
             service.prepare_restore(foreign)
+    finally:
+        database.close()
+
+
+def test_prepare_restore_rejects_corrupt_file_before_safety_snapshot(tmp_path) -> None:
+    database = _database(tmp_path)
+    try:
+        service = BackupService(database, tmp_path / "backups")
+        corrupt = tmp_path / "corrupt.sqlite3"
+        corrupt.write_bytes(b"not-a-sqlite-database")
+
+        with pytest.raises(BackupError):
+            service.prepare_restore(corrupt)
+        assert service.list_backups() == []
+        database.integrity_check()
     finally:
         database.close()
 

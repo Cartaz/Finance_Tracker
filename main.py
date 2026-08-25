@@ -31,6 +31,7 @@ from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
+from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
@@ -119,7 +120,8 @@ def main() -> int:
             forecast_service,
             loan_service,
         )
-        bridge = Bridge(controller, backup_controller)
+        backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
+        bridge = Bridge(controller, backup_tasks)
         window = MainWindow(bridge)
         window.show()
         return app.exec()

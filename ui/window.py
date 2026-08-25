@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         )
         return selected or None
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+    def closeEvent(self, event: QCloseEvent) -> None:
         if self._restore_maintenance or QThreadPool.globalInstance().activeThreadCount() > 0:
             QMessageBox.information(
                 self,

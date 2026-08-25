@@ -48,15 +48,28 @@ class BackupService:
         self._backup_dir = backup_dir
 
     def list_backups(self) -> list[dict[str, object]]:
+        """List managed backups without running a full integrity scan on the UI path."""
         self._backup_dir.mkdir(parents=True, exist_ok=True)
         items: list[BackupInfo] = []
         for path in self._backup_dir.glob(f"{_BACKUP_PREFIX}*{_BACKUP_SUFFIX}"):
             if not path.is_file():
                 continue
             try:
-                items.append(self.inspect(path))
+                schema_version = self._read_schema_version(path)
             except BackupError:
                 continue
+            stat = path.stat()
+            items.append(
+                BackupInfo(
+                    name=path.name,
+                    path=path,
+                    size_bytes=stat.st_size,
+                    modified_utc=datetime.fromtimestamp(
+                        stat.st_mtime, timezone.utc
+                    ).isoformat(),
+                    schema_version=schema_version,
+                )
+            )
         items.sort(key=lambda item: item.modified_utc, reverse=True)
         return [item.payload() for item in items]
 
@@ -139,10 +152,12 @@ class BackupService:
         plan.staged_database.unlink(missing_ok=True)
 
     def finalize_restore(self, plan: RestorePlan) -> dict[str, object]:
+        """Perform only the short live-file swap after worker-side verification."""
         staging = plan.staged_database
         if not staging.is_file():
             raise BackupError("prepared restore database is missing")
-        self._verify_sqlite_file(staging, require_current_schema=True)
+        if self._read_schema_version(staging) != SCHEMA_VERSION:
+            raise BackupError("prepared restore database is not at the current schema")
 
         live = self._database.path
         live.parent.mkdir(parents=True, exist_ok=True)
@@ -158,7 +173,6 @@ class BackupService:
             staging.replace(live)
             self._remove_sidecars(live)
             self._database.open()
-            self._database.integrity_check()
         except Exception as exc:
             self._database.close()
             failed = live.parent / f".{live.name}.failed-{uuid4().hex}.tmp"
@@ -169,7 +183,6 @@ class BackupService:
             self._remove_sidecars(live)
             try:
                 self._database.open()
-                self._database.integrity_check()
             except Exception as rollback_exc:
                 raise BackupError(
                     "restore failed and the previous database could not be reopened"
@@ -213,8 +226,11 @@ class BackupService:
             target_conn.close()
             source_conn.close()
 
-    @staticmethod
-    def _verify_sqlite_file(path: Path, *, require_current_schema: bool = False) -> int:
+    @classmethod
+    def _verify_sqlite_file(
+        cls, path: Path, *, require_current_schema: bool = False
+    ) -> int:
+        schema_version = cls._read_schema_version(path)
         try:
             conn = sqlite3.connect(path, autocommit=True)
         except sqlite3.Error as exc:
@@ -226,6 +242,23 @@ class BackupService:
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise BackupError("backup foreign_key_check reported violations")
+        except sqlite3.Error as exc:
+            raise BackupError(f"backup verification failed: {exc}") from exc
+        finally:
+            conn.close()
+        if require_current_schema and schema_version != SCHEMA_VERSION:
+            raise BackupError(
+                f"prepared database schema {schema_version} does not match current schema {SCHEMA_VERSION}"
+            )
+        return schema_version
+
+    @staticmethod
+    def _read_schema_version(path: Path) -> int:
+        try:
+            conn = sqlite3.connect(path, autocommit=True)
+        except sqlite3.Error as exc:
+            raise BackupError(f"cannot open backup database: {exc}") from exc
+        try:
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
             ).fetchone()
@@ -237,7 +270,7 @@ class BackupService:
                 ).fetchone()[0]
             )
         except sqlite3.Error as exc:
-            raise BackupError(f"backup verification failed: {exc}") from exc
+            raise BackupError(f"backup schema inspection failed: {exc}") from exc
         finally:
             conn.close()
         if schema_version <= 0:
@@ -245,10 +278,6 @@ class BackupService:
         if schema_version > SCHEMA_VERSION:
             raise BackupError(
                 f"backup schema {schema_version} is newer than supported schema {SCHEMA_VERSION}"
-            )
-        if require_current_schema and schema_version != SCHEMA_VERSION:
-            raise BackupError(
-                f"prepared database schema {schema_version} does not match current schema {SCHEMA_VERSION}"
             )
         return schema_version
 

@@ -13,7 +13,7 @@ This directory contains the manual V1 release-candidate bug-hunting plan and det
 - `bug-hunting-test-reconciliation-zero-amount.csv` - must fail atomically.
 - `bug-hunting-test-reconciliation-ambiguous-headers.csv` - must reject ambiguous normalized headers.
 - `bug-hunting-test-invalid-not-sqlite.sqlite3` - deliberately invalid restore source.
-- `generate_large_csv.py` - deterministic generator for the row-limit stress corpus.
+- `generate_large_csv.py` - deterministic generator for row-count and byte-size stress corpora.
 
 ## Large GitHub artifact
 
@@ -25,6 +25,8 @@ It contains:
 
 - `bug-hunting-test-reconciliation-10000-valid.csv` - exact allowed row-count maximum.
 - `bug-hunting-test-reconciliation-10001-too-many.csv` - must be rejected by the 10,000-row limit.
+- `bug-hunting-test-reconciliation-near-10mb-valid.csv` - 9,500 rows and roughly 9.8 MB, valid under both limits.
+- `bug-hunting-test-reconciliation-over-10mb.csv` - 9,500 rows but over 10,000,000 bytes; must be rejected by the byte limit before parsing.
 
 The generated files contain only synthetic deterministic data. They are kept out of Git history intentionally so normal clones remain small.
 
@@ -34,4 +36,4 @@ You can also regenerate them locally:
 python bug-hunting-test/generate_large_csv.py
 ```
 
-Generated files are written to `bug-hunting-test/generated/`.
+Generated files are written to `bug-hunting-test/generated/` and that directory is ignored by Git.

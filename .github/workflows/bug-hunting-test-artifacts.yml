@@ -28,16 +28,23 @@ jobs:
           from pathlib import Path
 
           root = Path("bug-hunting-test/generated")
-          expected = {
+          row_expectations = {
               "bug-hunting-test-reconciliation-10000-valid.csv": 10_000,
               "bug-hunting-test-reconciliation-10001-too-many.csv": 10_001,
+              "bug-hunting-test-reconciliation-near-10mb-valid.csv": 9_500,
+              "bug-hunting-test-reconciliation-over-10mb.csv": 9_500,
           }
-          for name, wanted in expected.items():
+          for name, wanted in row_expectations.items():
               path = root / name
               with path.open(newline="", encoding="utf-8") as handle:
                   rows = sum(1 for _ in csv.reader(handle)) - 1
               assert rows == wanted, (name, rows, wanted)
               print(name, rows, path.stat().st_size)
+
+          near_size = (root / "bug-hunting-test-reconciliation-near-10mb-valid.csv").stat().st_size
+          over_size = (root / "bug-hunting-test-reconciliation-over-10mb.csv").stat().st_size
+          assert 9_000_000 < near_size < 10_000_000, near_size
+          assert over_size > 10_000_000, over_size
           PY
       - name: Upload bug hunting test CSVs
         uses: actions/upload-artifact@v4

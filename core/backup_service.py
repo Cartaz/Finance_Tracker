@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from config.constants import BACKUP_DIR, SCHEMA_VERSION
 from core.database import Database
-from core.errors import BackupError, DatabaseIntegrityError
+from core.errors import BackupError
 
 _BACKUP_SUFFIX = ".sqlite3"
 _BACKUP_PREFIX = "finance-tracker-"

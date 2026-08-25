@@ -109,9 +109,11 @@ def test_backup_catalog_does_not_run_full_integrity_check_on_ui_path() -> None:
     assert "integrity_check" not in body
 
 
-def test_normal_window_close_is_blocked_while_background_io_is_active() -> None:
+def test_normal_window_close_is_blocked_until_restore_fully_finishes() -> None:
     window = (UI / "window.py").read_text(encoding="utf-8")
 
+    assert "bridge.maintenanceChanged.connect(self._set_restore_maintenance)" in window
+    assert "self._restore_maintenance" in window
     assert "def closeEvent(" in window
     assert "QThreadPool.globalInstance().activeThreadCount()" in window
     assert "event.ignore()" in window

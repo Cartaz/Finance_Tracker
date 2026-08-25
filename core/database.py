@@ -93,6 +93,15 @@ class Database:
         if fk_rows:
             raise DatabaseIntegrityError("SQLite foreign_key_check reported violations")
 
+    def checkpoint(self) -> None:
+        """Flush committed WAL pages before a native database-file swap."""
+        if self._connection is None:
+            return
+        self._connection.commit()
+        row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if row is not None and int(row[0]) != 0:
+            raise DatabaseIntegrityError("SQLite WAL checkpoint could not complete")
+
     def backup_to(self, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         temp = destination.with_suffix(destination.suffix + ".tmp")

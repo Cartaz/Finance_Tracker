@@ -49,7 +49,7 @@ def test_bullet_interest_payment_does_not_reduce_principal_until_maturity(tmp_pa
             mode="NEW_DISBURSEMENT",
             principal_minor=90_000,
             funding_account_id=bank.id,
-            start_date="2026-01-01",
+            start_date="2026-01-02",
             amortization_type="BULLET",
         )
         before = accounts.native_balance(book.id, liability.id)

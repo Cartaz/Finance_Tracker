@@ -34,6 +34,18 @@ class Bridge(QObject):
         return self._call(self._controller.account_history, dict(payload or {}))
 
     @Slot("QVariant", result="QVariant")
+    def setBudget(self, payload):
+        return self._call(self._controller.set_budget, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def getBudgetStatus(self, payload):
+        return self._call(self._controller.budget_status, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def deleteBudget(self, payload):
+        return self._call(self._controller.delete_budget, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
     def setFxRate(self, payload):
         return self._call(self._controller.set_fx_rate, dict(payload or {}))
 

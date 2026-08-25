@@ -39,7 +39,9 @@ def _split_sign(text: str) -> tuple[str, str]:
 
 def _validate_grouped_integer(text: str, separator: str) -> str:
     groups = text.split(separator)
-    if not groups or not (1 <= len(groups[0]) <= 3) or not all(_DIGITS_RE.fullmatch(g or "") for g in groups):
+    if not groups or not (1 <= len(groups[0]) <= 3) or not all(
+        _DIGITS_RE.fullmatch(g or "") for g in groups
+    ):
         raise MoneyParseError("invalid thousands grouping")
     if any(len(group) != 3 for group in groups[1:]):
         raise MoneyParseError("invalid thousands grouping")
@@ -79,7 +81,9 @@ def normalize_decimal_text(raw: str) -> str:
         integer_part, fractional_part = body.split(separator, 1)
         if not integer_part or not fractional_part:
             raise MoneyParseError("invalid decimal amount")
-        if not _DIGITS_RE.fullmatch(integer_part) or not _DIGITS_RE.fullmatch(fractional_part):
+        if not _DIGITS_RE.fullmatch(integer_part) or not _DIGITS_RE.fullmatch(
+            fractional_part
+        ):
             raise MoneyParseError("invalid decimal amount")
         canonical = f"{integer_part}.{fractional_part}"
     else:
@@ -91,6 +95,7 @@ def normalize_decimal_text(raw: str) -> str:
 
 
 def parse_money(raw: str, currency: CurrencySpec) -> int:
+    """Parse signed monetary text for sources where the sign is part of the data."""
     canonical = normalize_decimal_text(raw)
     unsigned = canonical.lstrip("+-")
     fractional = unsigned.partition(".")[2]
@@ -103,7 +108,13 @@ def parse_money(raw: str, currency: CurrencySpec) -> int:
             )
         fractional = fractional[: currency.minor_unit_digits]
         integer = unsigned.partition(".")[0]
-        canonical = ("-" if canonical.startswith("-") else "+" if canonical.startswith("+") else "") + integer
+        canonical = (
+            "-"
+            if canonical.startswith("-")
+            else "+"
+            if canonical.startswith("+")
+            else ""
+        ) + integer
         if fractional:
             canonical += "." + fractional
 
@@ -119,6 +130,25 @@ def parse_money(raw: str, currency: CurrencySpec) -> int:
             f"{currency.code} amount cannot be represented exactly in minor units"
         )
     return int(minor)
+
+
+def parse_money_magnitude(raw: str, currency: CurrencySpec) -> int:
+    """Parse a user-entered monetary magnitude.
+
+    Transaction kind owns economic direction. A magnitude therefore cannot carry
+    an explicit plus/minus sign and must be strictly greater than zero.
+    """
+    if not isinstance(raw, str):
+        raise MoneyParseError("money input must be text")
+    stripped = raw.strip()
+    if stripped.startswith(("+", "-")):
+        raise MoneyParseError(
+            "monetary magnitude must not include a sign; transaction type determines direction"
+        )
+    minor = parse_money(raw, currency)
+    if minor <= 0:
+        raise MoneyParseError("monetary magnitude must be greater than zero")
+    return minor
 
 
 def decimal_to_minor(

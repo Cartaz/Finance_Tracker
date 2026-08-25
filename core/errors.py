@@ -109,3 +109,7 @@ class ReconciliationAmbiguousError(ReconciliationError):
 
 class ScheduledTransactionError(ValidationError):
     """Raised when a scheduled transaction operation is invalid."""
+
+
+class BudgetError(ValidationError):
+    """Raised when a budget definition or query is invalid."""

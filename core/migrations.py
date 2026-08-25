@@ -303,6 +303,45 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_occurrence_transaction
     ON scheduled_occurrences(book_id, transaction_id);
 """
 
+_SCHEMA_V7 = """
+CREATE TABLE IF NOT EXISTS budgets (
+    id INTEGER PRIMARY KEY,
+    book_id INTEGER NOT NULL,
+    category_account_id INTEGER NOT NULL,
+    period TEXT NOT NULL CHECK (
+        length(period) = 7 AND substr(period, 5, 1) = '-'
+        AND CAST(substr(period, 6, 2) AS INTEGER) BETWEEN 1 AND 12
+    ),
+    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (id, book_id),
+    UNIQUE (book_id, category_account_id, period),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE RESTRICT,
+    FOREIGN KEY (category_account_id, book_id) REFERENCES accounts(id, book_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_budgets_book_period
+    ON budgets(book_id, period, category_account_id);
+CREATE TRIGGER IF NOT EXISTS trg_budgets_expense_category_insert
+BEFORE INSERT ON budgets
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM accounts a
+        WHERE a.id = NEW.category_account_id AND a.book_id = NEW.book_id
+          AND a.type = 'EXPENSE'
+    ) THEN RAISE(ABORT, 'budget category must be an expense account') END;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_budgets_expense_category_update
+BEFORE UPDATE OF category_account_id, book_id ON budgets
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM accounts a
+        WHERE a.id = NEW.category_account_id AND a.book_id = NEW.book_id
+          AND a.type = 'EXPENSE'
+    ) THEN RAISE(ABORT, 'budget category must be an expense account') END;
+END;
+"""
+
 MIGRATIONS = (
     Migration(1, "Initial foundation schema", _SCHEMA_V1, seed_currencies=True),
     Migration(2, "Ledger core schema", _SCHEMA_V2),
@@ -310,6 +349,7 @@ MIGRATIONS = (
     Migration(4, "Book-scoped historical FX rates for reporting", _SCHEMA_V4),
     Migration(5, "CSV import staging and zero-trust reconciliation", _SCHEMA_V5),
     Migration(6, "Scheduled transaction templates and posted occurrences", _SCHEMA_V6),
+    Migration(7, "Monthly category budgets", _SCHEMA_V7),
 )
 
 

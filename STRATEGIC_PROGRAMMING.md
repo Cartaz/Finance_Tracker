@@ -18,6 +18,7 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - `LedgerService` is the only writer of accounting transactions and entries.
 - Other workflows may stage evidence or metadata, but accounting mutations delegate to `LedgerService` atomically.
 - Monetary persistence uses integer minor units; financial multiplication, division, percentage and FX math use `Decimal`; financial `float` is prohibited.
+- User-entered transaction/budget amounts are unsigned, strictly positive monetary magnitudes. Economic direction belongs to transaction/posting semantics, never to a user-entered `+` or `-` sign. Signed monetary parsing remains available only for external data where the sign is part of the source evidence.
 - Temporal tracking-boundary semantics have one canonical policy.
 - Posting capability rules have one canonical policy; presentation renders capabilities rather than re-deriving accounting decisions.
 - QWebChannel transport must preserve financial integer precision explicitly.

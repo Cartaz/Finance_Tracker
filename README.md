@@ -4,21 +4,21 @@ Local-first personal finance tracker for desktop Linux, built with Python, PySid
 
 ## Current status
 
-Milestones M0 through M7 are implemented on the current M7 branch and are under final validation before merge to `main`.
+Milestones M0 through M8 are implemented on stacked feature branches and are under validation before merge to `main`.
 
 Implemented:
 
 - PySide6/QWebEngine local desktop shell with QWebChannel bridge and blocked in-app remote navigation;
 - dark neumorphic UI (`rgb(20,20,20)` surface, `rgb(255,102,0)` accent), minimum window 1200×800;
 - first-run creation of the local personal book;
-- usable Dashboard, Transactions, Accounts, Scheduled Transactions and Reconciliation views;
+- usable Dashboard, Transactions, Accounts, Budgets, Scheduled Transactions and Reconciliation views;
 - manual account/category creation and manual expense entry;
 - merchant autocomplete limited to five ranked suggestions plus explicit new-payee creation;
 - XDG-based settings/data directories;
-- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v6;
-- currencies, users/books, accounts, transactions, entries, payees, aliases, historical book-scoped FX rates, CSV import staging rows, reconciliation identities, scheduled templates and posted occurrences;
+- SQLite with verified foreign-key enforcement, WAL mode and migrations through schema v7;
+- currencies, users/books, accounts, transactions, entries, payees, aliases, historical book-scoped FX rates, CSV import staging rows, reconciliation identities, scheduled templates, posted occurrences and monthly budgets;
 - exact money parsing using integer minor units and `Decimal`; financial `float` values are rejected;
-- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService`, read-only `ReportingService`, zero-trust `ReconciliationService`, `ScheduledTransactionService` and a dedicated application-state read model;
+- `AccountService`, `LedgerService`, `BookService`, `PayeeService`, `CategoryService`, `FxService`, read-only `ReportingService`, zero-trust `ReconciliationService`, `ScheduledTransactionService`, `BudgetService` and a dedicated application-state read model;
 - opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings in the domain layer;
 - one canonical tracking-boundary policy shared by ledger, reconciliation and scheduled workflows;
 - one canonical posting-capability policy used by backend workflows and exposed to presentation instead of re-derived in JavaScript;
@@ -39,12 +39,16 @@ Implemented:
 - date-only scheduled templates remain separate from the ledger until an explicit due-materialization command;
 - month-end and leap-year recurrence anchoring, optional end dates, pause/resume and durable unique `(schedule, due date)` occurrence identity;
 - scheduled catch-up preflights occurrence limits and materializes an entire requested batch atomically through `LedgerService`, preventing partial posting if a later occurrence fails;
+- monthly expense budgets stored in book-base-currency minor units and compared against canonical FX-aware reporting rather than maintaining a second accounting total;
+- budget scopes can target an expense category subtree, including grouping categories, while same-month ancestor/descendant overlaps are rejected and revalidated after hierarchy changes;
+- budget target capabilities are computed by the backend for the selected month; presentation only renders the allowed category paths;
+- budget actuals, remaining amounts and usage percentages fail closed when historical FX required by the ledger is missing;
 - database migrations isolated from connection, transaction, integrity and backup lifecycle code;
 - verified SQLite backup primitive;
-- permanent deterministic stress suites across M0-M7, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations, reconciliation duplicates/ambiguity, reporting read-only invariants and 1000 scheduled occurrences plus invalid-state stress;
+- permanent deterministic stress suites across M0-M8, including malformed input, cross-book references, rollback, integrity/foreign-key checks, missing FX, cross-currency operations, reconciliation duplicates/ambiguity, reporting read-only invariants, 1000 scheduled occurrences, invalid-state stress and many-budget deterministic/read-only checks;
 - permanent architecture-invariant tests preventing common tactical regressions.
 
-Later V1 milestones cover budgets, forecasting, loans/financing and complete backup/restore UX.
+Later V1 milestones cover forecasting, loans/financing and complete backup/restore UX.
 
 ## Strategic programming directive
 
@@ -77,7 +81,7 @@ No virtualenv activation is required.
 
 ```bash
 .venv/bin/python -m compileall -q main.py config core ui tests
-.venv/bin/pytest
+.venv/bin/python -m pytest
 .venv/bin/ruff check main.py config core ui tests
 ```
 

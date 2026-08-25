@@ -27,6 +27,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Finance Tracker")
         self.setMinimumSize(1200, 800)
         self.resize(1440, 900)
+        self._restore_maintenance = False
 
         self._view = QWebEngineView(self)
         self._page = LocalOnlyPage(self._view)
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self._channel.registerObject("backend", bridge)
         self._page.setWebChannel(self._channel)
 
+        bridge.maintenanceChanged.connect(self._set_restore_maintenance)
         bridge.set_file_dialogs(
             export_picker=self.choose_backup_export_path,
             restore_picker=self.choose_restore_path,
@@ -44,6 +46,9 @@ class MainWindow(QMainWindow):
         index_path = Path(__file__).resolve().parent / "web" / "index.html"
         self._view.setUrl(QUrl.fromLocalFile(str(index_path)))
         self.setCentralWidget(self._view)
+
+    def _set_restore_maintenance(self, active: bool) -> None:
+        self._restore_maintenance = bool(active)
 
     def choose_backup_export_path(self) -> str | None:
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,7 +71,7 @@ class MainWindow(QMainWindow):
         return selected or None
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if QThreadPool.globalInstance().activeThreadCount() > 0:
+        if self._restore_maintenance or QThreadPool.globalInstance().activeThreadCount() > 0:
             QMessageBox.information(
                 self,
                 "Operazione in corso",

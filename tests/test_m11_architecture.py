@@ -36,6 +36,19 @@ def test_restore_is_staged_verified_and_has_safety_backup_before_swap() -> None:
     assert '"safetyBackup"' in service
 
 
+def test_finalize_restore_keeps_gui_thread_work_bounded() -> None:
+    service = (CORE / "backup_service.py").read_text(encoding="utf-8")
+    start = service.index("def finalize_restore(")
+    end = service.index("def _backup_live_database(", start)
+    body = service[start:end]
+
+    assert "integrity_check" not in body
+    assert "_verify_sqlite_file" not in body
+    assert "_read_schema_version" in body
+    assert "checkpoint()" in body
+    assert "staging.replace(live)" in body
+
+
 def test_backup_work_is_off_gui_thread_and_restore_enters_maintenance() -> None:
     bridge = (UI / "bridge.py").read_text(encoding="utf-8")
     worker = (UI / "background_task.py").read_text(encoding="utf-8")
@@ -62,6 +75,15 @@ def test_native_shell_owns_backup_file_selection() -> None:
     assert "file://" not in frontend
 
 
+def test_external_backup_sources_are_opened_read_only() -> None:
+    service = (CORE / "backup_service.py").read_text(encoding="utf-8")
+
+    assert "def _connect_readonly(" in service
+    assert '"?mode=ro"' in service
+    assert "uri=True" in service
+    assert "source_conn = cls._connect_readonly(source)" in service
+
+
 def test_frontend_uses_one_shared_qwebchannel_instance() -> None:
     index = (WEB / "index.html").read_text(encoding="utf-8")
     adapter = (WEB / "backend-channel.js").read_text(encoding="utf-8")
@@ -85,3 +107,21 @@ def test_backup_catalog_does_not_run_full_integrity_check_on_ui_path() -> None:
     assert "_read_schema_version" in body
     assert "_verify_sqlite_file" not in body
     assert "integrity_check" not in body
+
+
+def test_normal_window_close_is_blocked_while_background_io_is_active() -> None:
+    window = (UI / "window.py").read_text(encoding="utf-8")
+
+    assert "def closeEvent(" in window
+    assert "QThreadPool.globalInstance().activeThreadCount()" in window
+    assert "event.ignore()" in window
+    assert "Operazione in corso" in window
+
+
+def test_backup_controller_serializes_backup_and_restore_lifecycle() -> None:
+    controller = (CORE / "backup_controller.py").read_text(encoding="utf-8")
+
+    assert "Lock()" in controller
+    assert "_operation_active" in controller
+    assert "_restore_in_progress" in controller
+    assert "another backup or restore operation is already in progress" in controller

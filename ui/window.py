@@ -19,12 +19,19 @@ from ui.bridge import Bridge
 
 
 class RemoteRequestBlocker(QWebEngineUrlRequestInterceptor):
-    """Prevent the embedded local frontend from issuing remote network requests."""
+    """Block remote embedded resources while main-frame navigation exits the app."""
 
     _REMOTE_SCHEMES = frozenset({"http", "https", "ftp", "ws", "wss"})
 
     def interceptRequest(self, info: QWebEngineUrlRequestInfo) -> None:  # noqa: N802 - Qt API
-        if info.requestUrl().scheme().lower() in self._REMOTE_SCHEMES:
+        is_main_frame = (
+            info.resourceType()
+            == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame
+        )
+        if (
+            not is_main_frame
+            and info.requestUrl().scheme().lower() in self._REMOTE_SCHEMES
+        ):
             info.block(True)
 
 

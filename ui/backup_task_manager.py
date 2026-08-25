@@ -29,7 +29,8 @@ class BackupTaskManager(QObject):
         super().__init__()
         self._controller = controller
         self._error_payload = error_payload
-        self._thread_pool = QThreadPool.globalInstance()
+        self._thread_pool = QThreadPool(self)
+        self._thread_pool.setMaxThreadCount(1)
         self._tasks: dict[str, BackgroundTask] = {}
         self._task_operations: dict[str, str] = {}
         self._maintenance = False

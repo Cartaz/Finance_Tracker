@@ -27,7 +27,8 @@ def test_loan_ui_uses_backend_capabilities_and_backend_financial_results() -> No
     assert "currentLoanCapabilities.targets" in app_js
     assert "currentLoanCapabilities.rateTypes" in app_js
     assert "currentLoanCapabilities.amortizationTypes" in app_js
-    assert "currentLoanCapabilities.recastStrategies" in app_js
+    assert "currentLoanCapabilities.policyCombinations" in app_js
+    assert "combination?.recastStrategies" in app_js
     assert "target?.paymentAccountIds" in app_js
     assert "target?.fundingAccountIds" in app_js
     assert 'state.accounts.filter((a) => a.type === "LIABILITY"' not in app_js

@@ -57,7 +57,9 @@ def test_backup_work_is_off_gui_thread_and_restore_enters_maintenance() -> None:
     assert "BackupTaskManager" in bridge
     assert "QThreadPool" not in bridge
     assert "BackgroundTask(" not in bridge
-    assert "QThreadPool" in manager
+    assert "QThreadPool(self)" in manager
+    assert "QThreadPool.globalInstance()" not in manager
+    assert "setMaxThreadCount(1)" in manager
     assert "BackgroundTask(" in manager
     assert '"RESTORE_MANAGED"' in manager
     assert '"RESTORE_EXTERNAL"' in manager

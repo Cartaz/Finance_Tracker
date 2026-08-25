@@ -5,7 +5,11 @@ from pathlib import Path
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineUrlRequestInfo,
+    QWebEngineUrlRequestInterceptor,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
 
@@ -14,12 +18,29 @@ from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 
 
+class RemoteRequestBlocker(QWebEngineUrlRequestInterceptor):
+    """Block remote embedded resources while main-frame navigation exits the app."""
+
+    _REMOTE_SCHEMES = frozenset({"http", "https", "ftp", "ws", "wss"})
+
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo) -> None:
+        is_main_frame = (
+            info.resourceType()
+            == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame
+        )
+        if (
+            not is_main_frame
+            and info.requestUrl().scheme().lower() in self._REMOTE_SCHEMES
+        ):
+            info.block(True)
+
+
 class LocalOnlyPage(QWebEnginePage):
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
         if url.scheme() in {"http", "https"}:
             QDesktopServices.openUrl(url)
             return False
-        return url.scheme() in {"file", "qrc", "data", "about"}
+        return url.scheme() in {"file", "qrc", "about"}
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +59,9 @@ class MainWindow(QMainWindow):
         self._view = QWebEngineView(self)
         self._page = LocalOnlyPage(self._view)
         self._view.setPage(self._page)
+        profile = self._page.profile()
+        self._request_interceptor = RemoteRequestBlocker(profile)
+        profile.setUrlRequestInterceptor(self._request_interceptor)
 
         self._channel = QWebChannel(self._page)
         self._channel.registerObject("backend", bridge)

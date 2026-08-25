@@ -35,14 +35,16 @@ from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 from ui.window import MainWindow
 
+log = logging.getLogger(__name__)
+
 
 def _ensure_directories() -> None:
     for path in (DATA_DIR, CONFIG_DIR, BACKUP_DIR, IMPORT_DIR, LOAN_DOCUMENT_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)
         try:
             path.chmod(0o700)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("Could not restrict directory permissions for %s: %s", path, exc)
 
 
 def _configure_logging() -> None:
@@ -58,12 +60,11 @@ def _configure_logging() -> None:
 
 
 def main() -> int:
-    _ensure_directories()
-    _configure_logging()
-    log = logging.getLogger(__name__)
-    settings = SettingsStore().load()
     database = Database()
     try:
+        _ensure_directories()
+        _configure_logging()
+        settings = SettingsStore().load()
         database.open()
         database.migrate()
         database.integrity_check()

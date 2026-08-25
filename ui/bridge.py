@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -7,6 +8,8 @@ from PySide6.QtCore import QObject, Signal, Slot
 from core.app_controller import AppController
 from core.errors import BackupError, FinanceTrackerError
 from ui.backup_task_manager import BackupTaskManager
+
+log = logging.getLogger(__name__)
 
 
 class Bridge(QObject):
@@ -42,16 +45,28 @@ class Bridge(QObject):
             return self._controller.error_payload(
                 BackupError("database restore is in progress")
             )
-        try:
-            return {"ok": True, "data": function(*args)}
-        except (FinanceTrackerError, TypeError, ValueError) as exc:
-            return self._controller.error_payload(exc)
+        return self._invoke(function, *args)
 
     def _backup_call(self, function, *args):
+        return self._invoke(function, *args)
+
+    def _invoke(self, function, *args):
         try:
             return {"ok": True, "data": function(*args)}
         except (FinanceTrackerError, TypeError, ValueError) as exc:
             return self._controller.error_payload(exc)
+        except Exception as exc:
+            log.error(
+                "unexpected QWebChannel bridge failure",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            return {
+                "ok": False,
+                "error": {
+                    "code": "UnexpectedApplicationError",
+                    "message": "Unexpected application failure; see logs for details",
+                },
+            }
 
     def _require_backup_tasks(self) -> BackupTaskManager:
         if self._backup_tasks is None:

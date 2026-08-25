@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from config.constants import (
     DEFAULT_RECONCILIATION_REVIEW_MODE,
     SETTINGS_PATH,
 )
+
+log = logging.getLogger(__name__)
 
 _ALLOWED_REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
 
@@ -40,7 +43,17 @@ class SettingsStore:
 
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("Could not load settings from %s; using defaults: %s", self._path, exc)
+            settings = Settings()
+            settings.validate()
+            return settings
+
+        if not isinstance(raw, dict):
+            log.warning(
+                "Invalid settings document in %s; expected a JSON object, using defaults",
+                self._path,
+            )
             settings = Settings()
             settings.validate()
             return settings
@@ -50,7 +63,8 @@ class SettingsStore:
         try:
             settings = Settings(**defaults)
             settings.validate()
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            log.warning("Invalid settings in %s; using defaults: %s", self._path, exc)
             settings = Settings()
             settings.validate()
         return settings

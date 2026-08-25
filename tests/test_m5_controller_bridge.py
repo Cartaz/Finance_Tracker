@@ -195,3 +195,29 @@ def test_bridge_returns_domain_errors_for_invalid_reporting_and_fx(tmp_path) -> 
         assert bad_fx["error"]["code"] == "FxRateError"
     finally:
         db.close()
+
+
+def test_bridge_logs_and_sanitizes_unexpected_failures(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    db, _accounts, _ledger, controller = _controller(tmp_path)
+    try:
+        def fail_dashboard(_payload):
+            raise RuntimeError("internal-sensitive-detail")
+
+        monkeypatch.setattr(controller, "dashboard", fail_dashboard)
+        bridge = Bridge(controller)
+        with caplog.at_level("ERROR", logger="ui.bridge"):
+            result = bridge.getDashboard({})
+
+        assert result == {
+            "ok": False,
+            "error": {
+                "code": "UnexpectedApplicationError",
+                "message": "Unexpected application failure; see logs for details",
+            },
+        }
+        assert "internal-sensitive-detail" not in result["error"]["message"]
+        assert "internal-sensitive-detail" in caplog.text
+    finally:
+        db.close()

@@ -31,10 +31,12 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - Custom loan payments are explicit domain events. They must cover accrued interest and reduce principal; arrears, unpaid-interest capitalization, penalties and negative amortization are never inferred silently.
 - Loan creation/account/policy capabilities are backend-owned; JavaScript renders allowed targets and policy values rather than inferring them from account types, currencies, balances or financial formulas.
 - Backup/restore has one canonical core owner. Presentation and the bridge may select files and orchestrate progress but must not implement SQLite verification, migration, copying or replacement rules.
-- A restore never writes an unverified external database directly over the live database. The source is verified, copied to staging, migrated to the current schema and integrity-checked before any live-file replacement.
+- A restore never writes an unverified external database directly over the live database. The source is opened read-only, verified, copied to staging, migrated to the current schema and integrity-checked before any live-file replacement.
 - Every restore creates a verified safety backup of the current live state before replacement. The final swap is rollback-safe and must either reopen the prepared database or restore the previous live database.
-- Restore preparation, SQLite backup copying, migrations and full integrity checks run off the Qt GUI thread. The final GUI-thread phase is limited to checkpoint/close, atomic file swap and reopen.
+- Restore preparation, SQLite backup copying, migrations and full integrity checks run off the Qt GUI thread. The final GUI-thread phase is limited to checkpoint/close, a lightweight schema guard, atomic file swap and reopen.
 - While restore preparation is active, normal application mutations are blocked by an explicit maintenance state so committed changes cannot be made after the safety snapshot and then lost at swap time.
+- Backup/export/restore operations are serialized. A prepared restore reserves the backup lifecycle through finalization or cancellation; another persistence snapshot operation cannot interleave with it.
+- Normal application shutdown must not race an active backup/restore worker. The native shell blocks normal close while owned background persistence I/O is active.
 - Native file selection belongs to the Qt shell. JavaScript never receives arbitrary filesystem powers or user-controlled command execution.
 - QWebChannel transport must preserve financial integer precision explicitly.
 - One main QWebChannel backend proxy is shared by frontend modules; feature modules must not create competing channel clients on the same transport.

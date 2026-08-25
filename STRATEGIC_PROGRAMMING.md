@@ -30,7 +30,14 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - Variable-rate history is effective-dated and append/update-only for future periods: a revision must never rewrite the rate applied to an already-posted installment. Future variable-rate projections use the latest effective known revision until another explicit revision exists; they do not invent future index values.
 - Custom loan payments are explicit domain events. They must cover accrued interest and reduce principal; arrears, unpaid-interest capitalization, penalties and negative amortization are never inferred silently.
 - Loan creation/account/policy capabilities are backend-owned; JavaScript renders allowed targets and policy values rather than inferring them from account types, currencies, balances or financial formulas.
+- Backup/restore has one canonical core owner. Presentation and the bridge may select files and orchestrate progress but must not implement SQLite verification, migration, copying or replacement rules.
+- A restore never writes an unverified external database directly over the live database. The source is verified, copied to staging, migrated to the current schema and integrity-checked before any live-file replacement.
+- Every restore creates a verified safety backup of the current live state before replacement. The final swap is rollback-safe and must either reopen the prepared database or restore the previous live database.
+- Restore preparation, SQLite backup copying, migrations and full integrity checks run off the Qt GUI thread. The final GUI-thread phase is limited to checkpoint/close, atomic file swap and reopen.
+- While restore preparation is active, normal application mutations are blocked by an explicit maintenance state so committed changes cannot be made after the safety snapshot and then lost at swap time.
+- Native file selection belongs to the Qt shell. JavaScript never receives arbitrary filesystem powers or user-controlled command execution.
 - QWebChannel transport must preserve financial integer precision explicitly.
+- One main QWebChannel backend proxy is shared by frontend modules; feature modules must not create competing channel clients on the same transport.
 - `AppController` coordinates; it must not accumulate SQL or become the owner of domain rules.
 - `ui/bridge.py` validates transport shape and delegates; it does not implement business rules.
 - JavaScript owns presentation and temporary UI state only.

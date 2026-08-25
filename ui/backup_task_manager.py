@@ -115,7 +115,7 @@ class BackupTaskManager(QObject):
                 if not isinstance(result, RestorePlan):
                     raise BackupError("restore preparation returned an invalid plan")
                 data = self._controller.finalize_restore(result)
-            except Exception as exc:
+            except BaseException as exc:
                 self._finish_restore_failure(task_id, operation, exc)
                 return
             self._set_maintenance(False)

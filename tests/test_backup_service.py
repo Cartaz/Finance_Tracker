@@ -153,7 +153,10 @@ def test_prepare_restore_rejects_newer_schema_without_touching_live_db(tmp_path)
 
         conn = sqlite3.connect(source)
         try:
-            conn.execute("INSERT INTO schema_migrations(version) VALUES (999)")
+            conn.execute(
+                "INSERT INTO schema_migrations(version, applied_at, description) "
+                "VALUES (999, datetime('now'), 'future schema fixture')"
+            )
             conn.commit()
         finally:
             conn.close()

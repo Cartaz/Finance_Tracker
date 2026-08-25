@@ -49,7 +49,8 @@ def test_loan_creation_capabilities_are_backend_owned() -> None:
     assert "target?.fundingAccountIds" in frontend
     assert "currentLoanCapabilities.rateTypes" in frontend
     assert "currentLoanCapabilities.amortizationTypes" in frontend
-    assert "currentLoanCapabilities.recastStrategies" in frontend
+    assert "currentLoanCapabilities.policyCombinations" in frontend
+    assert "combination?.recastStrategies" in frontend
     assert 'state.accounts.filter((a) => a.type === "LIABILITY"' not in frontend
     assert 'state.accounts.filter((a) => a.type === "ASSET"' not in frontend
 

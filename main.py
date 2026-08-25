@@ -60,11 +60,11 @@ def _configure_logging() -> None:
 
 
 def main() -> int:
-    _ensure_directories()
-    _configure_logging()
-    settings = SettingsStore().load()
     database = Database()
     try:
+        _ensure_directories()
+        _configure_logging()
+        settings = SettingsStore().load()
         database.open()
         database.migrate()
         database.integrity_check()

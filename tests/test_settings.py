@@ -19,8 +19,20 @@ def test_settings_roundtrip(tmp_path: Path) -> None:
     assert loaded.reconciliation_review_mode == "ASSISTED_REVIEW"
 
 
-def test_invalid_settings_fall_back_to_defaults(tmp_path: Path) -> None:
+def test_invalid_settings_fall_back_to_defaults(tmp_path: Path, caplog) -> None:
     path = tmp_path / "settings.json"
     path.write_text('{"book_currency":"TOO_LONG"}', encoding="utf-8")
-    settings = SettingsStore(path).load()
+    with caplog.at_level("WARNING", logger="config.settings"):
+        settings = SettingsStore(path).load()
     assert settings.book_currency == "EUR"
+    assert "using defaults" in caplog.text
+
+
+def test_malformed_settings_are_diagnosed_and_fall_back(tmp_path: Path, caplog) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text("{not-json", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="config.settings"):
+        settings = SettingsStore(path).load()
+    assert settings.book_currency == "EUR"
+    assert "Could not load settings" in caplog.text
+    assert "using defaults" in caplog.text

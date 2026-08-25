@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from uuid import uuid4
 from config.constants import BACKUP_DIR, SCHEMA_VERSION
 from core.database import Database
 from core.errors import BackupError
+
+log = logging.getLogger(__name__)
 
 _BACKUP_SUFFIX = ".sqlite3"
 _BACKUP_PREFIX = "finance-tracker-"
@@ -56,7 +59,8 @@ class BackupService:
                 continue
             try:
                 schema_version = self._read_schema_version(path)
-            except BackupError:
+            except BackupError as exc:
+                log.warning("Ignoring unreadable managed backup %s: %s", path, exc)
                 continue
             stat = path.stat()
             items.append(
@@ -298,8 +302,8 @@ class BackupService:
     def _restrict_file_permissions(path: Path) -> None:
         try:
             path.chmod(0o600)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("Could not restrict backup permissions for %s: %s", path, exc)
 
     @staticmethod
     def _remove_sidecars(path: Path) -> None:

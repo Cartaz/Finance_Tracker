@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage
@@ -10,6 +10,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
 
 from config.constants import BACKUP_DIR
+from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 
 
@@ -22,12 +23,17 @@ class LocalOnlyPage(QWebEnginePage):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, bridge: Bridge) -> None:
+    def __init__(
+        self,
+        bridge: Bridge,
+        backup_tasks: BackupTaskManager | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Finance Tracker")
         self.setMinimumSize(1200, 800)
         self.resize(1440, 900)
         self._restore_maintenance = False
+        self._backup_tasks = backup_tasks
 
         self._view = QWebEngineView(self)
         self._page = LocalOnlyPage(self._view)
@@ -71,7 +77,8 @@ class MainWindow(QMainWindow):
         return selected or None
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self._restore_maintenance or QThreadPool.globalInstance().activeThreadCount() > 0:
+        backup_active = self._backup_tasks is not None and self._backup_tasks.active
+        if self._restore_maintenance or backup_active:
             QMessageBox.information(
                 self,
                 "Operazione in corso",

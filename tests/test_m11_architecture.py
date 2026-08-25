@@ -51,26 +51,40 @@ def test_finalize_restore_keeps_gui_thread_work_bounded() -> None:
 
 def test_backup_work_is_off_gui_thread_and_restore_enters_maintenance() -> None:
     bridge = (UI / "bridge.py").read_text(encoding="utf-8")
+    manager = (UI / "backup_task_manager.py").read_text(encoding="utf-8")
     worker = (UI / "background_task.py").read_text(encoding="utf-8")
 
-    assert "QThreadPool" in bridge
-    assert "BackgroundTask(" in bridge
-    assert '"RESTORE_MANAGED"' in bridge
-    assert '"RESTORE_EXTERNAL"' in bridge
-    assert "maintenance=True" in bridge
-    assert "if self._maintenance" in bridge
+    assert "BackupTaskManager" in bridge
+    assert "QThreadPool" not in bridge
+    assert "BackgroundTask(" not in bridge
+    assert "QThreadPool" in manager
+    assert "BackgroundTask(" in manager
+    assert '"RESTORE_MANAGED"' in manager
+    assert '"RESTORE_EXTERNAL"' in manager
+    assert "maintenance=True" in manager
     assert "class BackgroundTask(QRunnable)" in worker
+
+
+def test_qwebchannel_bridge_remains_transport_only() -> None:
+    bridge = (UI / "bridge.py").read_text(encoding="utf-8")
+
+    assert "sqlite3" not in bridge
+    assert "QFileDialog" not in bridge
+    assert "uuid4" not in bridge
+    assert "RestorePlan" not in bridge
+    assert "QThreadPool" not in bridge
+    assert "BackgroundTask" not in bridge
 
 
 def test_native_shell_owns_backup_file_selection() -> None:
     window = (UI / "window.py").read_text(encoding="utf-8")
-    bridge = (UI / "bridge.py").read_text(encoding="utf-8")
+    manager = (UI / "backup_task_manager.py").read_text(encoding="utf-8")
     frontend = (WEB / "backup.js").read_text(encoding="utf-8")
 
     assert "QFileDialog.getSaveFileName" in window
     assert "QFileDialog.getOpenFileName" in window
     assert "set_file_dialogs(" in window
-    assert "Path(selected)" in bridge
+    assert "Path(selected)" in manager
     assert "QFileDialog" not in frontend
     assert "file://" not in frontend
 

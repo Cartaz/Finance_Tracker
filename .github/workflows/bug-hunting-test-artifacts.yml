@@ -1,0 +1,48 @@
+name: Bug hunting test artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "bug-hunting-test/**"
+      - ".github/workflows/bug-hunting-test-artifacts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Generate large CSV corpus
+        run: python bug-hunting-test/generate_large_csv.py
+      - name: Verify generated corpus
+        run: |
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+
+          root = Path("bug-hunting-test/generated")
+          expected = {
+              "bug-hunting-test-reconciliation-10000-valid.csv": 10_000,
+              "bug-hunting-test-reconciliation-10001-too-many.csv": 10_001,
+          }
+          for name, wanted in expected.items():
+              path = root / name
+              with path.open(newline="", encoding="utf-8") as handle:
+                  rows = sum(1 for _ in csv.reader(handle)) - 1
+              assert rows == wanted, (name, rows, wanted)
+              print(name, rows, path.stat().st_size)
+          PY
+      - name: Upload bug hunting test CSVs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-hunting-test-csv-corpus
+          path: bug-hunting-test/generated/*.csv
+          retention-days: 30
+          if-no-files-found: error

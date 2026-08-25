@@ -1,0 +1,3 @@
+BUG HUNTING TEST ONLY
+This is deliberately not a SQLite database.
+Finance Tracker restore must reject this file before replacing the live database.

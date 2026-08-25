@@ -1,0 +1,2 @@
+date,transaction_date,amount,currency,description
+2026-08-01,2026-08-01,-15.00,EUR,Two candidate date columns

@@ -1,0 +1,2 @@
+date,amount,currency,description,external_id
+2026-08-01,-15.00,USD,Wrong currency for an EUR account,FX-WRONG-001

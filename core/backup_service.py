@@ -210,13 +210,13 @@ class BackupService:
         finally:
             temp.unlink(missing_ok=True)
 
-    @staticmethod
-    def _copy_sqlite_database(source: Path, destination: Path) -> None:
+    @classmethod
+    def _copy_sqlite_database(cls, source: Path, destination: Path) -> None:
         if not source.is_file():
             raise BackupError("source database does not exist")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)
-        source_conn = sqlite3.connect(source, autocommit=True)
+        source_conn = cls._connect_readonly(source)
         target_conn = sqlite3.connect(destination, autocommit=True)
         try:
             source_conn.backup(target_conn)
@@ -231,10 +231,7 @@ class BackupService:
         cls, path: Path, *, require_current_schema: bool = False
     ) -> int:
         schema_version = cls._read_schema_version(path)
-        try:
-            conn = sqlite3.connect(path, autocommit=True)
-        except sqlite3.Error as exc:
-            raise BackupError(f"cannot open backup database: {exc}") from exc
+        conn = cls._connect_readonly(path)
         try:
             integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
             if integrity != "ok":
@@ -252,12 +249,9 @@ class BackupService:
             )
         return schema_version
 
-    @staticmethod
-    def _read_schema_version(path: Path) -> int:
-        try:
-            conn = sqlite3.connect(path, autocommit=True)
-        except sqlite3.Error as exc:
-            raise BackupError(f"cannot open backup database: {exc}") from exc
+    @classmethod
+    def _read_schema_version(cls, path: Path) -> int:
+        conn = cls._connect_readonly(path)
         try:
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
@@ -280,6 +274,19 @@ class BackupService:
                 f"backup schema {schema_version} is newer than supported schema {SCHEMA_VERSION}"
             )
         return schema_version
+
+    @staticmethod
+    def _connect_readonly(path: Path) -> sqlite3.Connection:
+        if not path.is_file():
+            raise BackupError("backup file does not exist")
+        try:
+            return sqlite3.connect(
+                f"{path.resolve().as_uri()}?mode=ro",
+                uri=True,
+                autocommit=True,
+            )
+        except sqlite3.Error as exc:
+            raise BackupError(f"cannot open backup database read-only: {exc}") from exc
 
     @staticmethod
     def _remove_sidecars(path: Path) -> None:

@@ -122,7 +122,7 @@ def main() -> int:
         )
         backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
         bridge = Bridge(controller, backup_tasks)
-        window = MainWindow(bridge)
+        window = MainWindow(bridge, backup_tasks)
         window.show()
         return app.exec()
     except Exception:

@@ -49,6 +49,15 @@ class SettingsStore:
             settings.validate()
             return settings
 
+        if not isinstance(raw, dict):
+            log.warning(
+                "Invalid settings document in %s; expected a JSON object, using defaults",
+                self._path,
+            )
+            settings = Settings()
+            settings.validate()
+            return settings
+
         defaults = asdict(Settings())
         defaults.update({key: value for key, value in raw.items() if key in defaults})
         try:

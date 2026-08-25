@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl
 from PySide6.QtWidgets import QApplication
 
 from ui.window import LocalOnlyPage
@@ -46,6 +46,7 @@ def test_remote_navigation_stays_outside_embedded_webview(monkeypatch) -> None:
         assert page.acceptNavigationRequest(QUrl("file:///tmp/index.html"), None, True)
     finally:
         page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents()
 
 

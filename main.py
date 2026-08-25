@@ -17,6 +17,8 @@ from config.settings import SettingsStore
 from core.account_service import AccountService
 from core.app_controller import AppController
 from core.app_state_service import AppStateService
+from core.backup_controller import BackupController
+from core.backup_service import BackupService
 from core.book_service import BookService
 from core.budget_service import BudgetService
 from core.category_service import CategoryService
@@ -98,6 +100,7 @@ def main() -> int:
         loan_service = LoanService(database, account_service, ledger_service)
         forecast_service = ForecastService(scheduled_service, fx_service, loan_service)
         app_state_service = AppStateService(database, account_service)
+        backup_controller = BackupController(BackupService(database, BACKUP_DIR))
         app = QApplication(sys.argv)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
@@ -116,7 +119,7 @@ def main() -> int:
             forecast_service,
             loan_service,
         )
-        bridge = Bridge(controller)
+        bridge = Bridge(controller, backup_controller)
         window = MainWindow(bridge)
         window.show()
         return app.exec()

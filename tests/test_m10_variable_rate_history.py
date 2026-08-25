@@ -52,7 +52,7 @@ def test_variable_rate_cannot_rewrite_posted_installment_period(tmp_path) -> Non
             mode="NEW_DISBURSEMENT",
             principal_minor=120_000,
             funding_account_id=bank.id,
-            start_date="2026-01-01",
+            start_date="2026-01-02",
             rate_type="VARIABLE",
         )
         posted = service.post_next_payment(book_id=book.id, loan_id=loan.id)

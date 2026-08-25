@@ -63,8 +63,27 @@ def test_remote_subrequests_are_explicitly_blocked() -> None:
 
     assert "class RemoteRequestBlocker" in window
     assert 'frozenset({"http", "https", "ftp", "ws", "wss"})' in window
+    assert "ResourceTypeMainFrame" in window
+    assert "not is_main_frame" in window
     assert "info.block(True)" in window
     assert "setUrlRequestInterceptor" in window
+
+
+def test_frontend_contains_no_direct_remote_network_or_dynamic_code_api() -> None:
+    frontend = "\n".join(
+        (ROOT / "ui" / "web" / name).read_text(encoding="utf-8")
+        for name in ("app.js", "backend-channel.js", "backup.js")
+    )
+
+    for forbidden in (
+        "fetch(",
+        "XMLHttpRequest(",
+        "new WebSocket(",
+        "EventSource(",
+        "eval(",
+        "new Function(",
+    ):
+        assert forbidden not in frontend
 
 
 def test_backup_ui_discloses_destructive_restore_and_maintenance() -> None:

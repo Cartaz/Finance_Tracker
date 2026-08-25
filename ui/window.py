@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QThreadPool, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QFileDialog, QMainWindow
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
 
 from config.constants import BACKUP_DIR
 from ui.bridge import Bridge
@@ -64,3 +64,14 @@ class MainWindow(QMainWindow):
             "Finance Tracker backup (*.sqlite3);;SQLite database (*.db *.sqlite *.sqlite3)",
         )
         return selected or None
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if QThreadPool.globalInstance().activeThreadCount() > 0:
+            QMessageBox.information(
+                self,
+                "Operazione in corso",
+                "Attendi il completamento del backup o del ripristino prima di chiudere Finance Tracker.",
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)

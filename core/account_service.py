@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import date, time
 
@@ -39,6 +40,7 @@ class AccountService:
         tracking_start_date: str | None = None,
         tracking_start_time: str | None = None,
         placeholder: bool = False,
+        connection: sqlite3.Connection | None = None,
     ) -> Account:
         account_type = account_type.upper()
         clean_name = name.strip()
@@ -70,27 +72,31 @@ class AccountService:
             if parent.type != account_type:
                 raise AccountHierarchyError("parent and child account types must match")
 
-        with self._database.transaction() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO accounts(
-                    book_id, parent_id, type, name, currency_code,
-                    tracking_start_date, tracking_start_time, placeholder,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                """,
-                (
-                    book_id,
-                    parent_id,
-                    account_type,
-                    clean_name,
-                    currency_code,
-                    tracking_start_date,
-                    tracking_start_time,
-                    int(placeholder),
-                ),
+        if connection is None:
+            with self._database.transaction() as conn:
+                account_id = self._insert_account(
+                    conn,
+                    book_id=book_id,
+                    parent_id=parent_id,
+                    account_type=account_type,
+                    name=clean_name,
+                    currency_code=currency_code,
+                    tracking_start_date=tracking_start_date,
+                    tracking_start_time=tracking_start_time,
+                    placeholder=placeholder,
+                )
+        else:
+            account_id = self._insert_account(
+                connection,
+                book_id=book_id,
+                parent_id=parent_id,
+                account_type=account_type,
+                name=clean_name,
+                currency_code=currency_code,
+                tracking_start_date=tracking_start_date,
+                tracking_start_time=tracking_start_time,
+                placeholder=placeholder,
             )
-            account_id = int(cursor.lastrowid)
         return self.get_account(book_id, account_id)
 
     def get_account(self, book_id: int, account_id: int) -> Account:
@@ -187,6 +193,40 @@ class AccountService:
         ).fetchone()
         if row is None:
             raise ValidationError(f"book does not exist or is archived: {book_id}")
+
+    @staticmethod
+    def _insert_account(
+        connection: sqlite3.Connection,
+        *,
+        book_id: int,
+        parent_id: int | None,
+        account_type: str,
+        name: str,
+        currency_code: str | None,
+        tracking_start_date: str | None,
+        tracking_start_time: str | None,
+        placeholder: bool,
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO accounts(
+                book_id, parent_id, type, name, currency_code,
+                tracking_start_date, tracking_start_time, placeholder,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                book_id,
+                parent_id,
+                account_type,
+                name,
+                currency_code,
+                tracking_start_date,
+                tracking_start_time,
+                int(placeholder),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     @staticmethod
     def _validate_date(value: str) -> None:

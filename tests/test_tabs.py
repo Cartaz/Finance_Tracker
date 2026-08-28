@@ -10,16 +10,20 @@ def test_shared_tabs_are_accessible_and_presentation_only() -> None:
     styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
     tabs_js = (_WEB_DIR / "tabs.js").read_text(encoding="utf-8")
 
+    assert 'data-tab-group="transaction-create"' in index
     assert 'data-tab-group="account-create"' in index
     assert 'data-tab-group="account-overview"' in index
     assert 'data-tab-group="tools"' in index
-    assert index.count('role="tablist"') == 3
-    assert index.count('role="tab"') == 7
-    assert index.count('role="tabpanel"') == 7
+    assert index.count('role="tablist"') == 4
+    assert index.count('role="tab"') == 10
+    assert index.count('role="tabpanel"') == 10
     assert '<script src="tabs.js"></script>' in index
     assert 'account-tabs.js' not in index
 
-    # Account/category behavior remains in separate forms; tabs only select presentation.
+    # Domain forms remain separate; tabs only select presentation.
+    assert 'id="expense-form" class="form-card embedded-form"' in index
+    assert 'id="income-form" class="form-card embedded-form"' in index
+    assert 'id="transfer-form" class="form-card embedded-form"' in index
     assert 'id="account-form" class="form-card embedded-form"' in index
     assert 'id="category-form" class="form-card embedded-form"' in index
 
@@ -34,6 +38,21 @@ def test_shared_tabs_are_accessible_and_presentation_only() -> None:
     assert 'ArrowLeft: "previous"' in tabs_js
     assert 'Home: "first"' in tabs_js
     assert 'End: "last"' in tabs_js
+
+
+def test_transaction_workspace_groups_manual_posting_workflows() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="transaction-create-heading">Nuova transazione</h3>' in index
+    assert 'id="transaction-expense-tab"' in index
+    assert 'id="transaction-income-tab"' in index
+    assert 'id="transaction-transfer-tab"' in index
+    assert '>Spesa</button>' in index
+    assert '>Entrata</button>' in index
+    assert '>Giroconto</button>' in index
+    assert 'id="transaction-expense-panel" class="tab-panel"' in index
+    assert 'id="transaction-income-panel" class="tab-panel hidden"' in index
+    assert 'id="transaction-transfer-panel" class="tab-panel hidden"' in index
 
 
 def test_tools_workspace_groups_support_features_without_leaking_into_accounts() -> None:

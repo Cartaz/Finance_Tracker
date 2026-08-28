@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import pytest
 
+from config.settings import Settings
 from core.account_setup_service import AccountSetupService
+from core.app_controller import AppController
 from core.app_state_service import AppStateService
+from core.book_service import BookService
 from core.category_service import CategoryService
+from core.errors import ValidationError
+from core.fx_service import FxService
+from core.payee_service import PayeeService
+from core.reporting_service import ReportingService
+from ui.bridge import Bridge
 
 
 def _service(ledger_env, ledger=None) -> AccountSetupService:
@@ -14,6 +22,20 @@ def _service(ledger_env, ledger=None) -> AccountSetupService:
         ledger_env.accounts,
         categories,
         ledger or ledger_env.ledger,
+    )
+
+
+def _controller(ledger_env) -> AppController:
+    fx = FxService(ledger_env.db)
+    return AppController(
+        ledger_env.db,
+        Settings(),
+        ledger_env.accounts,
+        ledger_env.ledger,
+        BookService(ledger_env.db),
+        PayeeService(ledger_env.db),
+        fx,
+        ReportingService(ledger_env.db, fx, ledger_env.accounts),
     )
 
 
@@ -115,7 +137,9 @@ def test_opening_balance_failure_rolls_back_account_and_technical_counterpart(
 def test_placeholder_balance_account_rejects_opening_balance(ledger_env) -> None:
     service = _service(ledger_env)
 
-    with pytest.raises(Exception, match="placeholder account cannot have an opening balance"):
+    with pytest.raises(
+        ValidationError, match="placeholder account cannot have an opening balance"
+    ):
         service.create_balance_account(
             book_id=ledger_env.book_id,
             account_type="ASSET",
@@ -125,3 +149,63 @@ def test_placeholder_balance_account_rejects_opening_balance(ledger_env) -> None
             placeholder=True,
             opening_balance_minor=1,
         )
+
+
+def test_bridge_exposes_opening_balance_and_parent_category_without_equity(ledger_env) -> None:
+    bridge = Bridge(_controller(ledger_env))
+
+    created_bank = bridge.createAccount(
+        {
+            "type": "ASSET",
+            "name": "Conto corrente",
+            "currency": "EUR",
+            "trackingStartDate": "2026-08-28",
+            "openingBalance": "2500,00",
+            "openingBalanceDirection": "POSITIVE",
+            "placeholder": False,
+        }
+    )
+    assert created_bank["ok"] is True
+    bank = next(
+        item
+        for item in created_bank["data"]["state"]["accounts"]
+        if item["name"] == "Conto corrente"
+    )
+    assert bank["balanceMinor"] == "250000"
+    assert all(
+        item["type"] != "EQUITY"
+        for item in created_bank["data"]["state"]["accounts"]
+    )
+
+    parent = bridge.createAccount(
+        {
+            "type": "EXPENSE",
+            "name": "Alimentari",
+            "parentId": "",
+            "placeholder": True,
+        }
+    )
+    assert parent["ok"] is True
+    parent_id = parent["data"]["id"]
+
+    child = bridge.createAccount(
+        {
+            "type": "EXPENSE",
+            "name": "Supermercato",
+            "parentId": str(parent_id),
+            "placeholder": False,
+        }
+    )
+    assert child["ok"] is True
+    child_payload = next(
+        item
+        for item in child["data"]["state"]["accounts"]
+        if item["name"] == "Supermercato"
+    )
+    assert child_payload["parentId"] == parent_id
+
+    direct_equity = bridge.createAccount(
+        {"type": "EQUITY", "name": "Non deve essere creabile"}
+    )
+    assert direct_equity["ok"] is False
+    assert direct_equity["error"]["code"] == "ValidationError"

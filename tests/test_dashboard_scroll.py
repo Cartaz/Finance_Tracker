@@ -24,18 +24,24 @@ def test_dashboard_lists_are_bounded_to_five_visible_rows() -> None:
     )
 
 
-def test_primary_scroll_regions_use_trackless_pill_scrollbars() -> None:
+def test_primary_scroll_regions_use_qt_webengine_trackless_pill_scrollbars() -> None:
     styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
 
-    regions = ".content,.setup,#cash-flow,#category-report,#merchant-report,#recent"
-    assert f"{regions}{{scrollbar-width:thin;" in styles
-    assert "scrollbar-color:rgba(135,135,135,.42) transparent" in styles
-    assert "::-webkit-scrollbar-track" in styles
-    assert "background:transparent" in styles
-    assert "::-webkit-scrollbar-thumb" in styles
+    assert "scrollbar-width:" not in styles
+    assert "scrollbar-color:" not in styles
+    assert "::-webkit-scrollbar{width:6px;height:6px;background:transparent}" in styles
+    assert "::-webkit-scrollbar-track-piece" in styles
+    assert "::-webkit-scrollbar-corner" in styles
+    assert "background:rgba(135,135,135,.42)" in styles
     assert "background-clip:content-box" in styles
-    assert "border:2px solid transparent" in styles
+    assert "border:1px solid transparent" in styles
     assert "border-radius:999px" in styles
-    assert "min-height:28px" in styles
-    assert "::-webkit-scrollbar-button" in styles
-    assert "display:none;width:0;height:0" in styles
+    assert "min-height:30px" in styles
+    assert "::-webkit-scrollbar-button:single-button" in styles
+    assert "::-webkit-scrollbar-button:vertical:decrement" in styles
+    assert "::-webkit-scrollbar-button:vertical:increment" in styles
+    assert (
+        "display:none!important;width:0!important;height:0!important;"
+        "background:transparent!important"
+        in styles
+    )

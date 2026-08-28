@@ -532,6 +532,50 @@ class AppController:
                 )
         return {"id": transaction.id, "state": self.snapshot()}
 
+    def create_income(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        destination_id = self._positive_id(payload.get("destinationAccountId"))
+        income_id = self._positive_id(payload.get("incomeAccountId"))
+        destination = self._accounts.get_account(book.id, destination_id)
+        if destination.type not in {"ASSET", "LIABILITY"} or destination.currency_code is None:
+            raise ValidationError("destination must be a balance account")
+        amount = parse_money_magnitude(
+            payload.get("amount", ""), self._database.currency(destination.currency_code)
+        )
+        transaction = self._ledger.create_income(
+            book_id=book.id,
+            destination_account_id=destination_id,
+            income_account_id=income_id,
+            amount_minor=amount,
+            currency_code=destination.currency_code,
+            transaction_date=str(payload.get("date", "")),
+            transaction_time=str(payload["time"]) if payload.get("time") else None,
+            description=str(payload.get("description", "")).strip(),
+        )
+        return {"id": transaction.id, "state": self.snapshot()}
+
+    def create_transfer(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        source_id = self._positive_id(payload.get("sourceAccountId"))
+        destination_id = self._positive_id(payload.get("destinationAccountId"))
+        source = self._accounts.get_account(book.id, source_id)
+        if source.type not in {"ASSET", "LIABILITY"} or source.currency_code is None:
+            raise ValidationError("source must be a balance account")
+        amount = parse_money_magnitude(
+            payload.get("amount", ""), self._database.currency(source.currency_code)
+        )
+        transaction = self._ledger.create_transfer(
+            book_id=book.id,
+            source_account_id=source_id,
+            destination_account_id=destination_id,
+            amount_minor=amount,
+            currency_code=source.currency_code,
+            transaction_date=str(payload.get("date", "")),
+            transaction_time=str(payload["time"]) if payload.get("time") else None,
+            description=str(payload.get("description", "")).strip(),
+        )
+        return {"id": transaction.id, "state": self.snapshot()}
+
     def suggest_payees(self, query: str) -> list[dict[str, object]]:
         book = self._require_book()
         return [

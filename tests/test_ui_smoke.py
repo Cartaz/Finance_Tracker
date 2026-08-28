@@ -144,8 +144,8 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
         in styles
     )
     assert (
-        "#transactions>.split{grid-template-columns:minmax(500px,2fr) "
-        "minmax(280px,1fr)}"
+        "#transactions>.split{grid-template-columns:minmax(0,2fr) "
+        "minmax(0,3fr)}"
         in styles
     )
     assert (

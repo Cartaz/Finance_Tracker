@@ -90,7 +90,8 @@ def test_backup_ui_discloses_destructive_restore_and_maintenance() -> None:
     index = (ROOT / "ui" / "web" / "index.html").read_text(encoding="utf-8")
     backup = (ROOT / "ui" / "web" / "backup.js").read_text(encoding="utf-8")
 
-    assert 'data-view="backup"' in index
+    assert 'data-view="tools"' in index
+    assert 'id="tools-backup-panel"' in index
     assert 'id="backup-create"' in index
     assert 'id="backup-export"' in index
     assert 'id="backup-restore-file"' in index

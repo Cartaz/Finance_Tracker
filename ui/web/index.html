@@ -9,7 +9,7 @@
 <body>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="maintenance-banner" class="hidden" role="status" aria-live="assertive">Ripristino database in corso…</div>
-<section id="setup" class="setup hidden">
+<section id="setup" class="setup hidden" data-scroll-indicator>
   <form id="setup-form" class="card form-card">
     <p class="eyebrow">PRIMO AVVIO</p>
     <h1>Configura il tuo book</h1>
@@ -34,7 +34,7 @@
   </nav>
   <div id="bridge-status" class="status">Backend…</div>
 </aside>
-<main class="content">
+<main class="content" data-scroll-indicator>
 <header>
   <div><p class="eyebrow" id="book-name">PERSONALE</p><h1 id="view-title">Dashboard</h1></div>
   <button id="refresh">Aggiorna</button>
@@ -50,10 +50,10 @@
   <div id="fx-warning" class="card warning hidden"></div>
   <div id="metrics" class="metrics"></div>
   <div class="report-grid">
-    <div class="card"><h3>Cash flow</h3><div id="cash-flow"></div></div>
-    <div class="card"><h3>Spese per categoria</h3><div id="category-report"></div></div>
-    <div class="card"><h3>Merchant</h3><div id="merchant-report"></div></div>
-    <div class="card"><h3>Movimenti recenti</h3><div id="recent"></div></div>
+    <div class="card"><h3>Cash flow</h3><div id="cash-flow" data-scroll-indicator tabindex="0" role="region" aria-label="Cash flow"></div></div>
+    <div class="card"><h3>Spese per categoria</h3><div id="category-report" data-scroll-indicator tabindex="0" role="region" aria-label="Spese per categoria"></div></div>
+    <div class="card"><h3>Merchant</h3><div id="merchant-report" data-scroll-indicator tabindex="0" role="region" aria-label="Merchant"></div></div>
+    <div class="card"><h3>Movimenti recenti</h3><div id="recent" data-scroll-indicator tabindex="0" role="region" aria-label="Movimenti recenti"></div></div>
   </div>
 </section>
 
@@ -331,6 +331,7 @@
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script src="backend-channel.js"></script>
 <script src="app.js"></script>
+<script src="scroll-indicators.js"></script>
 <script src="tabs.js"></script>
 <script src="manual-transactions.js"></script>
 <script src="backup.js"></script>

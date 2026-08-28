@@ -14,9 +14,9 @@ def test_user_money_inputs_use_canonical_magnitude_parser() -> None:
 
     assert "def parse_money_magnitude" in money
     assert "from core.money import parse_money_magnitude" in controller
-    # expense, budget, scheduled amount, opening balance, new-loan principal,
-    # and custom loan payment
-    assert controller.count("parse_money_magnitude(") == 6
+    # expense, income, transfer, budget, scheduled amount, opening balance,
+    # new-loan principal, and custom loan payment
+    assert controller.count("parse_money_magnitude(") == 8
     assert "from core.money import parse_money" in reconciliation
     assert "parse_money(" in reconciliation
 

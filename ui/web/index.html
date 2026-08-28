@@ -79,47 +79,59 @@
 <section id="accounts" class="view hidden">
   <div class="split">
     <div class="stack">
-      <form id="account-form" class="card form-card">
-        <h3>Nuovo conto / debito</h3>
-        <div class="field">
-          <div class="field-heading">
-            <label for="account-type">Tipo</label>
-            <details class="field-help">
-              <summary aria-label="Spiega i tipi di conto">?</summary>
-              <div class="field-help-panel" role="note">
-                <p><b>Conto / disponibilità</b> — denaro o credito che possiedi, per esempio conto corrente, contanti o deposito.</p>
-                <p><b>Debito / passività</b> — somme che devi, per esempio saldo carta di credito, prestito o mutuo.</p>
-                <p>Il saldo iniziale fotografa la situazione reale nel momento in cui inizi a usare Finance Tracker.</p>
-              </div>
-            </details>
-          </div>
-          <select name="type" id="account-type">
-            <option value="ASSET">Conto / disponibilità</option>
-            <option value="LIABILITY">Debito / passività</option>
-          </select>
+      <section class="card tabbed-card" aria-labelledby="account-create-heading">
+        <h3 id="account-create-heading">Nuovo elemento</h3>
+        <div class="section-tabs" role="tablist" aria-label="Tipo di elemento da creare" data-tab-group="account-create">
+          <button type="button" class="section-tab active" role="tab" id="account-create-account-tab" aria-selected="true" aria-controls="account-create-account-panel" data-tab-target="account-create-account-panel" tabindex="0">Conti e debiti</button>
+          <button type="button" class="section-tab" role="tab" id="account-create-category-tab" aria-selected="false" aria-controls="account-create-category-panel" data-tab-target="account-create-category-panel" tabindex="-1">Categorie</button>
         </div>
-        <label>Nome<input name="name" required placeholder="Conto corrente"></label>
-        <div id="balance-fields" class="form-card nested-fields">
-          <label>Valuta<select name="currency" required></select></label>
-          <label>Inizio monitoraggio<input name="trackingStartDate" type="date" required></label>
-          <label>Ora opzionale<input name="trackingStartTime" type="time"></label>
-          <label>Saldo iniziale opzionale<input name="openingBalance" inputmode="decimal" placeholder="2500,00"></label>
-          <label>Tipo di saldo<select name="openingBalanceDirection" id="opening-balance-direction"></select></label>
-          <p class="empty form-note">Inserisci solo il valore assoluto. Il tipo di saldo stabilisce se il conto parte sopra o sotto zero. Lascia vuoto per partire da 0.</p>
-        </div>
-        <label class="check"><input name="placeholder" type="checkbox"> Conto contenitore (non registrabile)</label>
-        <button type="submit">Crea conto</button>
-      </form>
 
-      <form id="category-form" class="card form-card">
-        <h3>Nuova categoria</h3>
-        <p class="empty form-note">Le categorie classificano entrate e spese. Puoi inserirle sotto una categoria esistente per creare una gerarchia.</p>
-        <label>Tipo<select name="type" id="category-type"><option value="EXPENSE">Categoria di spesa</option><option value="INCOME">Categoria di entrata</option></select></label>
-        <label>Nome<input name="name" required placeholder="Alimentari"></label>
-        <label>Categoria padre<select name="parentId" id="category-parent"><option value="">Nessuna (categoria principale)</option></select></label>
-        <label class="check"><input name="placeholder" type="checkbox"> Categoria contenitore (solo raggruppamento)</label>
-        <button type="submit">Crea categoria</button>
-      </form>
+        <div id="account-create-account-panel" class="tab-panel" role="tabpanel" aria-labelledby="account-create-account-tab">
+          <form id="account-form" class="form-card embedded-form">
+            <h3>Nuovo conto / debito</h3>
+            <div class="field">
+              <div class="field-heading">
+                <label for="account-type">Tipo</label>
+                <details class="field-help">
+                  <summary aria-label="Spiega i tipi di conto">?</summary>
+                  <div class="field-help-panel" role="note">
+                    <p><b>Conto / disponibilità</b> — denaro o credito che possiedi, per esempio conto corrente, contanti o deposito.</p>
+                    <p><b>Debito / passività</b> — somme che devi, per esempio saldo carta di credito, prestito o mutuo.</p>
+                    <p>Il saldo iniziale fotografa la situazione reale nel momento in cui inizi a usare Finance Tracker.</p>
+                  </div>
+                </details>
+              </div>
+              <select name="type" id="account-type">
+                <option value="ASSET">Conto / disponibilità</option>
+                <option value="LIABILITY">Debito / passività</option>
+              </select>
+            </div>
+            <label>Nome<input name="name" required placeholder="Conto corrente"></label>
+            <div id="balance-fields" class="form-card nested-fields">
+              <label>Valuta<select name="currency" required></select></label>
+              <label>Inizio monitoraggio<input name="trackingStartDate" type="date" required></label>
+              <label>Ora opzionale<input name="trackingStartTime" type="time"></label>
+              <label>Saldo iniziale opzionale<input name="openingBalance" inputmode="decimal" placeholder="2500,00"></label>
+              <label>Tipo di saldo<select name="openingBalanceDirection" id="opening-balance-direction"></select></label>
+              <p class="empty form-note">Inserisci solo il valore assoluto. Il tipo di saldo stabilisce se il conto parte sopra o sotto zero. Lascia vuoto per partire da 0.</p>
+            </div>
+            <label class="check"><input name="placeholder" type="checkbox"> Conto contenitore (non registrabile)</label>
+            <button type="submit">Crea conto</button>
+          </form>
+        </div>
+
+        <div id="account-create-category-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="account-create-category-tab">
+          <form id="category-form" class="form-card embedded-form">
+            <h3>Nuova categoria</h3>
+            <p class="empty form-note">Le categorie classificano entrate e spese. Puoi inserirle sotto una categoria esistente per creare una gerarchia.</p>
+            <label>Tipo<select name="type" id="category-type"><option value="EXPENSE">Categoria di spesa</option><option value="INCOME">Categoria di entrata</option></select></label>
+            <label>Nome<input name="name" required placeholder="Alimentari"></label>
+            <label>Categoria padre<select name="parentId" id="category-parent"><option value="">Nessuna (categoria principale)</option></select></label>
+            <label class="check"><input name="placeholder" type="checkbox"> Categoria contenitore (solo raggruppamento)</label>
+            <button type="submit">Crea categoria</button>
+          </form>
+        </div>
+      </section>
 
       <form id="fx-form" class="card form-card">
         <h3>Tasso FX storico</h3>
@@ -132,8 +144,15 @@
     </div>
 
     <div class="stack">
-      <div class="card"><h3>Conti e debiti</h3><div id="accounts-list"></div></div>
-      <div class="card"><h3>Categorie</h3><div id="categories-list"></div></div>
+      <section class="card tabbed-card" aria-labelledby="account-overview-heading">
+        <h3 id="account-overview-heading">Struttura finanziaria</h3>
+        <div class="section-tabs" role="tablist" aria-label="Riepilogo conti e categorie" data-tab-group="account-overview">
+          <button type="button" class="section-tab active" role="tab" id="account-overview-account-tab" aria-selected="true" aria-controls="account-overview-account-panel" data-tab-target="account-overview-account-panel" tabindex="0">Conti e debiti</button>
+          <button type="button" class="section-tab" role="tab" id="account-overview-category-tab" aria-selected="false" aria-controls="account-overview-category-panel" data-tab-target="account-overview-category-panel" tabindex="-1">Categorie</button>
+        </div>
+        <div id="account-overview-account-panel" class="tab-panel" role="tabpanel" aria-labelledby="account-overview-account-tab"><div id="accounts-list"></div></div>
+        <div id="account-overview-category-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="account-overview-category-tab"><div id="categories-list"></div></div>
+      </section>
       <div class="card">
         <h3>Storico conto</h3>
         <div class="history-controls"><select id="history-account"></select><button id="load-history">Carica</button></div>
@@ -164,7 +183,7 @@
     <label>Raggruppa<select id="forecast-granularity"><option value="MONTH">Mese</option><option value="DAY">Giorno</option><option value="YEAR">Anno</option></select></label>
     <button id="apply-forecast" type="button">Calcola</button>
   </div>
-  <div class="card"><p class="empty">Proiezione deterministica delle transazioni programmate attive e delle rate prestito contrattualmente note. I trasferimenti e la quota capitale delle rate sono neutri sul flusso netto del book; gli interessi sono il costo previsto. Il dettaglio della rata mostra comunque il pagamento totale. Per le valute estere non viene previsto il cambio futuro: ogni scadenza usa l’ultimo tasso FX noto disponibile alla sua data.</p></div>
+  <div class="card"><p class="empty">Proiezione deterministica delle transazioni programmate attive e delle rate prestito contrattualmente note. I trasferimenti e la quota capitale delle rate sono neutri sul flusso netto del book; gli interessi sono il costo previsto. Il dettaglio della rata mostra comunque il pagamento totale. Per le valute estere non viene previsto il cambio futuro: ogni scadenza usa l'ultimo tasso FX noto disponibile alla sua data.</p></div>
   <div id="forecast-warning" class="card warning hidden"></div>
   <div id="forecast-metrics" class="metrics"></div>
   <div class="report-grid"><div class="card"><h3>Flussi previsti</h3><div id="forecast-buckets"></div></div><div class="card"><h3>Occorrenze previste</h3><div id="forecast-occurrences"></div></div></div>
@@ -247,6 +266,7 @@
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script src="backend-channel.js"></script>
 <script src="app.js"></script>
+<script src="account-tabs.js"></script>
 <script src="manual-transactions.js"></script>
 <script src="backup.js"></script>
 </body>

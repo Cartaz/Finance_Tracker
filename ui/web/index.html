@@ -59,18 +59,56 @@
 
 <section id="transactions" class="view hidden">
   <div class="split">
-    <form id="expense-form" class="card form-card">
-      <h3>Nuova spesa</h3>
-      <label>Conto<select name="sourceAccountId" id="expense-account" required></select></label>
-      <label>Categoria<select name="categoryAccountId" id="expense-category" required></select></label>
-      <label>Merchant<div class="autocomplete"><input id="payee-input" autocomplete="off" placeholder="Inizia a scrivere…"><div id="payee-results" class="suggestions hidden"></div></div></label>
-      <input type="hidden" name="payeeId" id="payee-id">
-      <label>Importo<input name="amount" required inputmode="decimal" placeholder="12,30"></label>
-      <label>Data<input name="date" type="date" required></label>
-      <label>Ora opzionale<input name="time" type="time"></label>
-      <label>Descrizione<input name="description"></label>
-      <button type="submit">Registra spesa</button>
-    </form>
+    <section class="card tabbed-card" aria-labelledby="transaction-create-heading">
+      <h3 id="transaction-create-heading">Nuova transazione</h3>
+      <div class="section-tabs" role="tablist" aria-label="Tipo di transazione manuale" data-tab-group="transaction-create">
+        <button type="button" class="section-tab active" role="tab" id="transaction-expense-tab" aria-selected="true" aria-controls="transaction-expense-panel" data-tab-target="transaction-expense-panel" tabindex="0">Spesa</button>
+        <button type="button" class="section-tab" role="tab" id="transaction-income-tab" aria-selected="false" aria-controls="transaction-income-panel" data-tab-target="transaction-income-panel" tabindex="-1">Entrata</button>
+        <button type="button" class="section-tab" role="tab" id="transaction-transfer-tab" aria-selected="false" aria-controls="transaction-transfer-panel" data-tab-target="transaction-transfer-panel" tabindex="-1">Giroconto</button>
+      </div>
+
+      <div id="transaction-expense-panel" class="tab-panel" role="tabpanel" aria-labelledby="transaction-expense-tab">
+        <form id="expense-form" class="form-card embedded-form">
+          <h3>Nuova spesa</h3>
+          <label>Conto<select name="sourceAccountId" id="expense-account" required></select></label>
+          <label>Categoria<select name="categoryAccountId" id="expense-category" required></select></label>
+          <label>Merchant<div class="autocomplete"><input id="payee-input" autocomplete="off" placeholder="Inizia a scrivere…"><div id="payee-results" class="suggestions hidden"></div></div></label>
+          <input type="hidden" name="payeeId" id="payee-id">
+          <label>Importo<input name="amount" required inputmode="decimal" placeholder="12,30"></label>
+          <label>Data<input name="date" type="date" required></label>
+          <label>Ora opzionale<input name="time" type="time"></label>
+          <label>Descrizione<input name="description"></label>
+          <button type="submit">Registra spesa</button>
+        </form>
+      </div>
+
+      <div id="transaction-income-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="transaction-income-tab">
+        <form id="income-form" class="form-card embedded-form">
+          <h3>Nuova entrata</h3>
+          <label>Conto di accredito<select name="destinationAccountId" id="income-account" required></select></label>
+          <label>Categoria di entrata<select name="incomeAccountId" id="income-category" required></select></label>
+          <label>Importo<input name="amount" required inputmode="decimal" placeholder="1800,00"></label>
+          <label>Data<input name="date" type="date" required></label>
+          <label>Ora opzionale<input name="time" type="time"></label>
+          <label>Descrizione<input name="description" placeholder="Stipendio agosto"></label>
+          <button id="income-submit" type="submit">Registra entrata</button>
+        </form>
+      </div>
+
+      <div id="transaction-transfer-panel" class="tab-panel hidden" role="tabpanel" aria-labelledby="transaction-transfer-tab">
+        <form id="transfer-form" class="form-card embedded-form">
+          <h3>Nuovo giroconto</h3>
+          <p class="empty form-note">Sposta denaro tra due conti della stessa valuta senza creare un'entrata o una spesa.</p>
+          <label>Da<select name="sourceAccountId" id="transfer-source" required></select></label>
+          <label>A<select name="destinationAccountId" id="transfer-destination" required></select></label>
+          <label>Importo<input name="amount" required inputmode="decimal" placeholder="100,00"></label>
+          <label>Data<input name="date" type="date" required></label>
+          <label>Ora opzionale<input name="time" type="time"></label>
+          <label>Descrizione<input name="description" placeholder="Da conto corrente a contanti"></label>
+          <button id="transfer-submit" type="submit">Registra giroconto</button>
+        </form>
+      </div>
+    </section>
     <div class="card"><h3>Transazioni</h3><div id="transactions-list"></div></div>
   </div>
 </section>

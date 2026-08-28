@@ -125,3 +125,33 @@ def test_forecast_ui_is_backend_driven_and_explicit_about_assumptions() -> None:
     assert "ultimo tasso FX noto" in index
     assert "Math.random(" not in app_js
     assert "parseFloat(" not in app_js
+
+
+def test_desktop_shell_bounds_scroll_and_long_text() -> None:
+    styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "html,body{height:100%;overflow:hidden}" in styles
+    assert ".layout{height:100vh;min-height:0;overflow:hidden;" in styles
+    assert ".sidebar{min-height:0;overflow:hidden;" in styles
+    assert (
+        ".content{min-width:0;min-height:0;padding:38px;overflow:auto;"
+        "overscroll-behavior:contain}"
+        in styles
+    )
+    assert (
+        "#recent .row,#transactions-list .row{grid-template-columns:120px "
+        "minmax(0,1fr) auto}"
+        in styles
+    )
+    assert (
+        "#accounts-list .row{grid-template-columns:minmax(0,1fr) "
+        "max-content max-content}"
+        in styles
+    )
+    assert ".row>*{min-width:0}" in styles
+    assert (
+        ".row b,.row span,.row small{overflow:hidden;text-overflow:ellipsis;"
+        "white-space:nowrap}"
+        in styles
+    )
+    assert ".report-row>*{min-width:0}" in styles

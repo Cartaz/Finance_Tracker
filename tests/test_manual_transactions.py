@@ -118,7 +118,7 @@ def test_manual_transfer_rejects_currency_mismatch_without_mutation(ledger_env) 
     assert ledger_env.accounts.native_balance(ledger_env.book_id, usd.id) == 0
 
 
-def test_manual_transaction_ui_is_explicit_and_backend_capability_driven() -> None:
+def test_manual_transaction_ui_is_static_and_backend_capability_driven() -> None:
     index = (ROOT / "ui" / "web" / "index.html").read_text(encoding="utf-8")
     frontend = (ROOT / "ui" / "web" / "manual-transactions.js").read_text(
         encoding="utf-8"
@@ -126,13 +126,17 @@ def test_manual_transaction_ui_is_explicit_and_backend_capability_driven() -> No
     bridge = (ROOT / "ui" / "bridge.py").read_text(encoding="utf-8")
 
     assert '<script src="manual-transactions.js"></script>' in index
-    assert "Nuova entrata" in frontend
-    assert "Nuovo giroconto" in frontend
+    assert 'id="income-form" class="form-card embedded-form"' in index
+    assert 'id="transfer-form" class="form-card embedded-form"' in index
+    assert "Nuova entrata" in index
+    assert "Nuovo giroconto" in index
     assert 'call("createIncome", data)' in frontend
     assert 'call("createTransfer", data)' in frontend
     assert "source.postingCapabilities?.[kind]" in frontend
     assert 'eligibleCounters(accountId, "INCOME")' in frontend
     assert 'eligibleCounters(sourceId, "TRANSFER")' in frontend
+    assert "document.createElement(" not in frontend
+    assert "replaceChild(" not in frontend
     assert ".currency ===" not in frontend
     assert "def createIncome" in bridge
     assert "def createTransfer" in bridge

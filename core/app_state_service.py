@@ -22,6 +22,7 @@ class AppStateService:
         book_currency: str,
     ) -> dict[str, object]:
         accounts = self._accounts.list_accounts(book_id)
+        visible_accounts = [account for account in accounts if account.type != "EQUITY"]
         transactions = self._database.connection.execute(
             """
             SELECT t.id, t.kind, t.transaction_date, t.transaction_time, t.currency_code,
@@ -35,7 +36,9 @@ class AppStateService:
         ).fetchall()
         return {
             "book": {"id": book_id, "name": book_name, "currency": book_currency},
-            "accounts": [self._account_payload(book_id, item, accounts) for item in accounts],
+            "accounts": [
+                self._account_payload(book_id, item, accounts) for item in visible_accounts
+            ],
             "transactions": [dict(row) for row in transactions],
         }
 
@@ -75,6 +78,7 @@ class AppStateService:
                 ]
         return {
             "id": account.id,
+            "parentId": account.parent_id,
             "name": account.name,
             "type": account.type,
             "currency": account.currency_code,

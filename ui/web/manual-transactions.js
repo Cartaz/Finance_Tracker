@@ -94,45 +94,10 @@
     renderOptions();
   }
 
-  function installForms() {
-    const expenseForm = $("expense-form");
-    const split = $("transactions")?.querySelector(":scope > .split");
-    if (!expenseForm || !split || $("manual-transaction-forms")) return;
-
-    const stack = document.createElement("div");
-    stack.id = "manual-transaction-forms";
-    stack.className = "stack";
-    split.replaceChild(stack, expenseForm);
-    stack.appendChild(expenseForm);
-
-    const incomeForm = document.createElement("form");
-    incomeForm.id = "income-form";
-    incomeForm.className = "card form-card";
-    incomeForm.innerHTML = `
-      <h3>Nuova entrata</h3>
-      <label>Conto di accredito<select name="destinationAccountId" id="income-account" required></select></label>
-      <label>Categoria di entrata<select name="incomeAccountId" id="income-category" required></select></label>
-      <label>Importo<input name="amount" required inputmode="decimal" placeholder="1800,00"></label>
-      <label>Data<input name="date" type="date" required></label>
-      <label>Ora opzionale<input name="time" type="time"></label>
-      <label>Descrizione<input name="description" placeholder="Stipendio agosto"></label>
-      <button id="income-submit" type="submit">Registra entrata</button>`;
-    stack.appendChild(incomeForm);
-
-    const transferForm = document.createElement("form");
-    transferForm.id = "transfer-form";
-    transferForm.className = "card form-card";
-    transferForm.innerHTML = `
-      <h3>Nuovo giroconto</h3>
-      <p class="empty form-note">Sposta denaro tra due conti della stessa valuta senza creare un'entrata o una spesa.</p>
-      <label>Da<select name="sourceAccountId" id="transfer-source" required></select></label>
-      <label>A<select name="destinationAccountId" id="transfer-destination" required></select></label>
-      <label>Importo<input name="amount" required inputmode="decimal" placeholder="100,00"></label>
-      <label>Data<input name="date" type="date" required></label>
-      <label>Ora opzionale<input name="time" type="time"></label>
-      <label>Descrizione<input name="description" placeholder="Da conto corrente a contanti"></label>
-      <button id="transfer-submit" type="submit">Registra giroconto</button>`;
-    stack.appendChild(transferForm);
+  function bindForms() {
+    const incomeForm = $("income-form");
+    const transferForm = $("transfer-form");
+    if (!incomeForm || !transferForm) return;
 
     incomeForm.elements.date.value = localDate();
     transferForm.elements.date.value = localDate();
@@ -182,7 +147,7 @@
   function start() {
     backend = window.financeTrackerBackend;
     if (!backend) return;
-    installForms();
+    bindForms();
     refreshSnapshot().catch(() => {});
   }
 

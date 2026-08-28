@@ -3,6 +3,7 @@ from __future__ import annotations
 from config.constants import SCHEMA_VERSION
 from config.settings import Settings
 from core.account_service import AccountService
+from core.account_setup_service import AccountSetupService
 from core.app_state_service import AppStateService
 from core.book_service import BookService
 from core.budget_service import BudgetService
@@ -58,13 +59,20 @@ class AppController:
         self._scheduled = scheduled_service or ScheduledTransactionService(
             database, account_service, ledger_service, payee_service
         )
+        self._categories = CategoryService(database, account_service)
+        self._account_setup = AccountSetupService(
+            database,
+            account_service,
+            self._categories,
+            ledger_service,
+        )
         self._app_state = app_state_service or AppStateService(database, account_service)
         self._budgets = budget_service or BudgetService(
             database,
             self._reporting,
             self._fx,
             account_service,
-            CategoryService(database, account_service),
+            self._categories,
         )
         self._loans = loan_service or LoanService(database, account_service, ledger_service)
         self._forecast = forecast_service or ForecastService(
@@ -440,25 +448,56 @@ class AppController:
 
     def create_account(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
-        account_type = str(payload.get("type", "")).upper()
-        currency = (
-            str(payload.get("currency", book.base_currency_code))
-            if account_type in {"ASSET", "LIABILITY"}
-            else None
-        )
-        account = self._accounts.create_account(
-            book_id=book.id,
-            account_type=account_type,
-            name=str(payload.get("name", "")),
-            currency_code=currency,
-            tracking_start_date=str(payload.get("trackingStartDate", ""))
-            if currency
-            else None,
-            tracking_start_time=str(payload["trackingStartTime"])
-            if payload.get("trackingStartTime")
-            else None,
-            placeholder=bool(payload.get("placeholder", False)),
-        )
+        account_type = str(payload.get("type", "")).strip().upper()
+        name = str(payload.get("name", ""))
+        placeholder = bool(payload.get("placeholder", False))
+
+        if account_type in {"EXPENSE", "INCOME"}:
+            parent_value = payload.get("parentId")
+            account = self._account_setup.create_category(
+                book_id=book.id,
+                category_type=account_type,
+                name=name,
+                parent_id=(
+                    None
+                    if parent_value in (None, "")
+                    else self._positive_id(parent_value)
+                ),
+                placeholder=placeholder,
+            )
+        elif account_type in {"ASSET", "LIABILITY"}:
+            currency = str(payload.get("currency", book.base_currency_code))
+            opening_text = str(payload.get("openingBalance", "")).strip()
+            opening_minor = (
+                None
+                if not opening_text
+                else parse_money_magnitude(
+                    opening_text,
+                    self._database.currency(currency),
+                )
+            )
+            account = self._account_setup.create_balance_account(
+                book_id=book.id,
+                account_type=account_type,
+                name=name,
+                currency_code=currency,
+                tracking_start_date=str(payload.get("trackingStartDate", "")),
+                tracking_start_time=(
+                    str(payload["trackingStartTime"])
+                    if payload.get("trackingStartTime")
+                    else None
+                ),
+                placeholder=placeholder,
+                opening_balance_minor=opening_minor,
+                opening_balance_direction=(
+                    str(payload.get("openingBalanceDirection", "")).strip().upper()
+                    or None
+                ),
+            )
+        else:
+            raise ValidationError(
+                "user-created items must be a balance account or income/expense category"
+            )
         return {"id": account.id, "state": self.snapshot()}
 
     def create_expense(self, payload: dict[str, object]) -> dict[str, object]:

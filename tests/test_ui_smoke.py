@@ -144,6 +144,15 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
         in styles
     )
     assert (
+        "#transactions>.split{grid-template-columns:minmax(500px,2fr) "
+        "minmax(280px,1fr)}"
+        in styles
+    )
+    assert (
+        "#transactions .section-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}"
+        in styles
+    )
+    assert (
         "#accounts-list .row{grid-template-columns:minmax(0,1fr) "
         "max-content max-content}"
         in styles
@@ -154,7 +163,21 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
         "white-space:nowrap}"
         in styles
     )
+    assert ".transaction-summary{display:grid;gap:3px;min-width:0}" in styles
+    assert ".transaction-description{display:block;color:var(--secondary);font-size:12px}" in styles
     assert ".report-row>*{min-width:0}" in styles
+
+
+def test_transaction_rows_keep_description_visible_with_merchant() -> None:
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "function transactionRow(t)" in app_js
+    assert "const primary = t.payee_name || kindLabel;" in app_js
+    assert "const description = String(t.description || \"\").trim();" in app_js
+    assert 'class="transaction-description"' in app_js
+    assert "snapshot.transactions.map(transactionRow)" in app_js
+    assert "t.payee_name || t.description || t.kind" not in app_js
+    assert 'TRANSFER: "Giroconto"' in app_js
 
 
 def test_account_and_category_setup_are_separate_and_user_facing() -> None:

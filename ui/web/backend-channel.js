@@ -12,4 +12,9 @@
     });
   };
   window.QWebChannel.prototype = QWebChannelImpl.prototype;
+
+  const manualTransactions = document.createElement("script");
+  manualTransactions.src = "manual-transactions.js";
+  manualTransactions.async = false;
+  document.head.appendChild(manualTransactions);
 })();

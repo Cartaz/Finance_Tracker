@@ -17,6 +17,7 @@
   const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   const localMonth = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
   const accountTypeLabels = { ASSET: "Conto", LIABILITY: "Debito", EXPENSE: "Spesa", INCOME: "Entrata" };
+  const transactionKindLabels = { EXPENSE: "Spesa", INCOME: "Entrata", TRANSFER: "Giroconto", REFUND: "Rimborso", OPENING_BALANCE: "Saldo iniziale", ADJUSTMENT: "Rettifica", REVERSAL: "Storno" };
   const currencyDigits = (currency) => {
     const digits = currencySpecs.get(currency);
     if (digits == null) throw new Error(`Valuta non supportata: ${currency}`);
@@ -187,6 +188,16 @@
     $("loan-form").elements.startDate.required = isNew;
   }
 
+  function transactionRow(t) {
+    const kindLabel = transactionKindLabels[t.kind] || t.kind;
+    const primary = t.payee_name || kindLabel;
+    const description = String(t.description || "").trim();
+    const descriptionHtml = description
+      ? `<small class="transaction-description" title="${escapeHtml(description)}">${escapeHtml(description)}</small>`
+      : "";
+    return `<div class="row"><span>${escapeHtml(t.transaction_date)}</span><div class="transaction-summary"><b>${escapeHtml(primary)}</b>${descriptionHtml}</div><small>${escapeHtml(kindLabel)}</small></div>`;
+  }
+
   function renderSnapshot(snapshot) {
     state = snapshot;
     $("book-name").textContent = snapshot.book.name.toUpperCase();
@@ -195,7 +206,7 @@
       .filter((a) => ["EXPENSE", "INCOME"].includes(a.type))
       .map((item) => ({ item, path: categoryPath(item, snapshot.accounts) }))
       .sort((a, b) => a.item.type.localeCompare(b.item.type) || a.path.localeCompare(b.path, "it", { sensitivity: "base" }));
-    const txRows = snapshot.transactions.map((t) => `<div class="row"><span>${t.transaction_date}</span><b>${escapeHtml(t.payee_name || t.description || t.kind)}</b><small>${t.kind}</small></div>`).join("") || `<p class="empty">Nessuna transazione.</p>`;
+    const txRows = snapshot.transactions.map(transactionRow).join("") || `<p class="empty">Nessuna transazione.</p>`;
     $("recent").innerHTML = txRows;
     $("transactions-list").innerHTML = txRows;
     $("accounts-list").innerHTML = balanceAccounts.map((a) => `<div class="row"><b>${escapeHtml(a.name)}</b><small>${accountTypeLabels[a.type]}${a.currency ? ` · ${a.currency}` : ""}${a.placeholder ? " · contenitore" : ""}</small><span>${a.balanceMinor == null ? "" : money(a.balanceMinor, a.currency)}</span></div>`).join("") || `<p class="empty">Nessun conto o debito.</p>`;

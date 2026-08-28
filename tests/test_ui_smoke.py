@@ -157,21 +157,43 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
     assert ".report-row>*{min-width:0}" in styles
 
 
-def test_account_type_labels_are_localized_without_changing_domain_values() -> None:
+def test_account_and_category_setup_are_separate_and_user_facing() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+    styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "Nuovo conto / debito" in index
+    assert '<option value="ASSET">Conto / disponibilità</option>' in index
+    assert '<option value="LIABILITY">Debito / passività</option>' in index
+    assert '<option value="EQUITY">' not in index
+    assert "Patrimonio netto (tecnico)" not in index
+    assert 'name="openingBalance"' in index
+    assert 'id="opening-balance-direction"' in index
+    assert 'name="trackingStartDate" type="date" required' in index
+
+    assert 'id="category-form"' in index
+    assert '<option value="EXPENSE">Categoria di spesa</option>' in index
+    assert '<option value="INCOME">Categoria di entrata</option>' in index
+    assert 'id="category-parent"' in index
+    assert "Nessuna (categoria principale)" in index
+
+    assert "Conti e debiti" in index
+    assert 'id="accounts-list"' in index
+    assert "Categorie" in index
+    assert 'id="categories-list"' in index
+    assert "accountTypeLabels" in app_js
+    assert "categoryPath" in app_js
+    assert "refreshCategoryParentOptions" in app_js
+    assert '$("category-form").addEventListener("submit"' in app_js
+    assert '$("categories-list").innerHTML' in app_js
+    assert "#categories-list .row{" in styles
+
+
+def test_account_type_help_is_accessible_and_does_not_expose_equity() -> None:
     index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
     styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
 
-    expected_options = {
-        "ASSET": "Conto / disponibilità",
-        "LIABILITY": "Debito / passività",
-        "EXPENSE": "Categoria di spesa",
-        "INCOME": "Categoria di entrata",
-        "EQUITY": "Patrimonio netto (tecnico)",
-    }
-    for value, label in expected_options.items():
-        assert f'<option value="{value}">{label}</option>' in index
-
     assert 'aria-label="Spiega i tipi di conto"' in index
-    assert "contropartita contabile usata per saldi iniziali e rettifiche" in index
+    assert "saldo iniziale fotografa la situazione reale" in index
     assert ".field-help-panel{" in styles
     assert ".field-help summary:focus-visible" in styles

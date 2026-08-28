@@ -155,3 +155,23 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
         in styles
     )
     assert ".report-row>*{min-width:0}" in styles
+
+
+def test_account_type_labels_are_localized_without_changing_domain_values() -> None:
+    index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    styles = (_WEB_DIR / "styles.css").read_text(encoding="utf-8")
+
+    expected_options = {
+        "ASSET": "Conto / disponibilità",
+        "LIABILITY": "Debito / passività",
+        "EXPENSE": "Categoria di spesa",
+        "INCOME": "Categoria di entrata",
+        "EQUITY": "Patrimonio netto (tecnico)",
+    }
+    for value, label in expected_options.items():
+        assert f'<option value="{value}">{label}</option>' in index
+
+    assert 'aria-label="Spiega i tipi di conto"' in index
+    assert "contropartita contabile usata per saldi iniziali e rettifiche" in index
+    assert ".field-help-panel{" in styles
+    assert ".field-help summary:focus-visible" in styles

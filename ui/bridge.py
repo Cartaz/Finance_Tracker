@@ -243,6 +243,14 @@ class Bridge(QObject):
     def createExpense(self, payload):
         return self._call(self._controller.create_expense, dict(payload or {}))
 
+    @Slot("QVariant", result="QVariant")
+    def createIncome(self, payload):
+        return self._call(self._controller.create_income, dict(payload or {}))
+
+    @Slot("QVariant", result="QVariant")
+    def createTransfer(self, payload):
+        return self._call(self._controller.create_transfer, dict(payload or {}))
+
     @Slot(str, result="QVariant")
     def suggestPayees(self, query: str):
         return self._call(self._controller.suggest_payees, query)

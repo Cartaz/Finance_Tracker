@@ -16,6 +16,7 @@
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
   const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   const localMonth = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  const accountTypeLabels = { ASSET: "Conto", LIABILITY: "Debito", EXPENSE: "Spesa", INCOME: "Entrata" };
   const currencyDigits = (currency) => {
     const digits = currencySpecs.get(currency);
     if (digits == null) throw new Error(`Valuta non supportata: ${currency}`);
@@ -69,6 +70,7 @@
     $("report-asof").value = localDate(now);
     $("report-end").value = localDate(now);
     $("report-start").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    $("account-form").elements.trackingStartDate.value = localDate(now);
     $("fx-form").elements.date.value = localDate(now);
     $("scheduled-form").elements.startDate.value = localDate(now);
     $("scheduled-asof").value = localDate(now);
@@ -81,6 +83,47 @@
     const firstDue = new Date(now);
     firstDue.setMonth(firstDue.getMonth() + 1);
     $("loan-form").elements.firstDueDate.value = localDate(firstDue);
+  }
+
+  function categoryPath(category, accounts = state?.accounts || []) {
+    const byId = new Map(accounts.map((item) => [String(item.id), item]));
+    const names = [];
+    const seen = new Set();
+    let current = category;
+    while (current) {
+      const id = String(current.id);
+      if (seen.has(id)) return `${names.reverse().join(" › ")} › ?`;
+      seen.add(id);
+      names.push(current.name);
+      if (current.parentId == null) break;
+      current = byId.get(String(current.parentId));
+    }
+    return names.reverse().join(" › ");
+  }
+
+  function refreshCategoryParentOptions() {
+    const select = $("category-parent");
+    if (!select) return;
+    const previous = select.value;
+    const type = $("category-type").value;
+    const categories = (state?.accounts || [])
+      .filter((item) => item.type === type)
+      .map((item) => ({ item, path: categoryPath(item) }))
+      .sort((a, b) => a.path.localeCompare(b.path, "it", { sensitivity: "base" }));
+    select.innerHTML = `<option value="">Nessuna (categoria principale)</option>` + categories.map(({ item, path }) => `<option value="${item.id}">${escapeHtml(path)}${item.placeholder ? " · contenitore" : ""}</option>`).join("");
+    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+  }
+
+  function refreshOpeningBalanceDirection() {
+    const type = $("account-type").value;
+    const select = $("opening-balance-direction");
+    if (type === "LIABILITY") {
+      select.innerHTML = `<option value="NEGATIVE">Debito da pagare (−)</option><option value="POSITIVE">Credito a tuo favore (+)</option>`;
+      select.value = "NEGATIVE";
+    } else {
+      select.innerHTML = `<option value="POSITIVE">Saldo disponibile (+)</option><option value="NEGATIVE">Saldo in rosso (−)</option>`;
+      select.value = "POSITIVE";
+    }
   }
 
   function optionsForAccountIds(accountIds) {
@@ -148,15 +191,21 @@
     state = snapshot;
     $("book-name").textContent = snapshot.book.name.toUpperCase();
     const balanceAccounts = snapshot.accounts.filter((a) => ["ASSET", "LIABILITY"].includes(a.type));
+    const categories = snapshot.accounts
+      .filter((a) => ["EXPENSE", "INCOME"].includes(a.type))
+      .map((item) => ({ item, path: categoryPath(item, snapshot.accounts) }))
+      .sort((a, b) => a.item.type.localeCompare(b.item.type) || a.path.localeCompare(b.path, "it", { sensitivity: "base" }));
     const txRows = snapshot.transactions.map((t) => `<div class="row"><span>${t.transaction_date}</span><b>${escapeHtml(t.payee_name || t.description || t.kind)}</b><small>${t.kind}</small></div>`).join("") || `<p class="empty">Nessuna transazione.</p>`;
     $("recent").innerHTML = txRows;
     $("transactions-list").innerHTML = txRows;
-    $("accounts-list").innerHTML = snapshot.accounts.map((a) => `<div class="row"><b>${escapeHtml(a.name)}</b><small>${a.type}${a.currency ? ` · ${a.currency}` : ""}</small><span>${a.balanceMinor == null ? "" : money(a.balanceMinor, a.currency)}</span></div>`).join("") || `<p class="empty">Crea il primo conto.</p>`;
+    $("accounts-list").innerHTML = balanceAccounts.map((a) => `<div class="row"><b>${escapeHtml(a.name)}</b><small>${accountTypeLabels[a.type]}${a.currency ? ` · ${a.currency}` : ""}${a.placeholder ? " · contenitore" : ""}</small><span>${a.balanceMinor == null ? "" : money(a.balanceMinor, a.currency)}</span></div>`).join("") || `<p class="empty">Nessun conto o debito.</p>`;
+    $("categories-list").innerHTML = categories.map(({ item, path }) => `<div class="row"><b>${escapeHtml(path)}</b><small>${accountTypeLabels[item.type]}${item.placeholder ? " · contenitore" : ""}</small></div>`).join("") || `<p class="empty">Nessuna categoria.</p>`;
     $("expense-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
-    $("expense-category").innerHTML = snapshot.accounts.filter((a) => a.type === "EXPENSE" && !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+    $("expense-category").innerHTML = categories.filter(({ item }) => item.type === "EXPENSE" && !item.placeholder).map(({ item, path }) => `<option value="${item.id}">${escapeHtml(path)}</option>`).join("");
     $("history-account").innerHTML = balanceAccounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("import-account").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
     $("scheduled-source").innerHTML = balanceAccounts.filter((a) => !a.placeholder).map((a) => `<option value="${a.id}">${escapeHtml(a.name)} · ${a.currency}</option>`).join("");
+    refreshCategoryParentOptions();
     refreshScheduledCounter();
   }
 
@@ -237,7 +286,6 @@
     else if (currentLoans.length) await loadLoanDetail(currentLoans[0].id);
     else { currentLoanId = null; $("loan-detail").innerHTML = `<p class="empty">Seleziona un prestito.</p>`; }
   }
-
   async function refreshReports() { renderDashboard(unwrap(await call("getDashboard", reportPeriod()))); }
   async function refreshBudgets() { renderBudgets(unwrap(await call("getBudgetStatus", { period: $("budget-period").value }))); }
   async function refreshForecast() { renderForecast(unwrap(await call("getForecast", forecastPeriod()))); }
@@ -297,7 +345,8 @@
   }
 
   document.querySelectorAll(".nav").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".nav").forEach((b) => b.classList.remove("active")); button.classList.add("active"); document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden")); $(button.dataset.view).classList.remove("hidden"); $("view-title").textContent = button.textContent; }));
-  $("account-type").addEventListener("change", (event) => $("balance-fields").classList.toggle("hidden", !["ASSET", "LIABILITY"].includes(event.target.value)));
+  $("account-type").addEventListener("change", refreshOpeningBalanceDirection);
+  $("category-type").addEventListener("change", refreshCategoryParentOptions);
   $("scheduled-kind").addEventListener("change", refreshScheduledCounter);
   $("scheduled-source").addEventListener("change", refreshScheduledCounter);
   $("loan-mode").addEventListener("change", refreshLoanMode);
@@ -308,7 +357,8 @@
   $("apply-forecast").addEventListener("click", () => refreshForecast().catch((error) => toast(error.message, true)));
   $("budget-period").addEventListener("change", () => refreshBudgets().catch((error) => toast(error.message, true)));
   $("setup-form").addEventListener("submit", async (event) => { event.preventDefault(); try { const snapshot = unwrap(await call("setup", Object.fromEntries(new FormData(event.target)))); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); configureCurrencies(supportedCurrencies, snapshot.book.currency, snapshot.book.currency); renderSnapshot(snapshot); await refresh(); } catch (error) { toast(error.message, true); } });
-  $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans(), refreshLoanCapabilities()]); toast("Creato"); } catch (error) { toast(error.message, true); } });
+  $("account-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); event.target.elements.trackingStartDate.value = localDate(); refreshOpeningBalanceDirection(); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans(), refreshLoanCapabilities()]); toast("Conto creato"); } catch (error) { toast(error.message, true); } });
+  $("category-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createAccount", event.target); event.target.reset(); refreshCategoryParentOptions(); await Promise.all([refreshReports(), refreshBudgets(), refreshLoans(), refreshLoanCapabilities()]); toast("Categoria creata"); } catch (error) { toast(error.message, true); } });
   $("expense-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await submit("createExpense", event.target); event.target.reset(); $("payee-id").value = ""; await Promise.all([refreshReports(), refreshBudgets()]); toast("Spesa registrata"); } catch (error) { toast(error.message, true); } });
   $("budget-form").addEventListener("submit", async (event) => { event.preventDefault(); try { unwrap(await call("setBudget", Object.fromEntries(new FormData(event.target)))); const period = event.target.elements.period.value; event.target.elements.amount.value = ""; event.target.elements.period.value = period; await refreshBudgets(); toast("Budget salvato"); } catch (error) { toast(error.message, true); } });
   $("budget-list").addEventListener("click", async (event) => { const button = event.target.closest("[data-budget-delete]"); if (!button) return; try { unwrap(await call("deleteBudget", { budgetId: button.dataset.budgetDelete })); await refreshBudgets(); toast("Budget eliminato"); } catch (error) { toast(error.message, true); } });
@@ -352,6 +402,7 @@
   $("payee-results").addEventListener("click", async (event) => { const button = event.target.closest("button"); if (!button) return; try { if (button.dataset.create) { const item = unwrap(await call("createPayee", $("payee-input").value)); $("payee-id").value = item.id; $("payee-input").value = item.name; } else { $("payee-id").value = button.dataset.id; $("payee-input").value = button.dataset.name; } $("payee-results").classList.add("hidden"); } catch (error) { toast(error.message, true); } });
 
   initializeDates();
+  refreshOpeningBalanceDirection();
   refreshLoanMode();
   if (typeof QWebChannel === "undefined" || !window.qt?.webChannelTransport) { $("bridge-status").textContent = "Backend non disponibile"; return; }
   new QWebChannel(window.qt.webChannelTransport, async (channel) => { backend = channel.objects.backend; try { const initial = unwrap(await call("getInitialState")); configureCurrencies(initial.currencies, initial.book?.currency || null, initial.book?.currency || initial.bookCurrency); $("import-form").elements.reviewMode.value = initial.reconciliationReviewMode; $("bridge-status").textContent = "Backend connesso"; if (initial.needsSetup) $("setup").classList.remove("hidden"); else { $("app").classList.remove("hidden"); await refresh(); } } catch (error) { toast(error.message, true); } });

@@ -249,11 +249,11 @@
     <form id="scheduled-form" class="card form-card">
       <h3>Nuova transazione programmata</h3>
       <p class="empty">Il template non modifica il ledger finché una scadenza non viene materializzata.</p>
-      <label>Tipo<select name="kind" id="scheduled-kind"><option value="EXPENSE">EXPENSE</option><option value="INCOME">INCOME</option><option value="REFUND">REFUND</option><option value="TRANSFER">TRANSFER</option></select></label>
+      <label>Tipo<select name="kind" id="scheduled-kind"><option value="EXPENSE">Spesa</option><option value="INCOME">Entrata</option><option value="REFUND">Rimborso</option><option value="TRANSFER">Giroconto</option></select></label>
       <label>Conto<select name="sourceAccountId" id="scheduled-source" required></select></label>
       <label>Contropartita<select name="counterAccountId" id="scheduled-counter" required></select></label>
       <label>Importo<input name="amount" required inputmode="decimal" placeholder="12,30"></label>
-      <label>Frequenza<select name="frequency"><option value="MONTHLY">MONTHLY</option><option value="WEEKLY">WEEKLY</option><option value="DAILY">DAILY</option><option value="YEARLY">YEARLY</option></select></label>
+      <label>Frequenza<select name="frequency"><option value="MONTHLY">Mensile</option><option value="WEEKLY">Settimanale</option><option value="DAILY">Giornaliera</option><option value="YEARLY">Annuale</option></select></label>
       <label>Ogni<input name="interval" type="number" min="1" max="365" value="1" required></label>
       <label>Prima scadenza<input name="startDate" type="date" required></label>
       <label>Fine opzionale<input name="endDate" type="date"></label>

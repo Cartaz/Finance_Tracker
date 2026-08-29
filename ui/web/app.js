@@ -281,7 +281,7 @@
     const missing = report.missingFx || [];
     $("forecast-warning").classList.toggle("hidden", missing.length === 0);
     $("forecast-warning").innerHTML = missing.length ? `<b>Forecast incompleto: tassi FX mancanti</b><div>${missing.map((item) => `${escapeHtml(item.currency)} · ${item.date}`).join(" · ")}</div>` : "";
-    $("forecast-buckets").innerHTML = report.buckets.map((item) => `<div class="report-row"><b>${item.period}</b><span>Entrate ${money(item.inflowMinor, currency)}</span><span>Uscite ${money(item.outflowMinor, currency)}</span><strong>${money(item.netMinor, currency)}</strong><small>${item.occurrenceCount} occorrenze · ${item.transferCount} transfer</small></div>`).join("") || `<p class="empty">Nessun flusso programmato nel periodo.</p>`;
+    $("forecast-buckets").innerHTML = report.buckets.map((item) => `<div class="report-row"><b>${item.period}</b><span>Entrate ${money(item.inflowMinor, currency)}</span><span>Uscite ${money(item.expenseMinor, currency)}</span><strong>${money(item.netMinor, currency)}</strong><small>${item.occurrenceCount} occorrenze · ${item.transferCount} transfer</small></div>`).join("") || `<p class="empty">Nessun flusso programmato nel periodo.</p>`;
     $("forecast-occurrences").innerHTML = report.occurrences.map((item) => `<div class="report-row"><span>${item.dueDate}</span><b>${escapeHtml(item.description || item.kind)}</b><span>${item.direction}</span><strong>${item.direction === "TRANSFER" ? money(item.amountMinor, item.currency) : money(item.baseAmountMinor, currency)}</strong><small>${item.kind}${item.currency !== currency ? ` · origine ${money(item.amountMinor, item.currency)}` : ""}</small></div>`).join("") || `<p class="empty">Nessuna occorrenza prevista.</p>`;
   }
 
@@ -326,7 +326,12 @@
   }
   async function refreshScheduled() {
     const items = unwrap(await call("listScheduledTransactions"));
-    $("scheduled-list").innerHTML = items.map((item) => `<div class="card"><div class="report-row"><b>${escapeHtml(item.description || item.kind)}</b><span>${escapeHtml(item.sourceAccountName)} → ${escapeHtml(item.counterAccountName)}</span><strong>${money(item.amountMinor, item.currency)}</strong><small>${item.frequency} × ${item.interval} · prossima ${item.nextDueDate}${item.endDate ? ` · fine ${item.endDate}` : ""} · ${item.active ? "ATTIVA" : "PAUSA"}</small></div><div class="history-controls"><button type="button" data-schedule-toggle="${item.id}" data-active="${item.active ? "0" : "1"}">${item.active ? "Pausa" : "Riattiva"}</button><button type="button" data-schedule-post="${item.id}">Registra dovute</button></div></div>`).join("") || `<p class="empty">Nessuna transazione programmata.</p>`;
+    const frequencyLabels = { DAILY: "Giornaliera", WEEKLY: "Settimanale", MONTHLY: "Mensile", YEARLY: "Annuale" };
+    $("scheduled-list").innerHTML = items.map((item) => {
+      const kindLabel = transactionKindLabels[item.kind] || item.kind;
+      const frequencyLabel = frequencyLabels[item.frequency] || item.frequency;
+      return `<div class="card"><div class="report-row"><b>${escapeHtml(item.description || kindLabel)}</b><span>${escapeHtml(item.sourceAccountName)} → ${escapeHtml(item.counterAccountName)}</span><strong>${money(item.amountMinor, item.currency)}</strong><small>${escapeHtml(frequencyLabel)} × ${item.interval} · prossima ${item.nextDueDate}${item.endDate ? ` · fine ${item.endDate}` : ""} · ${item.active ? "Attiva" : "In pausa"}</small></div><div class="history-controls"><button type="button" data-schedule-toggle="${item.id}" data-active="${item.active ? "0" : "1"}">${item.active ? "Pausa" : "Riattiva"}</button><button type="button" data-schedule-post="${item.id}">Registra dovute</button></div></div>`;
+    }).join("") || `<p class="empty">Nessuna transazione programmata.</p>`;
   }
   async function refreshImportBatches() {
     const items = unwrap(await call("listImportBatches"));

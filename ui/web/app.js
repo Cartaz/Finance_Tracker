@@ -188,6 +188,25 @@
     $("loan-form").elements.startDate.required = isNew;
   }
 
+  function transactionAccountFlow(t) {
+    const sources = (t.sourceAccountNames || []).map(String).filter(Boolean);
+    const destinations = (t.destinationAccountNames || []).map(String).filter(Boolean);
+    if (sources.length && destinations.length) return `${sources.join(", ")} → ${destinations.join(", ")}`;
+    if (sources.length) return `Da ${sources.join(", ")}`;
+    if (destinations.length) return `A ${destinations.join(", ")}`;
+    return "—";
+  }
+
+  function transactionAmount(t) {
+    if (t.amountMinor == null) return "—";
+    const formatted = money(t.amountMinor, t.currency_code);
+    const hasSource = (t.sourceAccountNames || []).length > 0;
+    const hasDestination = (t.destinationAccountNames || []).length > 0;
+    if (hasSource && !hasDestination) return `−${formatted}`;
+    if (!hasSource && hasDestination) return `+${formatted}`;
+    return formatted;
+  }
+
   function transactionRow(t) {
     const kindLabel = transactionKindLabels[t.kind] || t.kind;
     const primary = t.payee_name || kindLabel;
@@ -195,7 +214,8 @@
     const descriptionHtml = description
       ? `<small class="transaction-description" title="${escapeHtml(description)}">${escapeHtml(description)}</small>`
       : "";
-    return `<div class="row"><span>${escapeHtml(t.transaction_date)}</span><div class="transaction-summary"><b>${escapeHtml(primary)}</b>${descriptionHtml}</div><small>${escapeHtml(kindLabel)}</small></div>`;
+    const accountFlow = transactionAccountFlow(t);
+    return `<div class="row transaction-row"><span class="transaction-date">${escapeHtml(t.transaction_date)}</span><div class="transaction-summary"><b>${escapeHtml(primary)}</b>${descriptionHtml}</div><small class="transaction-accounts" title="${escapeHtml(accountFlow)}">${escapeHtml(accountFlow)}</small><div class="transaction-meta"><strong class="transaction-amount">${escapeHtml(transactionAmount(t))}</strong><small class="transaction-kind">${escapeHtml(kindLabel)}</small></div></div>`;
   }
 
   function renderSnapshot(snapshot) {

@@ -7,6 +7,14 @@
 .loan-output-bound>.card{display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .loan-output-bound>.card>[data-scroll-indicator]{flex:1 1 auto;min-height:0;overflow:auto;padding-right:8px}
 
+#transactions-list .transaction-row{grid-template-columns:105px minmax(120px,1.25fr) minmax(105px,1fr) max-content;gap:12px}
+#transactions-list .transaction-accounts{color:var(--secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#transactions-list .transaction-meta{display:grid;gap:3px;justify-items:end;min-width:max-content}
+#transactions-list .transaction-amount{font-size:14px;white-space:nowrap}
+#transactions-list .transaction-kind{color:var(--secondary)}
+#recent .transaction-accounts,#recent .transaction-amount{display:none}
+#recent .transaction-meta{display:block;min-width:0}
+
 #budget-list>.card,#loan-list>.card{background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.05);border-radius:0;box-shadow:none;padding:11px 2px}
 #budget-list>.card:last-child,#loan-list>.card:last-child{border-bottom:0}
 #budget-list>.card,#loan-list>.card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}
@@ -33,6 +41,9 @@
   .bounded-scroll-card>[data-scroll-indicator],.bounded-scroll-card>.tab-panel:not(.hidden)>[data-scroll-indicator]{flex:0 1 auto;max-height:calc(var(--dashboard-row-height)*5)}
   .loan-output-bound{height:auto;max-height:none;grid-template-rows:auto auto}
   .loan-output-bound>.card>[data-scroll-indicator]{flex:0 1 auto;max-height:calc(var(--dashboard-row-height)*5)}
+  #transactions-list .transaction-row{grid-template-columns:96px minmax(0,1fr) max-content}
+  #transactions-list .transaction-accounts{grid-column:2/3}
+  #transactions-list .transaction-meta{grid-column:3/4;grid-row:1/3}
   #budget-list>.card>.report-row,#loan-list>.card>.report-row{grid-template-columns:minmax(0,1fr) auto}
   #budget-list>.card>.report-row>*:nth-child(n+3),#loan-list>.card>.report-row>*:nth-child(n+3){grid-column:1/-1}
 }

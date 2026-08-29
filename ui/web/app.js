@@ -281,7 +281,7 @@
     const missing = report.missingFx || [];
     $("forecast-warning").classList.toggle("hidden", missing.length === 0);
     $("forecast-warning").innerHTML = missing.length ? `<b>Forecast incompleto: tassi FX mancanti</b><div>${missing.map((item) => `${escapeHtml(item.currency)} · ${item.date}`).join(" · ")}</div>` : "";
-    $("forecast-buckets").innerHTML = report.buckets.map((item) => `<div class="report-row"><b>${item.period}</b><span>Entrate ${money(item.inflowMinor, currency)}</span><span>Uscite ${money(item.expenseMinor, currency)}</span><strong>${money(item.netMinor, currency)}</strong><small>${item.occurrenceCount} occorrenze · ${item.transferCount} transfer</small></div>`).join("") || `<p class="empty">Nessun flusso programmato nel periodo.</p>`;
+    $("forecast-buckets").innerHTML = report.buckets.map((item) => `<div class="report-row"><b>${item.period}</b><span>Entrate ${money(item.inflowMinor, currency)}</span><span>Uscite ${money(item.outflowMinor, currency)}</span><strong>${money(item.netMinor, currency)}</strong><small>${item.occurrenceCount} occorrenze · ${item.transferCount} transfer</small></div>`).join("") || `<p class="empty">Nessun flusso programmato nel periodo.</p>`;
     $("forecast-occurrences").innerHTML = report.occurrences.map((item) => `<div class="report-row"><span>${item.dueDate}</span><b>${escapeHtml(item.description || item.kind)}</b><span>${item.direction}</span><strong>${item.direction === "TRANSFER" ? money(item.amountMinor, item.currency) : money(item.baseAmountMinor, currency)}</strong><small>${item.kind}${item.currency !== currency ? ` · origine ${money(item.amountMinor, item.currency)}` : ""}</small></div>`).join("") || `<p class="empty">Nessuna occorrenza prevista.</p>`;
   }
 

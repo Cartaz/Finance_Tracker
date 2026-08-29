@@ -85,6 +85,19 @@ def test_manual_income_and_transfer_cover_normal_salary_workflow(ledger_env) -> 
     assert transfer_record.kind == "TRANSFER"
     assert transfer_record.description == "Prelievo contanti"
 
+    snapshot = bridge.getSnapshot()
+    assert snapshot["ok"] is True
+    transactions = snapshot["data"]["transactions"]
+    transfer_payload = next(item for item in transactions if item["kind"] == "TRANSFER")
+    income_payload = next(item for item in transactions if item["kind"] == "INCOME")
+
+    assert transfer_payload["amountMinor"] == "10000"
+    assert transfer_payload["sourceAccountNames"] == ["Conto corrente"]
+    assert transfer_payload["destinationAccountNames"] == ["Contanti"]
+    assert income_payload["amountMinor"] == "180000"
+    assert income_payload["sourceAccountNames"] == []
+    assert income_payload["destinationAccountNames"] == ["Conto corrente"]
+
 
 def test_manual_transfer_rejects_currency_mismatch_without_mutation(ledger_env) -> None:
     eur = ledger_env.accounts.create_account(
@@ -140,3 +153,20 @@ def test_manual_transaction_ui_is_static_and_backend_capability_driven() -> None
     assert ".currency ===" not in frontend
     assert "def createIncome" in bridge
     assert "def createTransfer" in bridge
+
+
+def test_transaction_list_renders_account_flow_and_exact_amount() -> None:
+    frontend = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "ui" / "web" / "scroll-regions.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert "sourceAccountNames" in frontend
+    assert "destinationAccountNames" in frontend
+    assert 'class="transaction-accounts"' in frontend
+    assert 'class="transaction-amount"' in frontend
+    assert "money(t.amountMinor, t.currency_code)" in frontend
+    assert " → " in frontend
+    assert "#transactions-list .transaction-row" in styles
+    assert "#recent .transaction-accounts" in styles
+    assert "#recent .transaction-amount" in styles

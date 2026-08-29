@@ -72,10 +72,23 @@ def test_reconciliation_ui_uses_structured_candidates_and_safe_file_payload() ->
 def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     index = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
     app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
+    region_styles = (_WEB_DIR / "scroll-regions.css").read_text(encoding="utf-8")
 
     assert 'data-view="scheduled"' in index
     assert 'id="scheduled-form"' in index
     assert 'id="post-due-scheduled"' in index
+    assert '<option value="EXPENSE">Spesa</option>' in index
+    assert '<option value="INCOME">Entrata</option>' in index
+    assert '<option value="REFUND">Rimborso</option>' in index
+    assert '<option value="TRANSFER">Giroconto</option>' in index
+    assert '<option value="MONTHLY">Mensile</option>' in index
+    assert '<option value="WEEKLY">Settimanale</option>' in index
+    assert '<option value="DAILY">Giornaliera</option>' in index
+    assert '<option value="YEARLY">Annuale</option>' in index
+    assert '>EXPENSE</option>' not in index
+    assert '>INCOME</option>' not in index
+    assert '>REFUND</option>' not in index
+    assert '>TRANSFER</option>' not in index
     assert 'call("listScheduledTransactions")' in app_js
     assert 'call("createScheduledTransaction"' in app_js
     assert 'call("postDueScheduled"' in app_js
@@ -86,6 +99,10 @@ def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     assert 'a.currency === source.currency' not in app_js
     assert "setInterval(" not in app_js
     assert "setTimeout(() => $(\"toast\")" in app_js
+    assert "#scheduled-list>.card{background:transparent" in region_styles
+    assert "#scheduled-list>.card:last-child{border-bottom:0}" in region_styles
+    assert "#scheduled-list>.card>.history-controls button" in region_styles
+    assert "box-shadow:none;white-space:nowrap" in region_styles
 
 
 def test_budget_ui_uses_backend_budget_status_and_bigint_money() -> None:

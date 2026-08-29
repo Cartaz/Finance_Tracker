@@ -4,10 +4,11 @@ import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from core.errors import CurrencyPrecisionError, MoneyParseError
+from core.errors import CurrencyPrecisionError, MoneyParseError, MoneyRangeError
 
 _SIGN_RE = re.compile(r"^[+-]?")
 _DIGITS_RE = re.compile(r"^\d+$")
+MAX_PERSISTED_MINOR = (1 << 63) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,28 @@ def normalize_decimal_text(raw: str) -> str:
     return sign + canonical
 
 
+def _maximum_amount_text(currency: CurrencySpec) -> str:
+    scale = 10**currency.minor_unit_digits
+    whole, fraction = divmod(MAX_PERSISTED_MINOR, scale)
+    if currency.minor_unit_digits == 0:
+        return str(whole)
+    return f"{whole},{fraction:0{currency.minor_unit_digits}d}"
+
+
+def require_persistable_minor(value: int, currency: CurrencySpec | None = None) -> int:
+    """Require a symmetric SQLite-safe range for persisted monetary integers."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("minor-unit value must be an integer")
+    if abs(value) <= MAX_PERSISTED_MINOR:
+        return value
+    if currency is None:
+        raise MoneyRangeError("monetary amount exceeds the supported storage range")
+    raise MoneyRangeError(
+        f"Importo troppo grande per {currency.code}: massimo supportato "
+        f"{_maximum_amount_text(currency)} {currency.code}"
+    )
+
+
 def parse_money(raw: str, currency: CurrencySpec) -> int:
     """Parse signed monetary text for sources where the sign is part of the data."""
     canonical = normalize_decimal_text(raw)
@@ -129,7 +152,7 @@ def parse_money(raw: str, currency: CurrencySpec) -> int:
         raise CurrencyPrecisionError(
             f"{currency.code} amount cannot be represented exactly in minor units"
         )
-    return int(minor)
+    return require_persistable_minor(int(minor), currency)
 
 
 def parse_money_magnitude(raw: str, currency: CurrencySpec) -> int:
@@ -162,7 +185,7 @@ def decimal_to_minor(
     quantum = Decimal(1).scaleb(-currency.minor_unit_digits)
     quantized = value.quantize(quantum, rounding=rounding)
     scale = Decimal(10) ** currency.minor_unit_digits
-    return int(quantized * scale)
+    return require_persistable_minor(int(quantized * scale), currency)
 
 
 def minor_to_decimal(amount_minor: int, currency: CurrencySpec) -> Decimal:

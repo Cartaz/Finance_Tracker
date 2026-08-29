@@ -51,6 +51,7 @@
     link.rel = "stylesheet";
     link.href = "scroll-regions.css";
     link.dataset.scrollRegionStyles = "";
+    link.addEventListener("load", scheduleUpdate, { once: true });
     document.head.appendChild(link);
   }
 

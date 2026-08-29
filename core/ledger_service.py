@@ -15,6 +15,7 @@ from core.errors import (
     TrackingBoundaryError,
     UnbalancedTransactionError,
 )
+from core.money import MAX_PERSISTED_MINOR
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _TRANSACTION_KINDS = {
@@ -548,17 +549,28 @@ class LedgerService:
             )
 
     @staticmethod
+    def _require_storage_range(value: int, field: str) -> None:
+        if abs(value) > MAX_PERSISTED_MINOR:
+            raise LedgerValidationError(f"{field} exceeds supported storage range")
+
+    @staticmethod
     def _validate_integer_values(entries: tuple[EntryDraft, ...]) -> None:
         for entry in entries:
             if isinstance(entry.value_minor, bool) or not isinstance(entry.value_minor, int):
                 raise LedgerValidationError("entry value_minor must be an integer")
+            LedgerService._require_storage_range(entry.value_minor, "entry value_minor")
             if entry.value_minor == 0:
                 raise LedgerValidationError("entry value_minor cannot be zero")
-            if entry.quantity_minor is not None and (
-                isinstance(entry.quantity_minor, bool)
-                or not isinstance(entry.quantity_minor, int)
-            ):
-                raise LedgerValidationError("entry quantity_minor must be an integer or None")
+            if entry.quantity_minor is not None:
+                if isinstance(entry.quantity_minor, bool) or not isinstance(
+                    entry.quantity_minor, int
+                ):
+                    raise LedgerValidationError(
+                        "entry quantity_minor must be an integer or None"
+                    )
+                LedgerService._require_storage_range(
+                    entry.quantity_minor, "entry quantity_minor"
+                )
 
     @staticmethod
     def _validate_entry_semantics(entry: EntryDraft, account: sqlite3.Row) -> None:
@@ -619,11 +631,14 @@ class LedgerService:
             raise LedgerValidationError(
                 "original amount and original currency must be provided together"
             )
-        if draft.original_amount_minor is not None and (
-            isinstance(draft.original_amount_minor, bool)
-            or not isinstance(draft.original_amount_minor, int)
-        ):
-            raise LedgerValidationError("original_amount_minor must be an integer")
+        if draft.original_amount_minor is not None:
+            if isinstance(draft.original_amount_minor, bool) or not isinstance(
+                draft.original_amount_minor, int
+            ):
+                raise LedgerValidationError("original_amount_minor must be an integer")
+            LedgerService._require_storage_range(
+                draft.original_amount_minor, "original_amount_minor"
+            )
 
     @staticmethod
     def _validate_date(value: str) -> None:
@@ -643,8 +658,10 @@ class LedgerService:
     def _require_positive_minor(value: int) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise LedgerValidationError("amount_minor must be a positive integer")
+        LedgerService._require_storage_range(value, "amount_minor")
 
     @staticmethod
     def _require_nonzero_minor(value: int) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value == 0:
             raise LedgerValidationError("amount_minor must be a non-zero integer")
+        LedgerService._require_storage_range(value, "amount_minor")

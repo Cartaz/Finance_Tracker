@@ -14,6 +14,10 @@ class CurrencyPrecisionError(ValidationError):
     """Raised when an amount exceeds a currency's supported precision."""
 
 
+class MoneyRangeError(ValidationError):
+    """Raised when an exact monetary value cannot fit persistent minor units."""
+
+
 class UnsupportedCurrencyError(ValidationError):
     """Raised when a requested currency does not exist in the registry."""
 

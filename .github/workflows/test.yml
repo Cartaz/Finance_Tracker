@@ -47,6 +47,9 @@ jobs:
       - name: QML lint
         run: .venv/bin/pyside6-qmllint ui/qml/Theme.qml ui/qml/Preview.qml
 
+      - name: QML engine smoke
+        run: .venv/bin/python -m pytest -q tests/test_qml_preview.py
+
       - name: Test
         run: .venv/bin/python -m pytest
 

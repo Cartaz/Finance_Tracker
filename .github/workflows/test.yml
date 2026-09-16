@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 15
     env:
       QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -92,8 +93,12 @@ jobs:
           import PySide6
           from PySide6.QtWebChannel import QWebChannel
           from PySide6.QtWebEngineWidgets import QWebEngineView
+          from PySide6.QtQml import QQmlApplicationEngine
+          from PySide6.QtQuick import QQuickWindow
+          from PySide6.QtQuickControls2 import QQuickStyle
           from core.database import Database
           from ui.bridge import Bridge
+          from ui.quick_shell import launch_quick_preview
 
-          print(PySide6.__version__, sqlite3.sqlite_version, QWebEngineView.__name__, QWebChannel.__name__, Database.__name__, Bridge.__name__)
+          print(PySide6.__version__, sqlite3.sqlite_version, QWebEngineView.__name__, QWebChannel.__name__, Database.__name__, Bridge.__name__, QQmlApplicationEngine.__name__, QQuickWindow.__name__, QQuickStyle.__name__, launch_quick_preview.__name__)
           PY

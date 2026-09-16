@@ -53,7 +53,11 @@ def test_budget_and_loan_outputs_are_flat_lists_not_nested_neumorphic_cards() ->
     styles = (_WEB_DIR / "scroll-regions.css").read_text(encoding="utf-8")
     app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
 
-    assert '#budget-list>.card,#loan-list>.card{background:transparent;' in styles
+    # Scheduled rows intentionally share the same flat visual contract.
+    assert (
+        '#budget-list>.card,#loan-list>.card,#scheduled-list>.card{background:transparent;'
+        in styles
+    )
     assert 'box-shadow:none' in styles
     assert '#budget-list [data-budget-delete]' in styles
     assert '-webkit-mask:url("data:image/svg+xml' in styles
@@ -65,7 +69,6 @@ def test_budget_and_loan_outputs_are_flat_lists_not_nested_neumorphic_cards() ->
 
 def test_narrow_layout_keeps_lists_bounded_without_height_pairing() -> None:
     styles = (_WEB_DIR / "scroll-regions.css").read_text(encoding="utf-8")
-
     assert '@media(max-width:1000px)' in styles
     assert '.bounded-scroll-card{max-height:none}' in styles
     assert '.loan-output-bound{height:auto;max-height:none;grid-template-rows:auto auto}' in styles

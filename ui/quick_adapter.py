@@ -37,6 +37,7 @@ class QuickPreviewAdapter(QObject):
         self._book_name = ""
         self._currency = ""
         self._net_worth_minor = ""
+        self._error_message = ""
         backup_tasks.maintenanceChanged.connect(self._on_maintenance_changed)
         backup_tasks.finished.connect(self._on_task_finished)
         self.refresh()
@@ -53,14 +54,23 @@ class QuickPreviewAdapter(QObject):
     def netWorthMinor(self) -> str:
         return self._net_worth_minor
 
+    @Property(str, notify=dataChanged)
+    def errorMessage(self) -> str:
+        return self._error_message
+
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
         return self._backup_tasks.active
 
+    def _report_error(self, message: str) -> None:
+        self._error_message = message
+        self.dataChanged.emit()
+        self.errorOccurred.emit(message)
+
     @Slot()
     def refresh(self) -> None:
         if self._backup_tasks.active:
-            self.errorOccurred.emit("Operazione di backup o ripristino in corso.")
+            self._report_error("Operazione di backup o ripristino in corso.")
             return
         try:
             initial = self._controller.initial_state()
@@ -84,20 +94,21 @@ class QuickPreviewAdapter(QObject):
                 # Never coerce money to a QML/JavaScript Number.
                 net_worth = "FX mancanti" if amount is None else str(amount)
         except (FinanceTrackerError, TypeError, ValueError, KeyError) as exc:
-            self.errorOccurred.emit(str(exc))
+            self._report_error(str(exc))
             return
         except Exception:
             log.exception("Unexpected QML preview refresh failure")
-            self.errorOccurred.emit("Errore inatteso; consultare i log.")
+            self._report_error("Errore inatteso; consultare i log.")
             return
         self._book_name = book_name
         self._currency = currency
         self._net_worth_minor = net_worth
+        self._error_message = ""
         self.dataChanged.emit()
 
     @Slot()
     def explainBusy(self) -> None:
-        self.errorOccurred.emit(
+        self._report_error(
             "Impossibile chiudere durante un backup o ripristino in corso."
         )
 

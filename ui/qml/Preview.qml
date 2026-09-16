@@ -18,16 +18,9 @@ ApplicationWindow {
     Theme { id: theme }
 
     onClosing: function(close) {
-        if (backend.busy) {
+        if (root.backend.busy) {
             close.accepted = false
-            backend.explainBusy()
-        }
-    }
-
-    Connections {
-        target: backend
-        function onErrorOccurred(message) {
-            feedback.text = message
+            root.backend.explainBusy()
         }
     }
 
@@ -45,7 +38,7 @@ ApplicationWindow {
         }
         Label {
             objectName: "bookNameValue"
-            text: backend.bookName
+            text: root.backend.bookName
             color: theme.textPrimary
             font.family: "Noto Sans"
             font.pixelSize: 29
@@ -72,7 +65,7 @@ ApplicationWindow {
                 }
                 Label {
                     objectName: "netWorthValue"
-                    text: backend.netWorthMinor
+                    text: root.backend.netWorthMinor
                     color: theme.textPrimary
                     font.family: "Noto Sans"
                     font.pixelSize: 32
@@ -80,7 +73,7 @@ ApplicationWindow {
                     Accessible.name: "Patrimonio netto in unità minori"
                 }
                 Label {
-                    text: backend.currency
+                    text: root.backend.currency
                     color: theme.accent
                     font.family: "Noto Sans"
                     font.pixelSize: 15
@@ -100,9 +93,8 @@ ApplicationWindow {
             onClicked: root.backend.refresh()
         }
         Label {
-            id: feedback
             objectName: "previewFeedback"
-            text: ""
+            text: root.backend.errorMessage
             color: theme.accent
             font.family: "Noto Sans"
             wrapMode: Text.WordWrap

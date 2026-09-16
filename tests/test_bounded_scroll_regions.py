@@ -53,8 +53,24 @@ def test_budget_and_loan_outputs_are_flat_lists_not_nested_neumorphic_cards() ->
     styles = (_WEB_DIR / "scroll-regions.css").read_text(encoding="utf-8")
     app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
 
-    assert '#budget-list>.card,#loan-list>.card{background:transparent;' in styles
-    assert 'box-shadow:none' in styles
+    # Assert the shared visual contract, not the order of selectors in the CSS source.
+    flat_list_selectors = {
+        "#budget-list>.card",
+        "#loan-list>.card",
+        "#scheduled-list>.card",
+    }
+    matching_declarations = []
+    for rule in styles.split("}"):
+        if "{" not in rule:
+            continue
+        selector_text, declarations = rule.split("{", 1)
+        selectors = {selector.strip() for selector in selector_text.split(",")}
+        if flat_list_selectors <= selectors:
+            matching_declarations.append(declarations)
+    assert any(
+        "background:transparent" in declarations and "box-shadow:none" in declarations
+        for declarations in matching_declarations
+    )
     assert '#budget-list [data-budget-delete]' in styles
     assert '-webkit-mask:url("data:image/svg+xml' in styles
     assert 'data-budget-delete="${item.id}"' in app_js

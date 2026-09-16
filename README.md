@@ -1,21 +1,24 @@
 # Finance Tracker
 
-Local-first personal finance tracker for desktop Linux, built with Python, PySide6/Qt WebEngine, local HTML/CSS/vanilla JS, QWebChannel and SQLite.
+Local-first personal finance tracker for desktop Linux. The complete V1 frontend currently uses Python, PySide6/Qt WebEngine, local HTML/CSS/vanilla JS and QWebChannel with a SQLite backend. Native Qt Quick/QML migration is in progress.
 
 ## Current status
 
-V1 is implemented and integrated on `main` through M11. The final post-merge integration gate passes installation, compile, the full 236-test suite (including stress and architecture invariants) and Ruff. The mandatory M11 strategic review concluded `STRATEGIC AFTER CLEANUP`, with no known correctness or architectural blocker remaining for the implemented V1 scope.
+V1 features through M11 are integrated on `main`. The repository's [GitHub Actions workflow](https://github.com/Cartaz/Finance_Tracker/actions/workflows/test.yml) is the authoritative result for the current commit; do not treat historical test counts or previous green runs as the status of a newer commit. The observed baseline failure on 2026-08-29 was corrected and the fix passed CI in [run 35150817684](https://github.com/Cartaz/Finance_Tracker/actions/runs/35150817684). **V1 has not passed the required real-machine release gate:** see [issue #11](https://github.com/Cartaz/Finance_Tracker/issues/11) and [V1_RELEASE_AUDIT.md](V1_RELEASE_AUDIT.md). Do not create `v1.0.0` until that gate passes.
+
+A separate opt-in, **read-only technical QML preview** exercises the real controller and database; it is not a replacement for the complete Web UI. See [the QML audit and migration plan](AUDIT_QML_MIGRATION_2026-09-16.md) and [issue #12](https://github.com/Cartaz/Finance_Tracker/issues/12). No domain/database migration or user-data conversion is required for this preview.
 
 ## Implemented
 
 ### Desktop architecture
 
-- Python 3.12+ with PySide6/Qt6, Qt WebEngine and QWebChannel;
-- local/buildless HTML, CSS and vanilla JavaScript frontend;
+- Python 3.12+ with PySide6/Qt6, Qt WebEngine and QWebChannel for the complete frontend;
+- opt-in `QQmlApplicationEngine` preview with a focused Python QObject adapter and local QML, without QWebChannel;
+- local/buildless HTML, CSS and vanilla JavaScript production frontend;
 - one main QWebChannel backend proxy shared by frontend modules;
 - local-only in-app navigation, with external HTTP(S) navigation opened in the system browser;
 - dark neumorphic UI using `rgb(20,20,20)` surfaces and `rgb(255,102,0)` accent;
-- minimum window size 1200×800;
+- production Web window minimum size 1200×800; QML technical preview has its own smaller minimum;
 - XDG-based data/config/cache paths;
 - SQLite with foreign-key enforcement, WAL mode and migrations through schema v9.
 
@@ -78,12 +81,12 @@ V1 is implemented and integrated on `main` through M11. The final post-merge int
 - created backup files are verified SQLite snapshots and are restricted to owner-only permissions (`0600`) when supported;
 - external restore sources are opened read-only;
 - every restore verifies the source, creates a safety backup of the current state, copies to staging, migrates the staged database and performs full integrity/foreign-key checks before touching the live database;
-- the final live swap is rollback-safe: failure to reopen the prepared database restores the previous live file;
+- the live swap attempts rollback if reopening the prepared database fails; additional checkpoint/sidecar failure injection is a pending release gate;
 - heavy backup/restore I/O, migration and integrity verification run through a Qt background worker;
 - restore activates maintenance mode so application mutations cannot race the safety snapshot and final swap;
 - backup/export/restore lifecycle operations are serialized;
 - the native window blocks normal application close while owned background persistence I/O is active;
-- restore completion reloads the local frontend so all UI state is rebuilt from the newly canonical database.
+- restore completion reloads the Web frontend so all UI state is rebuilt from the newly canonical database.
 
 ## Strategic programming directive
 
@@ -95,7 +98,7 @@ The review outcome must be `STRATEGIC`, `STRATEGIC AFTER CLEANUP`, or `BLOCKED`.
 
 - Linux desktop; CachyOS/Arch + KDE is first-class
 - Python 3.12+
-- Qt runtime dependencies required by PySide6/Qt WebEngine
+- Qt runtime dependencies required by PySide6/Qt WebEngine; QML preview also needs Qt Quick/Controls modules included with PySide6
 
 ## Install
 
@@ -108,9 +111,19 @@ No virtualenv activation is required.
 
 ## Run
 
+Complete production frontend:
+
 ```bash
 .venv/bin/python main.py
 ```
+
+Read-only Qt Quick technical preview (shows real book name, currency and exact net worth in **minor units**, *not* formatted euro amounts; no transaction controls):
+
+```bash
+.venv/bin/python main.py --qml-preview
+```
+
+The preview deliberately does not duplicate canonical state or allow accounting mutations. Use the standard frontend for all ordinary work. Test on CachyOS/KDE before treating native integration as validated.
 
 ## Validate
 
@@ -120,7 +133,7 @@ No virtualenv activation is required.
 .venv/bin/ruff check main.py config core ui tests
 ```
 
-After validation, perform the mandatory milestone review in `STRATEGIC_PROGRAMMING.md` before declaring a milestone complete.
+The CI runs the QML smoke test offscreen with software rendering. After validation, perform the mandatory milestone review in `STRATEGIC_PROGRAMMING.md` before declaring a milestone complete.
 
 ## Data locations
 

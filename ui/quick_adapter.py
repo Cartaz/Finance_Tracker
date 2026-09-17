@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import datetime, timezone
 
-from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.app_controller import AppController
 from core.errors import FinanceTrackerError
@@ -80,7 +80,8 @@ class QuickPreviewAdapter(QObject):
                 currency = str(initial["bookCurrency"])
                 net_worth = "—"
             else:
-                today = date.today()
+                # Use the machine's local calendar date, with a timezone-aware clock.
+                today = datetime.now(timezone.utc).astimezone().date()
                 report = self._controller.dashboard(
                     {
                         "startDate": today.replace(day=1).isoformat(),

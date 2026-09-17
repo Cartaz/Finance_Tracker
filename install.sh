@@ -53,11 +53,16 @@ fi
 import sqlite3
 import PySide6
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
+from PySide6.QtQuickControls2 import QQuickStyle
 
 print(f"[OK] PySide6 {PySide6.__version__}")
 print(f"[OK] SQLite {sqlite3.sqlite_version}")
 print(f"[OK] Qt WebEngine {QWebEngineView.__name__}")
+print(f"[OK] Qt Quick {QQuickWindow.__name__} / {QQmlApplicationEngine.__name__} / {QQuickStyle.__name__}")
 PY
 
 echo "[OK] Installation complete"
 echo "[INFO] Launch with: .venv/bin/python main.py"
+echo "[INFO] Read-only QML preview: .venv/bin/python main.py --qml-preview"

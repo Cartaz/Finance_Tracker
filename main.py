@@ -103,7 +103,9 @@ def main() -> int:
         forecast_service = ForecastService(scheduled_service, fx_service, loan_service)
         app_state_service = AppStateService(database, account_service)
         backup_controller = BackupController(BackupService(database, BACKUP_DIR))
-        app = QApplication(sys.argv)
+        preview_requested = "--qml-preview" in sys.argv
+        qt_args = [arg for arg in sys.argv if arg != "--qml-preview"]
+        app = QApplication(qt_args)
         app.setApplicationName("Finance Tracker")
         controller = AppController(
             database,
@@ -122,6 +124,14 @@ def main() -> int:
             loan_service,
         )
         backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
+        if preview_requested:
+            from ui.quick_shell import launch_quick_preview
+
+            engine = launch_quick_preview(controller, backup_tasks)
+            exit_code = app.exec()
+            engine.deleteLater()
+            return exit_code
+
         bridge = Bridge(controller, backup_tasks)
         window = MainWindow(bridge, backup_tasks)
         window.show()

@@ -58,6 +58,7 @@
     backend = sharedBackend;
     backend.maintenanceChanged.connect((active) => setMaintenance(active));
     backend.backupTaskFinished.connect(async (result) => {
+      if (result.operation === "CSV_IMPORT") return;
       if (!result?.ok) {
         showToast(result?.error?.message || "Operazione backup fallita", true);
         return;

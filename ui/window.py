@@ -17,6 +17,14 @@ from config.constants import BACKUP_DIR
 from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 
+_WEB_ROOT = Path(__file__).resolve().parent / "web"
+
+
+def _local_resource_allowed(url: QUrl) -> bool:
+    if url.scheme().lower() == "file":
+        return Path(url.toLocalFile()).resolve().is_relative_to(_WEB_ROOT)
+    return url.toString() in {"about:blank", "qrc:///qtwebchannel/qwebchannel.js"}
+
 
 class RemoteRequestBlocker(QWebEngineUrlRequestInterceptor):
     """Block remote embedded resources while main-frame navigation exits the app."""
@@ -28,19 +36,20 @@ class RemoteRequestBlocker(QWebEngineUrlRequestInterceptor):
             info.resourceType()
             == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame
         )
-        if (
-            not is_main_frame
-            and info.requestUrl().scheme().lower() in self._REMOTE_SCHEMES
+        if not is_main_frame and (
+            info.requestUrl().scheme().lower() in self._REMOTE_SCHEMES
+            or not _local_resource_allowed(info.requestUrl())
         ):
             info.block(True)
 
 
 class LocalOnlyPage(QWebEnginePage):
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
-        if url.scheme() in {"http", "https"}:
-            QDesktopServices.openUrl(url)
+        if url.scheme().lower() in {"http", "https"}:
+            if is_main_frame:
+                QDesktopServices.openUrl(url)
             return False
-        return url.scheme() in {"file", "qrc", "about"}
+        return _local_resource_allowed(url)
 
 
 class MainWindow(QMainWindow):
@@ -106,7 +115,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Operazione in corso",
-                "Attendi il completamento del backup o del ripristino prima di chiudere Finance Tracker.",
+                "Attendi il completamento dell'importazione, del backup o del ripristino prima di chiudere Finance Tracker.",
             )
             event.ignore()
             return

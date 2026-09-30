@@ -14,7 +14,9 @@ def test_local_page_accepts_local_frontend() -> None:
     app = QApplication.instance() or QApplication([])
     page = LocalOnlyPage()
     try:
-        assert page.acceptNavigationRequest(QUrl("file:///tmp/index.html"), None, True)
+        assert page.acceptNavigationRequest(
+            QUrl.fromLocalFile(str(_WEB_DIR / "index.html")), None, True
+        )
         assert page.acceptNavigationRequest(
             QUrl("qrc:///qtwebchannel/qwebchannel.js"), None, True
         )
@@ -48,10 +50,13 @@ def test_reconciliation_keeps_selected_batch_after_actions() -> None:
     app_js = (_WEB_DIR / "app.js").read_text(encoding="utf-8")
 
     assert 'id="tools-reconciliation-panel"' in index
-    assert 'let currentBatchId = null;' in app_js
-    assert 'currentBatchId = String(batchId);' in app_js
-    assert 'if (currentBatchId) await loadImportBatch(currentBatchId);' in app_js
-    assert '.import-batch:focus' not in app_js
+    assert "let currentBatchId = null;" in app_js
+    assert "currentBatchId = String(batchId);" in app_js
+    assert (
+        "if (currentBatchId) await loadImportBatch(currentBatchId, currentImportOffset);"
+        in app_js
+    )
+    assert ".import-batch:focus" not in app_js
 
 
 def test_reconciliation_ui_uses_structured_candidates_and_safe_file_payload() -> None:
@@ -85,10 +90,10 @@ def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     assert '<option value="WEEKLY">Settimanale</option>' in index
     assert '<option value="DAILY">Giornaliera</option>' in index
     assert '<option value="YEARLY">Annuale</option>' in index
-    assert '>EXPENSE</option>' not in index
-    assert '>INCOME</option>' not in index
-    assert '>REFUND</option>' not in index
-    assert '>TRANSFER</option>' not in index
+    assert ">EXPENSE</option>" not in index
+    assert ">INCOME</option>" not in index
+    assert ">REFUND</option>" not in index
+    assert ">TRANSFER</option>" not in index
     assert 'call("listScheduledTransactions")' in app_js
     assert 'call("createScheduledTransaction"' in app_js
     assert 'call("postDueScheduled"' in app_js
@@ -96,9 +101,9 @@ def test_scheduled_ui_is_backend_driven_and_uses_posting_capabilities() -> None:
     assert "source.postingCapabilities?.[kind]" in app_js
     assert "optionsForAccountIds" in app_js
     assert 'a.type === "INCOME"' not in app_js
-    assert 'a.currency === source.currency' not in app_js
+    assert "a.currency === source.currency" not in app_js
     assert "setInterval(" not in app_js
-    assert "setTimeout(() => $(\"toast\")" in app_js
+    assert 'setTimeout(() => $("toast")' in app_js
     assert "#scheduled-list>.card{background:transparent" in region_styles
     assert "#scheduled-list>.card:last-child{border-bottom:0}" in region_styles
     assert "#scheduled-list>.card>.history-controls button" in region_styles
@@ -152,18 +157,15 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
     assert ".sidebar{min-height:0;overflow:hidden;" in styles
     assert (
         ".content{min-width:0;min-height:0;padding:38px;overflow:auto;"
-        "overscroll-behavior:contain}"
-        in styles
+        "overscroll-behavior:contain}" in styles
     )
     assert (
         "#recent .row,#transactions-list .row{grid-template-columns:120px "
-        "minmax(0,1fr) auto}"
-        in styles
+        "minmax(0,1fr) auto}" in styles
     )
     assert (
         "#transactions>.split{grid-template-columns:minmax(0,2fr) "
-        "minmax(0,3fr)}"
-        in styles
+        "minmax(0,3fr)}" in styles
     )
     assert (
         "#transactions .section-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}"
@@ -171,17 +173,18 @@ def test_desktop_shell_bounds_scroll_and_long_text() -> None:
     )
     assert (
         "#accounts-list .row{grid-template-columns:minmax(0,1fr) "
-        "max-content max-content}"
-        in styles
+        "max-content max-content}" in styles
     )
     assert ".row>*{min-width:0}" in styles
     assert (
         ".row b,.row span,.row small{overflow:hidden;text-overflow:ellipsis;"
-        "white-space:nowrap}"
-        in styles
+        "white-space:nowrap}" in styles
     )
     assert ".transaction-summary{display:grid;gap:3px;min-width:0}" in styles
-    assert ".transaction-description{display:block;color:var(--secondary);font-size:12px}" in styles
+    assert (
+        ".transaction-description{display:block;color:var(--secondary);font-size:12px}"
+        in styles
+    )
     assert ".report-row>*{min-width:0}" in styles
 
 
@@ -190,7 +193,7 @@ def test_transaction_rows_keep_description_visible_with_merchant() -> None:
 
     assert "function transactionRow(t)" in app_js
     assert "const primary = t.payee_name || kindLabel;" in app_js
-    assert "const description = String(t.description || \"\").trim();" in app_js
+    assert 'const description = String(t.description || "").trim();' in app_js
     assert 'class="transaction-description"' in app_js
     assert "snapshot.transactions.map(transactionRow)" in app_js
     assert "t.payee_name || t.description || t.kind" not in app_js

@@ -26,10 +26,20 @@ _DATE_HEADERS = ("date", "bookingdate", "transactiondate", "data", "valuedate")
 _AMOUNT_HEADERS = ("amount", "transactionamount", "importo", "value", "ammontare")
 _CURRENCY_HEADERS = ("currency", "currencycode", "valuta", "ccy")
 _DESCRIPTION_HEADERS = (
-    "description", "descrizione", "details", "causale", "memo", "narrative"
+    "description",
+    "descrizione",
+    "details",
+    "causale",
+    "memo",
+    "narrative",
 )
 _EXTERNAL_ID_HEADERS = (
-    "externalid", "transactionid", "bankid", "reference", "riferimento", "id"
+    "externalid",
+    "transactionid",
+    "bankid",
+    "reference",
+    "riferimento",
+    "id",
 )
 
 
@@ -66,14 +76,20 @@ class ReconciliationService:
         if account.type not in {"ASSET", "LIABILITY"} or account.currency_code is None:
             raise ReconciliationError("imports require a balance account")
         if account.archived or account.placeholder:
-            raise ReconciliationError("imports require an active non-placeholder account")
+            raise ReconciliationError(
+                "imports require an active non-placeholder account"
+            )
 
         source = self._normalize_source(source_name)
         if not isinstance(review_mode, str):
-            raise ReconciliationError("review_mode must be FULL_REVIEW or ASSISTED_REVIEW")
+            raise ReconciliationError(
+                "review_mode must be FULL_REVIEW or ASSISTED_REVIEW"
+            )
         mode = review_mode.strip().upper()
         if mode not in _REVIEW_MODES:
-            raise ReconciliationError("review_mode must be FULL_REVIEW or ASSISTED_REVIEW")
+            raise ReconciliationError(
+                "review_mode must be FULL_REVIEW or ASSISTED_REVIEW"
+            )
         if not isinstance(csv_text, str) or not csv_text.strip():
             raise ReconciliationError("CSV content is empty")
         if len(csv_text.encode("utf-8")) > 10_000_000:
@@ -97,7 +113,9 @@ class ReconciliationService:
                 )
             amount_minor = parse_money(raw["amount"], self._database.currency(currency))
             if amount_minor == 0:
-                raise ReconciliationError(f"row {row_number}: zero amount is not importable")
+                raise ReconciliationError(
+                    f"row {row_number}: zero amount is not importable"
+                )
             description = (raw.get("description") or "").strip()
             external_id = (raw.get("external_id") or "").strip() or None
             if external_id is not None:
@@ -115,7 +133,11 @@ class ReconciliationService:
                     "description": description,
                     "external_id": external_id,
                     "fingerprint": self._fingerprint(
-                        account_id, transaction_date, amount_minor, currency, description
+                        account_id,
+                        transaction_date,
+                        amount_minor,
+                        currency,
+                        description,
                     ),
                 }
             )
@@ -154,9 +176,16 @@ class ReconciliationService:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     (
-                        batch_id, book_id, item["row_number"], item["date"],
-                        item["amount_minor"], item["currency"], item["description"],
-                        item["external_id"], item["fingerprint"], state,
+                        batch_id,
+                        book_id,
+                        item["row_number"],
+                        item["date"],
+                        item["amount_minor"],
+                        item["currency"],
+                        item["description"],
+                        item["external_id"],
+                        item["fingerprint"],
+                        state,
                         matched_transaction_id,
                     ),
                 )
@@ -164,7 +193,11 @@ class ReconciliationService:
         return {"batchId": batch_id, "rowCount": len(prepared), "summary": summary}
 
     def list_batches(self, book_id: int, *, limit: int = 50) -> list[dict[str, object]]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 200
+        ):
             raise ReconciliationError("batch limit must be between 1 and 200")
         rows = self._database.connection.execute(
             """
@@ -178,7 +211,17 @@ class ReconciliationService:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def batch_rows(self, book_id: int, batch_id: int) -> list[dict[str, object]]:
+    def batch_rows(
+        self, book_id: int, batch_id: int, *, offset: int = 0, limit: int | None = None
+    ) -> list[dict[str, object]]:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ReconciliationError("offset must be a non-negative integer")
+        if limit is not None and (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 1000
+        ):
+            raise ReconciliationError("page limit must be between 1 and 1000")
         batch = self._require_batch(book_id, batch_id)
         accounts = self._accounts.list_accounts(book_id)
         source_account_id = int(batch["account_id"])
@@ -186,9 +229,9 @@ class ReconciliationService:
             """
             SELECT id, row_number, transaction_date, amount_minor, currency_code,
                    description, external_id, review_state, matched_transaction_id
-            FROM import_rows WHERE book_id=? AND batch_id=? ORDER BY row_number
+            FROM import_rows WHERE book_id=? AND batch_id=? ORDER BY row_number LIMIT ? OFFSET ?
             """,
-            (book_id, batch_id),
+            (book_id, batch_id, -1 if limit is None else limit, offset),
         ).fetchall()
         return [
             {
@@ -278,7 +321,9 @@ class ReconciliationService:
                 "posting_kind must be EXPENSE, INCOME, REFUND or TRANSFER"
             ) from exc
         if kind not in PostingPolicy.allowed_kinds_for_amount(amount):
-            raise ReconciliationError("posting kind is incompatible with imported amount sign")
+            raise ReconciliationError(
+                "posting kind is incompatible with imported amount sign"
+            )
 
         imported_account = self._accounts.get_account(book_id, int(batch["account_id"]))
         counter = self._accounts.get_account(book_id, counter_account_id)
@@ -294,7 +339,9 @@ class ReconciliationService:
             counter_archived=counter.archived,
             counter_placeholder=counter.placeholder,
         ):
-            raise ReconciliationError("counter account is not eligible for this posting kind")
+            raise ReconciliationError(
+                "counter account is not eligible for this posting kind"
+            )
 
         common = {
             "book_id": book_id,
@@ -511,14 +558,29 @@ class ReconciliationService:
             JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
             LEFT JOIN payees p ON p.id=t.payee_id AND p.book_id=t.book_id
             WHERE t.book_id=? AND e.account_id=? AND t.transaction_date=?
-              AND e.quantity_minor=?
               AND NOT EXISTS (
                   SELECT 1 FROM reconciliation_links l
                   WHERE l.book_id=t.book_id AND l.account_id=? AND l.transaction_id=t.id
               )
+              AND NOT EXISTS (
+                  SELECT 1 FROM import_rows r
+                  JOIN import_batches b ON b.id=r.batch_id AND b.book_id=r.book_id
+                  WHERE r.book_id=t.book_id AND b.account_id=?
+                    AND r.matched_transaction_id=t.id
+                    AND r.review_state IN ('MATCHED', 'POSTED')
+              )
+            GROUP BY t.id
+            HAVING SUM(e.quantity_minor)=?
             ORDER BY t.id
             """,
-            (book_id, account_id, transaction_date, amount_minor, account_id),
+            (
+                book_id,
+                account_id,
+                transaction_date,
+                account_id,
+                account_id,
+                amount_minor,
+            ),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -536,7 +598,8 @@ class ReconciliationService:
             FROM transactions t
             JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
             WHERE t.id=? AND t.book_id=? AND e.account_id=?
-              AND t.transaction_date=? AND e.quantity_minor=?
+              AND t.transaction_date=?
+            GROUP BY t.id HAVING SUM(e.quantity_minor)=?
             LIMIT 1
             """,
             (transaction_id, book_id, account_id, transaction_date, amount_minor),
@@ -592,7 +655,9 @@ class ReconciliationService:
             dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
         except csv.Error:
             dialect = csv.excel
-        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+        reader = csv.DictReader(
+            io.StringIO(text.lstrip("\ufeff")), dialect=dialect, strict=True
+        )
         if not reader.fieldnames:
             raise ReconciliationError("CSV header is missing")
 
@@ -603,7 +668,9 @@ class ReconciliationService:
         ]
         normalized_names = [item[0] for item in headers]
         if len(set(normalized_names)) != len(normalized_names):
-            raise ReconciliationAmbiguousError("CSV contains duplicate normalized headers")
+            raise ReconciliationAmbiguousError(
+                "CSV contains duplicate normalized headers"
+            )
 
         date_col = cls._find_header(headers, _DATE_HEADERS, "date")
         amount_col = cls._find_header(headers, _AMOUNT_HEADERS, "amount")
@@ -611,8 +678,28 @@ class ReconciliationService:
         description_col = cls._find_header(headers, _DESCRIPTION_HEADERS, None)
         external_col = cls._find_header(headers, _EXTERNAL_ID_HEADERS, None)
 
+        try:
+            return cls._read_csv_rows(
+                reader,
+                date_col,
+                amount_col,
+                currency_col,
+                description_col,
+                external_col,
+            )
+        except csv.Error as exc:
+            raise ReconciliationError(f"invalid CSV structure: {exc}") from exc
+
+    @staticmethod
+    def _read_csv_rows(
+        reader, date_col, amount_col, currency_col, description_col, external_col
+    ):
         result: list[dict[str, str]] = []
         for raw in reader:
+            if None in raw or any(value is None for value in raw.values()):
+                raise ReconciliationError(
+                    f"row {reader.line_num}: column count does not match header"
+                )
             if raw is None or not any((value or "").strip() for value in raw.values()):
                 continue
             result.append(
@@ -632,6 +719,8 @@ class ReconciliationService:
                     ),
                 }
             )
+            if len(result) > 10_000:
+                raise ReconciliationError("CSV import is limited to 10000 rows")
         return result
 
     @staticmethod
@@ -645,7 +734,9 @@ class ReconciliationService:
         required: str | None,
     ) -> str | None:
         alias_set = set(aliases)
-        matches = [original for normalized, original in headers if normalized in alias_set]
+        matches = [
+            original for normalized, original in headers if normalized in alias_set
+        ]
         if len(matches) > 1:
             label = required or "optional field"
             raise ReconciliationAmbiguousError(
@@ -693,7 +784,9 @@ class ReconciliationService:
         currency_code: str,
         description: str,
     ) -> str:
-        normalized_description = unicodedata.normalize("NFKC", description).strip().casefold()
+        normalized_description = (
+            unicodedata.normalize("NFKC", description).strip().casefold()
+        )
         normalized_description = _SPACE_RE.sub(" ", normalized_description)
         payload = (
             f"{account_id}|{transaction_date}|{amount_minor}|{currency_code}|"

@@ -76,7 +76,9 @@ class PayeeService:
                 "SELECT book_id FROM payees WHERE id = ?", (payee_id,)
             ).fetchone()
             if other is not None:
-                raise CrossBookReferenceError(f"payee {payee_id} belongs to another book")
+                raise CrossBookReferenceError(
+                    f"payee {payee_id} belongs to another book"
+                )
             raise PayeeNotFoundError(f"unknown payee id: {payee_id}")
         return self._row_to_payee(row)
 
@@ -94,7 +96,9 @@ class PayeeService:
                 )
             return self.get_payee(book_id, payee_id)
         with self._database.transaction() as conn:
-            self._ensure_namespace_available(conn, book_id, normalized, ignore_payee_id=payee_id)
+            self._ensure_namespace_available(
+                conn, book_id, normalized, ignore_payee_id=payee_id
+            )
             conn.execute(
                 "UPDATE payees SET name = ?, normalized_name = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
                 (clean_name, normalized, payee_id, book_id),
@@ -129,7 +133,9 @@ class PayeeService:
         if normalized == payee.normalized_name:
             raise PayeeCollisionError("alias duplicates the canonical payee name")
         with self._database.transaction() as conn:
-            self._ensure_namespace_available(conn, book_id, normalized, ignore_payee_id=payee_id)
+            self._ensure_namespace_available(
+                conn, book_id, normalized, ignore_payee_id=payee_id
+            )
             existing = conn.execute(
                 "SELECT id FROM payee_aliases WHERE book_id = ? AND payee_id = ? AND normalized_alias = ?",
                 (book_id, payee_id, normalized),
@@ -209,7 +215,11 @@ class PayeeService:
             ).fetchall()
             candidates = [(source.name, source.normalized_name, "EXACT")]
             candidates.extend(
-                (str(row["alias"]), str(row["normalized_alias"]), str(row["match_type"]))
+                (
+                    str(row["alias"]),
+                    str(row["normalized_alias"]),
+                    str(row["match_type"]),
+                )
                 for row in aliases
             )
             for _, normalized, _ in candidates:
@@ -225,6 +235,10 @@ class PayeeService:
 
             conn.execute(
                 "UPDATE transactions SET payee_id = ? WHERE book_id = ? AND payee_id = ?",
+                (target_id, book_id, source_id),
+            )
+            conn.execute(
+                "UPDATE scheduled_transactions SET payee_id = ?, updated_at = datetime('now') WHERE book_id = ? AND payee_id = ?",
                 (target_id, book_id, source_id),
             )
             conn.execute(
@@ -252,7 +266,9 @@ class PayeeService:
             )
         return self.get_payee(book_id, target_id)
 
-    def suggest_payees(self, book_id: int, query: str = "", *, limit: int = 5) -> list[PayeeSuggestion]:
+    def suggest_payees(
+        self, book_id: int, query: str = "", *, limit: int = 5
+    ) -> list[PayeeSuggestion]:
         if limit < 1 or limit > 50:
             raise ValidationError("suggestion limit must be between 1 and 50")
         normalized_query = "" if not query.strip() else normalize_payee_text(query)
@@ -274,7 +290,9 @@ class PayeeService:
         ).fetchall()
         alias_map: dict[int, list[str]] = {}
         for row in aliases:
-            alias_map.setdefault(int(row["payee_id"]), []).append(str(row["normalized_alias"]))
+            alias_map.setdefault(int(row["payee_id"]), []).append(
+                str(row["normalized_alias"])
+            )
 
         ranked: list[tuple[tuple[object, ...], PayeeSuggestion]] = []
         for row in rows:
@@ -300,8 +318,21 @@ class PayeeService:
                 continue
             usage = int(row["usage_count"])
             last_used = None if row["last_used"] is None else str(row["last_used"])
-            suggestion = PayeeSuggestion(payee_id, str(row["name"]), usage, last_used, matched_by)
-            ranked.append(((relevance, -usage, "" if last_used is None else "~" + last_used, name_norm, payee_id), suggestion))
+            suggestion = PayeeSuggestion(
+                payee_id, str(row["name"]), usage, last_used, matched_by
+            )
+            ranked.append(
+                (
+                    (
+                        relevance,
+                        -usage,
+                        "" if last_used is None else "~" + last_used,
+                        name_norm,
+                        payee_id,
+                    ),
+                    suggestion,
+                )
+            )
 
         ranked.sort(key=lambda item: item[0])
         # last_used is handled explicitly after relevance/usage so newer ISO timestamps win.
@@ -320,7 +351,9 @@ class PayeeService:
             "SELECT id, alias, match_type FROM payee_aliases WHERE book_id = ? AND payee_id = ? ORDER BY normalized_alias",
             (book_id, payee_id),
         ).fetchall()
-        return [(int(row["id"]), str(row["alias"]), str(row["match_type"])) for row in rows]
+        return [
+            (int(row["id"]), str(row["alias"]), str(row["match_type"])) for row in rows
+        ]
 
     def _ensure_namespace_available(
         self,
@@ -338,7 +371,9 @@ class PayeeService:
         if canonical is not None:
             owner = int(canonical["id"])
             if owner not in {ignore_payee_id, allow_payee_id}:
-                raise PayeeCollisionError("payee name collides with an existing canonical name")
+                raise PayeeCollisionError(
+                    "payee name collides with an existing canonical name"
+                )
         alias = conn.execute(
             "SELECT payee_id FROM payee_aliases WHERE book_id = ? AND normalized_alias = ?",
             (book_id, normalized),

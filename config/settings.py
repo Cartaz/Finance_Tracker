@@ -24,10 +24,20 @@ class Settings:
     reconciliation_review_mode: str = DEFAULT_RECONCILIATION_REVIEW_MODE
 
     def validate(self) -> None:
-        if len(self.book_currency) != 3 or not self.book_currency.isalpha():
+        if (
+            not isinstance(self.book_currency, str)
+            or len(self.book_currency) != 3
+            or not self.book_currency.isascii()
+            or not self.book_currency.isalpha()
+        ):
             raise ValueError("book_currency must be a three-letter currency code")
         self.book_currency = self.book_currency.upper()
-        if self.reconciliation_review_mode not in _ALLOWED_REVIEW_MODES:
+        if not isinstance(self.locale, str) or not self.locale.strip():
+            raise ValueError("locale must be non-empty text")
+        if (
+            not isinstance(self.reconciliation_review_mode, str)
+            or self.reconciliation_review_mode not in _ALLOWED_REVIEW_MODES
+        ):
             raise ValueError("invalid reconciliation_review_mode")
 
 
@@ -43,8 +53,10 @@ class SettingsStore:
 
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            log.warning("Could not load settings from %s; using defaults: %s", self._path, exc)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            log.warning(
+                "Could not load settings from %s; using defaults: %s", self._path, exc
+            )
             settings = Settings()
             settings.validate()
             return settings

@@ -66,7 +66,9 @@ class AppController:
             self._categories,
             ledger_service,
         )
-        self._app_state = app_state_service or AppStateService(database, account_service)
+        self._app_state = app_state_service or AppStateService(
+            database, account_service
+        )
         self._budgets = budget_service or BudgetService(
             database,
             self._reporting,
@@ -74,7 +76,9 @@ class AppController:
             account_service,
             self._categories,
         )
-        self._loans = loan_service or LoanService(database, account_service, ledger_service)
+        self._loans = loan_service or LoanService(
+            database, account_service, ledger_service
+        )
         self._forecast = forecast_service or ForecastService(
             self._scheduled, self._fx, self._loans
         )
@@ -91,7 +95,11 @@ class AppController:
             "needsSetup": book is None,
             "book": None
             if book is None
-            else {"id": book.id, "name": book.name, "currency": book.base_currency_code},
+            else {
+                "id": book.id,
+                "name": book.name,
+                "currency": book.base_currency_code,
+            },
         }
 
     def setup(self, payload: dict[str, object]) -> dict[str, object]:
@@ -197,7 +205,9 @@ class AppController:
             )
         )
 
-    def loan_rate_revisions(self, payload: dict[str, object]) -> list[dict[str, object]]:
+    def loan_rate_revisions(
+        self, payload: dict[str, object]
+    ) -> list[dict[str, object]]:
         book = self._require_book()
         return TransportSerializer.serialize(
             self._loans.list_rate_revisions(
@@ -321,16 +331,43 @@ class AppController:
         ]
 
     def import_csv(self, payload: dict[str, object]) -> dict[str, object]:
+        return self._reconciliation.import_csv(**self._csv_arguments(payload))
+
+    def csv_import_task(self, payload: dict[str, object]):
+        """Prepare immutable arguments; the task owns its worker SQLite connection."""
+        arguments = self._csv_arguments(payload)
+        path = self._database.path
+        # Release the UI read snapshot before maintenance hands work to a worker.
+        # Domain mutations are committed by their canonical services already.
+        self._database.connection.commit()
+
+        def run():
+            worker_database = Database(path)
+            try:
+                accounts = AccountService(worker_database)
+                service = ReconciliationService(
+                    worker_database,
+                    accounts,
+                    LedgerService(worker_database),
+                    PayeeService(worker_database),
+                )
+                return service.import_csv(**arguments)
+            finally:
+                worker_database.close()
+
+        return run
+
+    def _csv_arguments(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
-        return self._reconciliation.import_csv(
-            book_id=book.id,
-            account_id=self._positive_id(payload.get("accountId")),
-            source_name=str(payload.get("sourceName", "")),
-            csv_text=str(payload.get("csvText", "")),
-            review_mode=str(
-                payload.get("reviewMode", self._settings.reconciliation_review_mode)
+        return {
+            "book_id": book.id,
+            "account_id": self._positive_id(payload.get("accountId")),
+            "source_name": payload.get("sourceName", ""),
+            "csv_text": payload.get("csvText", ""),
+            "review_mode": payload.get(
+                "reviewMode", self._settings.reconciliation_review_mode
             ),
-        )
+        }
 
     def list_import_batches(self) -> list[dict[str, object]]:
         book = self._require_book()
@@ -340,7 +377,10 @@ class AppController:
         book = self._require_book()
         return TransportSerializer.serialize(
             self._reconciliation.batch_rows(
-                book.id, self._positive_id(payload.get("batchId"))
+                book.id,
+                self._positive_id(payload.get("batchId")),
+                offset=self._integer(payload.get("offset", 0), "offset"),
+                limit=self._integer(payload.get("limit", 101), "limit"),
             )
         )
 
@@ -383,10 +423,7 @@ class AppController:
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
         payee = payload.get("payeeId")
-        try:
-            interval = int(payload.get("interval", 1))
-        except (TypeError, ValueError) as exc:
-            raise ValidationError("invalid schedule interval") from exc
+        interval = self._integer(payload.get("interval", 1), "schedule interval")
         item = self._scheduled.create_schedule(
             book_id=book.id,
             kind=str(payload.get("kind", "")),
@@ -428,10 +465,9 @@ class AppController:
     def post_due_scheduled(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
         schedule_id = payload.get("scheduleId")
-        try:
-            max_occurrences = int(payload.get("maxOccurrences", 1000))
-        except (TypeError, ValueError) as exc:
-            raise ValidationError("invalid occurrence limit") from exc
+        max_occurrences = self._integer(
+            payload.get("maxOccurrences", 1000), "occurrence limit"
+        )
         posted = self._scheduled.post_due(
             book_id=book.id,
             as_of_date=str(payload.get("asOfDate", "")),
@@ -450,7 +486,9 @@ class AppController:
         book = self._require_book()
         account_type = str(payload.get("type", "")).strip().upper()
         name = str(payload.get("name", ""))
-        placeholder = bool(payload.get("placeholder", False))
+        placeholder = payload.get("placeholder", False)
+        if not isinstance(placeholder, bool):
+            raise ValidationError("placeholder must be boolean")
 
         if account_type in {"EXPENSE", "INCOME"}:
             parent_value = payload.get("parentId")
@@ -537,10 +575,14 @@ class AppController:
         destination_id = self._positive_id(payload.get("destinationAccountId"))
         income_id = self._positive_id(payload.get("incomeAccountId"))
         destination = self._accounts.get_account(book.id, destination_id)
-        if destination.type not in {"ASSET", "LIABILITY"} or destination.currency_code is None:
+        if (
+            destination.type not in {"ASSET", "LIABILITY"}
+            or destination.currency_code is None
+        ):
             raise ValidationError("destination must be a balance account")
         amount = parse_money_magnitude(
-            payload.get("amount", ""), self._database.currency(destination.currency_code)
+            payload.get("amount", ""),
+            self._database.currency(destination.currency_code),
         )
         transaction = self._ledger.create_income(
             book_id=book.id,
@@ -623,19 +665,14 @@ class AppController:
 
     @staticmethod
     def _positive_id(value: object) -> int:
-        if isinstance(value, bool):
-            raise ValidationError("invalid identifier")
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValidationError("invalid identifier") from exc
-        if parsed < 1:
+        parsed = AppController._integer(value, "identifier")
+        if not 1 <= parsed <= (1 << 63) - 1:
             raise ValidationError("invalid identifier")
         return parsed
 
     @staticmethod
     def _integer(value: object, field: str) -> int:
-        if isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise ValidationError(f"invalid {field}")
         try:
             return int(value)
@@ -648,5 +685,13 @@ class AppController:
             return {
                 "ok": False,
                 "error": {"code": type(exc).__name__, "message": str(exc)},
+            }
+        if isinstance(exc, (TypeError, ValueError)):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "ValidationError",
+                    "message": "Invalid input type or value",
+                },
             }
         raise exc

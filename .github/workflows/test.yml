@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 15
     env:
       QT_QPA_PLATFORM: offscreen
+      QTWEBENGINE_DISABLE_SANDBOX: "1"
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --disable-dev-shm-usage
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -33,6 +35,7 @@ jobs:
             libxcb-cursor0 \
             libdbus-1-3 \
             libnss3
+          sudo apt-get install -y --no-install-recommends libxtst6 libxkbfile1
 
       - name: Install from external working directory
         run: |
@@ -77,6 +80,7 @@ jobs:
             libxcb-cursor0 \
             libdbus-1-3 \
             libnss3
+          sudo apt-get install -y --no-install-recommends libxtst6 libxkbfile1
 
       - name: Install from external working directory
         run: |

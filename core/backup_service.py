@@ -171,35 +171,43 @@ class BackupService:
         live.parent.mkdir(parents=True, exist_ok=True)
         rollback = live.parent / f".{live.name}.rollback-{uuid4().hex}.tmp"
 
-        self._database.checkpoint()
-        self._database.close()
-        self._remove_sidecars(live)
-
+        original_moved = False
+        failed = live.parent / f".{live.name}.failed-{uuid4().hex}.tmp"
         try:
+            self._database.checkpoint()
+            self._database.close()
+            self._remove_sidecars(live)
             if live.exists():
                 live.replace(rollback)
+                original_moved = True
             staging.replace(live)
             self._remove_sidecars(live)
             self._database.open()
         except Exception as exc:
-            self._database.close()
-            failed = live.parent / f".{live.name}.failed-{uuid4().hex}.tmp"
-            if live.exists():
-                live.replace(failed)
-            if rollback.exists():
-                rollback.replace(live)
-            self._remove_sidecars(live)
             try:
+                # Until the original has moved, live is still the original. Never
+                # quarantine/delete it after a failed first rename or checkpoint.
+                if original_moved:
+                    self._database.close()
+                    if live.exists():
+                        live.replace(failed)
+                    self._remove_sidecars(live)
+                    rollback.replace(live)
+                if not live.is_file():
+                    raise BackupError("previous live database is missing")
                 self._database.open()
             except Exception as rollback_exc:
+                # Keep rollback/failed files and the verified safety snapshot
+                # when recovery itself fails; never delete recoverable evidence.
                 raise BackupError(
                     "restore failed and the previous database could not be reopened"
                 ) from rollback_exc
-            finally:
-                failed.unlink(missing_ok=True)
+            self._cleanup_temporary(failed)
             raise BackupError("restore failed; previous database was restored") from exc
         else:
-            rollback.unlink(missing_ok=True)
+            self._cleanup_temporary(rollback)
+        finally:
+            self._cleanup_temporary(staging)
 
         return {
             "restoredFrom": plan.source.name,
@@ -228,6 +236,7 @@ class BackupService:
         source_conn = cls._connect_readonly(source)
         target_conn = sqlite3.connect(destination, autocommit=True)
         try:
+            cls._restrict_file_permissions(destination)
             source_conn.backup(target_conn)
         except sqlite3.Error as exc:
             raise BackupError(f"SQLite backup failed: {exc}") from exc
@@ -304,6 +313,13 @@ class BackupService:
             path.chmod(0o600)
         except OSError as exc:
             log.warning("Could not restrict backup permissions for %s: %s", path, exc)
+
+    @staticmethod
+    def _cleanup_temporary(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            log.exception("Could not remove temporary backup file %s", path)
 
     @staticmethod
     def _remove_sidecars(path: Path) -> None:

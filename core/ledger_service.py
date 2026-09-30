@@ -89,7 +89,9 @@ class LedgerService:
     ) -> TransactionRecord:
         if connection is not None:
             transaction_id = self._create_transaction(draft, connection)
-            return self.get_transaction(draft.book_id, transaction_id, connection=connection)
+            return self.get_transaction(
+                draft.book_id, transaction_id, connection=connection
+            )
 
         with self._database.transaction() as conn:
             transaction_id = self._create_transaction(draft, conn)
@@ -372,7 +374,9 @@ class LedgerService:
             kind=str(row["kind"]),
             transaction_date=str(row["transaction_date"]),
             transaction_time=(
-                None if row["transaction_time"] is None else str(row["transaction_time"])
+                None
+                if row["transaction_time"] is None
+                else str(row["transaction_time"])
             ),
             currency_code=str(row["currency_code"]),
             description=str(row["description"]),
@@ -393,9 +397,10 @@ class LedgerService:
         normalized_kind = draft.kind.upper()
         if normalized_kind not in _TRANSACTION_KINDS:
             raise LedgerValidationError(f"unsupported transaction kind: {draft.kind}")
-        self._validate_date(draft.transaction_date)
+        transaction_date = self._validate_date(draft.transaction_date)
+        transaction_time = None
         if draft.transaction_time is not None:
-            self._validate_time(draft.transaction_time)
+            transaction_time = self._validate_time(draft.transaction_time)
         currency_code = self._database.currency(draft.currency_code).code
 
         if len(draft.entries) < 2:
@@ -403,7 +408,9 @@ class LedgerService:
         self._validate_original_amount(draft)
         self._validate_integer_values(draft.entries)
         if sum(entry.value_minor for entry in draft.entries) != 0:
-            raise UnbalancedTransactionError("transaction entry values must sum to zero")
+            raise UnbalancedTransactionError(
+                "transaction entry values must sum to zero"
+            )
 
         accounts = self._load_accounts(conn, draft.book_id, draft.entries)
         for entry in draft.entries:
@@ -438,8 +445,8 @@ class LedgerService:
             (
                 draft.book_id,
                 normalized_kind,
-                draft.transaction_date,
-                draft.transaction_time,
+                transaction_date,
+                transaction_time,
                 currency_code,
                 draft.description.strip(),
                 draft.notes.strip(),
@@ -495,7 +502,9 @@ class LedgerService:
         if len(accounts) == len(account_ids):
             return accounts
 
-        missing = [account_id for account_id in account_ids if account_id not in accounts]
+        missing = [
+            account_id for account_id in account_ids if account_id not in accounts
+        ]
         for account_id in missing:
             exists = conn.execute(
                 "SELECT book_id FROM accounts WHERE id = ?",
@@ -521,9 +530,13 @@ class LedgerService:
         if row is None:
             raise AccountNotFoundError(f"unknown account id: {account_id}")
         if int(row["book_id"]) != book_id:
-            raise CrossBookReferenceError(f"account {account_id} belongs to another book")
+            raise CrossBookReferenceError(
+                f"account {account_id} belongs to another book"
+            )
         if str(row["type"]) not in _BALANCE_TYPES:
-            raise LedgerValidationError("source/destination account must be an asset or liability")
+            raise LedgerValidationError(
+                "source/destination account must be an asset or liability"
+            )
         if str(row["currency_code"]) != requested:
             raise LedgerValidationError(
                 "convenience transaction currency must match the balance account currency"
@@ -542,7 +555,9 @@ class LedgerService:
         if row is None:
             raise AccountNotFoundError(f"unknown account id: {account_id}")
         if int(row["book_id"]) != book_id:
-            raise CrossBookReferenceError(f"account {account_id} belongs to another book")
+            raise CrossBookReferenceError(
+                f"account {account_id} belongs to another book"
+            )
         if str(row["type"]) != expected_type:
             raise LedgerValidationError(
                 f"account {account_id} must be of type {expected_type}"
@@ -556,7 +571,9 @@ class LedgerService:
     @staticmethod
     def _validate_integer_values(entries: tuple[EntryDraft, ...]) -> None:
         for entry in entries:
-            if isinstance(entry.value_minor, bool) or not isinstance(entry.value_minor, int):
+            if isinstance(entry.value_minor, bool) or not isinstance(
+                entry.value_minor, int
+            ):
                 raise LedgerValidationError("entry value_minor must be an integer")
             LedgerService._require_storage_range(entry.value_minor, "entry value_minor")
             if entry.value_minor == 0:
@@ -577,7 +594,9 @@ class LedgerService:
         if bool(account["archived"]):
             raise AccountArchivedError(f"account {entry.account_id} is archived")
         if bool(account["placeholder"]):
-            raise AccountPlaceholderError(f"account {entry.account_id} is a placeholder")
+            raise AccountPlaceholderError(
+                f"account {entry.account_id} is a placeholder"
+            )
 
         account_type = str(account["type"])
         if account_type in _BALANCE_TYPES:
@@ -641,17 +660,20 @@ class LedgerService:
             )
 
     @staticmethod
-    def _validate_date(value: str) -> None:
+    def _validate_date(value: str) -> str:
         try:
-            date.fromisoformat(value)
-        except ValueError as exc:
+            return date.fromisoformat(value).isoformat()
+        except (TypeError, ValueError) as exc:
             raise LedgerValidationError("date must use ISO YYYY-MM-DD format") from exc
 
     @staticmethod
-    def _validate_time(value: str) -> None:
+    def _validate_time(value: str) -> str:
         try:
-            time.fromisoformat(value)
-        except ValueError as exc:
+            parsed = time.fromisoformat(value)
+            if parsed.tzinfo is not None:
+                raise ValueError("local time cannot include an offset")
+            return parsed.isoformat()
+        except (TypeError, ValueError) as exc:
             raise LedgerValidationError("time must use ISO HH:MM[:SS] format") from exc
 
     @staticmethod

@@ -56,9 +56,9 @@ class AccountService:
                     "asset and liability accounts require currency and tracking start date"
                 )
             currency_code = self._database.currency(currency_code).code
-            self._validate_date(tracking_start_date)
+            tracking_start_date = self._validate_date(tracking_start_date)
             if tracking_start_time is not None:
-                self._validate_time(tracking_start_time)
+                tracking_start_time = self._validate_time(tracking_start_time)
         elif any(
             value is not None
             for value in (currency_code, tracking_start_date, tracking_start_time)
@@ -115,7 +115,9 @@ class AccountService:
             )
         return self._row_to_account(row)
 
-    def list_accounts(self, book_id: int, *, include_archived: bool = False) -> list[Account]:
+    def list_accounts(
+        self, book_id: int, *, include_archived: bool = False
+    ) -> list[Account]:
         sql = """
             SELECT id, book_id, parent_id, type, name, currency_code,
                    tracking_start_date, tracking_start_time, placeholder, archived
@@ -179,7 +181,9 @@ class AccountService:
     def native_balance(self, book_id: int, account_id: int) -> int:
         account = self.get_account(book_id, account_id)
         if account.type not in _BALANCE_TYPES:
-            raise ValidationError("native balances exist only for asset and liability accounts")
+            raise ValidationError(
+                "native balances exist only for asset and liability accounts"
+            )
         value = self._database.connection.execute(
             "SELECT COALESCE(SUM(quantity_minor), 0) FROM entries WHERE account_id = ? AND book_id = ?",
             (account_id, book_id),
@@ -229,17 +233,20 @@ class AccountService:
         return int(cursor.lastrowid)
 
     @staticmethod
-    def _validate_date(value: str) -> None:
+    def _validate_date(value: str) -> str:
         try:
-            date.fromisoformat(value)
-        except ValueError as exc:
+            return date.fromisoformat(value).isoformat()
+        except (TypeError, ValueError) as exc:
             raise ValidationError("date must use ISO YYYY-MM-DD format") from exc
 
     @staticmethod
-    def _validate_time(value: str) -> None:
+    def _validate_time(value: str) -> str:
         try:
-            time.fromisoformat(value)
-        except ValueError as exc:
+            parsed = time.fromisoformat(value)
+            if parsed.tzinfo is not None:
+                raise ValueError("local time cannot include an offset")
+            return parsed.isoformat()
+        except (TypeError, ValueError) as exc:
             raise ValidationError("time must use ISO HH:MM[:SS] format") from exc
 
     @staticmethod
@@ -250,12 +257,18 @@ class AccountService:
             parent_id=None if row["parent_id"] is None else int(row["parent_id"]),
             type=str(row["type"]),
             name=str(row["name"]),
-            currency_code=None if row["currency_code"] is None else str(row["currency_code"]),
+            currency_code=None
+            if row["currency_code"] is None
+            else str(row["currency_code"]),
             tracking_start_date=(
-                None if row["tracking_start_date"] is None else str(row["tracking_start_date"])
+                None
+                if row["tracking_start_date"] is None
+                else str(row["tracking_start_date"])
             ),
             tracking_start_time=(
-                None if row["tracking_start_time"] is None else str(row["tracking_start_time"])
+                None
+                if row["tracking_start_time"] is None
+                else str(row["tracking_start_time"])
             ),
             placeholder=bool(row["placeholder"]),
             archived=bool(row["archived"]),

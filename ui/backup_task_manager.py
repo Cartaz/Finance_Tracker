@@ -16,7 +16,11 @@ log = logging.getLogger(__name__)
 
 
 class BackupTaskManager(QObject):
-    """Owns Qt background-task and maintenance lifecycle for backup/restore."""
+    """Owns serialized persistence tasks, maintenance and close protection.
+
+    CSV staging shares this lifecycle so it cannot race backup/restore. Workers
+    own their SQLite connections; no GUI connection is handed to another thread.
+    """
 
     finished = Signal("QVariant")
     maintenanceChanged = Signal(bool)
@@ -61,6 +65,9 @@ class BackupTaskManager(QObject):
     def start_managed_backup(self) -> dict[str, object]:
         return self._start_background("BACKUP_CREATE", self._controller.create_backup)
 
+    def start_csv_import(self, function: Callable[[], object]) -> dict[str, object]:
+        return self._start_background("CSV_IMPORT", function, maintenance=True)
+
     def start_export_backup(self) -> dict[str, object]:
         if self._export_picker is None:
             raise BackupError("native export dialog is unavailable")
@@ -99,7 +106,9 @@ class BackupTaskManager(QObject):
         maintenance: bool = False,
     ) -> dict[str, object]:
         if self._tasks or self._maintenance:
-            raise BackupError("another backup or restore operation is already in progress")
+            raise BackupError(
+                "another backup or restore operation is already in progress"
+            )
         task_id = uuid4().hex
         worker = BackgroundTask(task_id, function)
         worker.signals.succeeded.connect(self._on_task_succeeded)
@@ -135,6 +144,7 @@ class BackupTaskManager(QObject):
                 }
             )
             return
+        self._set_maintenance(False)
         self.finished.emit(
             {"taskId": task_id, "operation": operation, "ok": True, "data": result}
         )
@@ -146,6 +156,7 @@ class BackupTaskManager(QObject):
         if operation.startswith("RESTORE_"):
             self._finish_restore_failure(task_id, operation, exc)
             return
+        self._set_maintenance(False)
         self.finished.emit(
             {
                 "taskId": task_id,
@@ -154,7 +165,9 @@ class BackupTaskManager(QObject):
             }
         )
 
-    def _finish_restore_failure(self, task_id: str, operation: str, exc: object) -> None:
+    def _finish_restore_failure(
+        self, task_id: str, operation: str, exc: object
+    ) -> None:
         self._set_maintenance(False)
         self.finished.emit(
             {

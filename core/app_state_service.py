@@ -14,7 +14,6 @@ class AppStateService:
     def __init__(self, database: Database, accounts: AccountService) -> None:
         self._database = database
         self._accounts = accounts
-        self._currencies = CurrencyRegistry(database.connection)
 
     def snapshot(
         self,
@@ -43,10 +42,13 @@ class AppStateService:
         return {
             "book": {"id": book_id, "name": book_name, "currency": book_currency},
             "accounts": [
-                self._account_payload(book_id, item, accounts) for item in visible_accounts
+                self._account_payload(book_id, item, accounts)
+                for item in visible_accounts
             ],
             "transactions": [
-                self._transaction_payload(row, transaction_flows.get(int(row["id"]), []))
+                self._transaction_payload(
+                    row, transaction_flows.get(int(row["id"]), [])
+                )
                 for row in transaction_rows
             ],
         }
@@ -54,7 +56,7 @@ class AppStateService:
     def supported_currencies(self) -> list[dict[str, object]]:
         return [
             {"code": item.code, "minorUnitDigits": item.minor_unit_digits}
-            for item in self._currencies.list_active()
+            for item in CurrencyRegistry(self._database.connection).list_active()
         ]
 
     def _transaction_flows(
@@ -94,14 +96,10 @@ class AppStateService:
     @staticmethod
     def _transaction_payload(row, flows: list[dict[str, object]]) -> dict[str, object]:
         source_names = [
-            str(item["accountName"])
-            for item in flows
-            if int(item["quantityMinor"]) < 0
+            str(item["accountName"]) for item in flows if int(item["quantityMinor"]) < 0
         ]
         destination_names = [
-            str(item["accountName"])
-            for item in flows
-            if int(item["quantityMinor"]) > 0
+            str(item["accountName"]) for item in flows if int(item["quantityMinor"]) > 0
         ]
         outgoing = sum(
             -int(item["valueMinor"])

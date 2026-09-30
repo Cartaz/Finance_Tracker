@@ -6,7 +6,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, Signal, Slot
 
 from core.app_controller import AppController
-from core.errors import BackupError, FinanceTrackerError
+from core.errors import BackupError, FinanceTrackerError, ValidationError
 from ui.backup_task_manager import BackupTaskManager
 
 log = logging.getLogger(__name__)
@@ -43,12 +43,20 @@ class Bridge(QObject):
     def _call(self, function, *args):
         if self._backup_tasks is not None and self._backup_tasks.maintenance:
             return self._controller.error_payload(
-                BackupError("database restore is in progress")
+                BackupError("database maintenance operation is in progress")
             )
         return self._invoke(function, *args)
 
     def _backup_call(self, function, *args):
         return self._invoke(function, *args)
+
+    def _payload_call(self, function, payload):
+        def validated_call():
+            if not isinstance(payload, dict):
+                raise ValidationError("payload must be an object")
+            return function(payload)
+
+        return self._call(validated_call)
 
     def _invoke(self, function, *args):
         try:
@@ -123,11 +131,11 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def getDashboard(self, payload):
-        return self._call(self._controller.dashboard, dict(payload or {}))
+        return self._payload_call(self._controller.dashboard, payload)
 
     @Slot("QVariant", result="QVariant")
     def getForecast(self, payload):
-        return self._call(self._controller.forecast, dict(payload or {}))
+        return self._payload_call(self._controller.forecast, payload)
 
     @Slot(result="QVariant")
     def getLoanCapabilities(self):
@@ -135,7 +143,7 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def createLoan(self, payload):
-        return self._call(self._controller.create_loan, dict(payload or {}))
+        return self._payload_call(self._controller.create_loan, payload)
 
     @Slot(result="QVariant")
     def listLoans(self):
@@ -143,55 +151,67 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def getLoanPlan(self, payload):
-        return self._call(self._controller.loan_plan, dict(payload or {}))
+        return self._payload_call(self._controller.loan_plan, payload)
 
     @Slot("QVariant", result="QVariant")
     def getLoanPayments(self, payload):
-        return self._call(self._controller.loan_payments, dict(payload or {}))
+        return self._payload_call(self._controller.loan_payments, payload)
 
     @Slot("QVariant", result="QVariant")
     def getLoanRateRevisions(self, payload):
-        return self._call(self._controller.loan_rate_revisions, dict(payload or {}))
+        return self._payload_call(self._controller.loan_rate_revisions, payload)
 
     @Slot("QVariant", result="QVariant")
     def setLoanVariableRate(self, payload):
-        return self._call(self._controller.set_loan_variable_rate, dict(payload or {}))
+        return self._payload_call(self._controller.set_loan_variable_rate, payload)
 
     @Slot("QVariant", result="QVariant")
     def postNextLoanPayment(self, payload):
-        return self._call(self._controller.post_next_loan_payment, dict(payload or {}))
+        return self._payload_call(self._controller.post_next_loan_payment, payload)
 
     @Slot("QVariant", result="QVariant")
     def postCustomLoanPayment(self, payload):
-        return self._call(self._controller.post_custom_loan_payment, dict(payload or {}))
+        return self._payload_call(self._controller.post_custom_loan_payment, payload)
 
     @Slot("QVariant", result="QVariant")
     def getAccountHistory(self, payload):
-        return self._call(self._controller.account_history, dict(payload or {}))
+        return self._payload_call(self._controller.account_history, payload)
 
     @Slot("QVariant", result="QVariant")
     def setBudget(self, payload):
-        return self._call(self._controller.set_budget, dict(payload or {}))
+        return self._payload_call(self._controller.set_budget, payload)
 
     @Slot("QVariant", result="QVariant")
     def getBudgetStatus(self, payload):
-        return self._call(self._controller.budget_status, dict(payload or {}))
+        return self._payload_call(self._controller.budget_status, payload)
 
     @Slot("QVariant", result="QVariant")
     def deleteBudget(self, payload):
-        return self._call(self._controller.delete_budget, dict(payload or {}))
+        return self._payload_call(self._controller.delete_budget, payload)
 
     @Slot("QVariant", result="QVariant")
     def setFxRate(self, payload):
-        return self._call(self._controller.set_fx_rate, dict(payload or {}))
+        return self._payload_call(self._controller.set_fx_rate, payload)
 
     @Slot(result="QVariant")
     def listFxRates(self):
         return self._call(self._controller.list_fx_rates)
 
     @Slot("QVariant", result="QVariant")
+    def startCsvImport(self, payload):
+        def start(data):
+            manager = self._require_backup_tasks()
+            if manager.active:
+                raise BackupError(
+                    "another persistence operation is already in progress"
+                )
+            return manager.start_csv_import(self._controller.csv_import_task(data))
+
+        return self._payload_call(start, payload)
+
+    @Slot("QVariant", result="QVariant")
     def importCsv(self, payload):
-        return self._call(self._controller.import_csv, dict(payload or {}))
+        return self._payload_call(self._controller.import_csv, payload)
 
     @Slot(result="QVariant")
     def listImportBatches(self):
@@ -199,24 +219,24 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def getImportBatchRows(self, payload):
-        return self._call(self._controller.import_batch_rows, dict(payload or {}))
+        return self._payload_call(self._controller.import_batch_rows, payload)
 
     @Slot("QVariant", result="QVariant")
     def linkImportRow(self, payload):
-        return self._call(self._controller.link_import_row, dict(payload or {}))
+        return self._payload_call(self._controller.link_import_row, payload)
 
     @Slot("QVariant", result="QVariant")
     def postImportRow(self, payload):
-        return self._call(self._controller.post_import_row, dict(payload or {}))
+        return self._payload_call(self._controller.post_import_row, payload)
 
     @Slot("QVariant", result="QVariant")
     def ignoreImportRow(self, payload):
-        return self._call(self._controller.ignore_import_row, dict(payload or {}))
+        return self._payload_call(self._controller.ignore_import_row, payload)
 
     @Slot("QVariant", result="QVariant")
     def createScheduledTransaction(self, payload):
-        return self._call(
-            self._controller.create_scheduled_transaction, dict(payload or {})
+        return self._payload_call(
+            self._controller.create_scheduled_transaction, payload
         )
 
     @Slot(result="QVariant")
@@ -225,31 +245,31 @@ class Bridge(QObject):
 
     @Slot("QVariant", result="QVariant")
     def setScheduledActive(self, payload):
-        return self._call(self._controller.set_scheduled_active, dict(payload or {}))
+        return self._payload_call(self._controller.set_scheduled_active, payload)
 
     @Slot("QVariant", result="QVariant")
     def postDueScheduled(self, payload):
-        return self._call(self._controller.post_due_scheduled, dict(payload or {}))
+        return self._payload_call(self._controller.post_due_scheduled, payload)
 
     @Slot("QVariant", result="QVariant")
     def setup(self, payload):
-        return self._call(self._controller.setup, dict(payload or {}))
+        return self._payload_call(self._controller.setup, payload)
 
     @Slot("QVariant", result="QVariant")
     def createAccount(self, payload):
-        return self._call(self._controller.create_account, dict(payload or {}))
+        return self._payload_call(self._controller.create_account, payload)
 
     @Slot("QVariant", result="QVariant")
     def createExpense(self, payload):
-        return self._call(self._controller.create_expense, dict(payload or {}))
+        return self._payload_call(self._controller.create_expense, payload)
 
     @Slot("QVariant", result="QVariant")
     def createIncome(self, payload):
-        return self._call(self._controller.create_income, dict(payload or {}))
+        return self._payload_call(self._controller.create_income, payload)
 
     @Slot("QVariant", result="QVariant")
     def createTransfer(self, payload):
-        return self._call(self._controller.create_transfer, dict(payload or {}))
+        return self._payload_call(self._controller.create_transfer, payload)
 
     @Slot(str, result="QVariant")
     def suggestPayees(self, query: str):

@@ -21,9 +21,7 @@ def test_installer_repairs_venv_and_verifies_webengine() -> None:
 
 
 def test_ci_exercises_external_cwd_and_supported_python_range() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
 
     assert "actions/checkout@v7" in workflow
     assert "actions/setup-python@v7" in workflow
@@ -45,13 +43,21 @@ def test_remote_navigation_stays_outside_embedded_webview(monkeypatch) -> None:
         remote = QUrl("https://example.com/path")
         assert page.acceptNavigationRequest(remote, None, True) is False
         assert opened == [remote]
-        assert page.acceptNavigationRequest(QUrl("file:///tmp/index.html"), None, True)
+        assert page.acceptNavigationRequest(
+            QUrl.fromLocalFile(str(ROOT / "ui" / "web" / "index.html")), None, True
+        )
         assert page.acceptNavigationRequest(
             QUrl("qrc:///qtwebchannel/qwebchannel.js"), None, True
         )
         assert page.acceptNavigationRequest(QUrl("about:blank"), None, True)
-        assert page.acceptNavigationRequest(QUrl("data:text/html,test"), None, True) is False
-        assert page.acceptNavigationRequest(QUrl("javascript:alert(1)"), None, True) is False
+        assert (
+            page.acceptNavigationRequest(QUrl("data:text/html,test"), None, True)
+            is False
+        )
+        assert (
+            page.acceptNavigationRequest(QUrl("javascript:alert(1)"), None, True)
+            is False
+        )
     finally:
         page.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)

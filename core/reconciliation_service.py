@@ -853,7 +853,7 @@ class ReconciliationService:
         except ValueError:
             pass
         for separator in ("/", "-"):
-            parts = raw.split(separator)
+            parts = [part.strip() for part in raw.split(separator)]
             # Day-first dates need an explicit four-digit year; "01/02/26"
             # would otherwise become the year 26.
             if len(parts) != 3 or len(parts[2]) != 4:

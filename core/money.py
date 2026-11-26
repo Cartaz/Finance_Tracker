@@ -120,6 +120,21 @@ def require_persistable_minor(value: int, currency: CurrencySpec | None = None) 
     )
 
 
+def _ambiguity_message(
+    raw: str, canonical: str, integer: str, fractional: str, currency: CurrencySpec
+) -> str:
+    """Offer both readings of an ambiguous amount, never just one."""
+    sign = canonical[0] if canonical[0] in "+-" else ""
+    digits = currency.minor_unit_digits
+    zeros = "," + "0" * digits if digits else ""
+    thousands = f"{sign}{integer}{fractional} (o {sign}{integer}.{fractional}{zeros})"
+    message = f"importo ambiguo {raw.strip()!r}: per le migliaia scrivi {thousands}"
+    if not fractional[digits:].strip("0"):
+        decimal = f"{sign}{integer}" + (f",{fractional[:digits]}" if digits else "")
+        message += f", per i decimali scrivi {decimal}"
+    return message
+
+
 def parse_money(raw: str, currency: CurrencySpec) -> int:
     """Parse signed monetary text for sources where the sign is part of the data.
 
@@ -141,13 +156,7 @@ def parse_money(raw: str, currency: CurrencySpec) -> int:
         and could_be_thousands
         and currency.minor_unit_digits < 3
     ):
-        whole = ("-" if canonical.startswith("-") else "") + integer
-        raise MoneyParseError(
-            f"importo ambiguo {raw.strip()!r}: scrivi {whole}{fractional} "
-            f"oppure {whole}.{fractional},{'0' * currency.minor_unit_digits}"
-            if currency.minor_unit_digits
-            else f"importo ambiguo {raw.strip()!r}: scrivi {whole}{fractional}"
-        )
+        raise MoneyParseError(_ambiguity_message(raw, canonical, integer, fractional, currency))
 
     if len(fractional) > currency.minor_unit_digits:
         excess = fractional[currency.minor_unit_digits :]

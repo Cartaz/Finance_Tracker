@@ -489,6 +489,7 @@ def test_csv_dates_require_an_explicit_four_digit_year(raw):
     with pytest.raises(ReconciliationError, match="row 7: invalid date"):
         ReconciliationService._parse_date(raw, 7)
     assert ReconciliationService._parse_date("01/02/2026", 7) == "2026-02-01"
+    assert ReconciliationService._parse_date("01 / 02 / 2026", 7) == "2026-02-01"
 
 
 def test_csv_ambiguous_amount_is_reported_with_its_row(ledger_env):

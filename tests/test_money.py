@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 
 import pytest
@@ -71,9 +72,24 @@ def test_currency_specific_precision() -> None:
         parse_money("1.000", JPY)
 
 
-def test_ambiguous_amount_message_suggests_unambiguous_forms() -> None:
-    with pytest.raises(MoneyParseError, match="scrivi 1500 oppure 1.500,00"):
-        parse_money("1.500", EUR)
+@pytest.mark.parametrize(
+    ("raw", "currency", "expected"),
+    [
+        ("1.500", EUR, "per le migliaia scrivi 1500 (o 1.500,00), per i decimali scrivi 1,50"),
+        ("+1,500", EUR, "per le migliaia scrivi +1500 (o +1.500,00), per i decimali scrivi +1,50"),
+        ("-2.000", JPY, "per le migliaia scrivi -2000 (o -2.000), per i decimali scrivi -2"),
+    ],
+)
+def test_ambiguous_amount_message_offers_both_readings(raw, currency, expected) -> None:
+    with pytest.raises(MoneyParseError, match=re.escape(expected)):
+        parse_money(raw, currency)
+
+
+def test_ambiguous_amount_without_a_valid_decimal_reading_offers_thousands_only() -> None:
+    with pytest.raises(MoneyParseError) as caught:
+        parse_money("1.234", EUR)
+    assert "per le migliaia scrivi 1234 (o 1.234,00)" in str(caught.value)
+    assert "decimali" not in str(caught.value)
 
 
 def test_decimal_conversion_is_explicit() -> None:

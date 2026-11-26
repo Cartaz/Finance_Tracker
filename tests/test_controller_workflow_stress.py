@@ -10,7 +10,7 @@ from core.database import Database
 from core.errors import FinanceTrackerError
 
 
-def test_m4_workflow_stress(tmp_path) -> None:
+def test_workflow_stress(tmp_path) -> None:
     rng = random.Random(20260824)
     db = Database(tmp_path / "m4.db")
     db.open()

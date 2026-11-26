@@ -57,7 +57,7 @@ def test_opening_balances_are_atomic_ledger_entries_and_equity_is_hidden(
     technical_equity = [item for item in all_accounts if item.type == "EQUITY"]
     assert len(technical_equity) == 2
 
-    snapshot = AppStateService(ledger_env.db, ledger_env.accounts).snapshot(
+    snapshot = AppStateService(ledger_env.db, ledger_env.accounts, ledger_env.ledger).snapshot(
         book_id=ledger_env.book_id,
         book_name="Primary",
         book_currency="EUR",
@@ -87,7 +87,7 @@ def test_category_creation_supports_parent_child_hierarchy(ledger_env) -> None:
         ledger_env.db, ledger_env.accounts
     ).category_path(ledger_env.book_id, child.id) == "Alimentari › Supermercato"
 
-    snapshot = AppStateService(ledger_env.db, ledger_env.accounts).snapshot(
+    snapshot = AppStateService(ledger_env.db, ledger_env.accounts, ledger_env.ledger).snapshot(
         book_id=ledger_env.book_id,
         book_name="Primary",
         book_currency="EUR",

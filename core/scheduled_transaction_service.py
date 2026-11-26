@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -44,11 +45,13 @@ class ScheduledTransactionService:
         accounts: AccountService,
         ledger: LedgerService,
         payees: PayeeService,
+        today: Callable[[], date] = date.today,
     ) -> None:
         self._database = database
         self._accounts = accounts
         self._ledger = ledger
         self._payees = payees
+        self._today = today
 
     def create_schedule(
         self,
@@ -267,6 +270,12 @@ class ScheduledTransactionService:
         max_occurrences: int = 1000,
     ) -> list[dict[str, object]]:
         as_of = self._parse_date(as_of_date, "as_of_date")
+        if as_of > self._today():
+            # Occurrences become real ledger transactions: only due ones may
+            # be posted. Future dates belong to the read-only forecast.
+            raise ScheduledTransactionError(
+                "scheduled occurrences can be posted only up to today"
+            )
         if (
             isinstance(max_occurrences, bool)
             or not isinstance(max_occurrences, int)

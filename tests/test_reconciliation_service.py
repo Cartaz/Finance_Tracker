@@ -382,3 +382,50 @@ def test_multiple_semantic_csv_headers_are_rejected_fail_closed(ledger_env) -> N
             ),
         )
     assert ledger_env.db.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == before
+
+
+def test_duplicates_and_identities_follow_the_account_not_the_source_label(tmp_path) -> None:
+    from core.account_service import AccountService
+    from core.book_service import BookService
+    from core.database import Database
+    from core.ledger_service import LedgerService
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    database = Database(tmp_path / "labels.db")
+    database.migrate()
+    book = BookService(database).create_personal_book(
+        user_name="u", book_name="b", currency_code="EUR"
+    )
+    accounts = AccountService(database)
+    bank = accounts.create_account(
+        book_id=book.id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    food = accounts.create_account(book_id=book.id, account_type="EXPENSE", name="Food")
+    service = ReconciliationService(
+        database, accounts, LedgerService(database), PayeeService(database)
+    )
+    csv_text = "date,amount,description,external_id\n2026-03-01,-5,Bar,ext-1\n2026-03-02,-7,Shop,\n"
+
+    def stage(label):
+        result = service.import_csv(
+            book_id=book.id,
+            account_id=bank.id,
+            source_name=label,
+            csv_text=csv_text,
+            review_mode="FULL_REVIEW",
+        )
+        return service.batch_rows(book.id, result["batchId"])
+
+    first = stage("Intesa")
+    service.post_row(
+        book_id=book.id, row_id=first[0]["id"], posting_kind="EXPENSE", counter_account_id=food.id
+    )
+    second = stage("intesa sanpaolo")
+    states = [row["review_state"] for row in second]
+    assert states == ["MATCHED", "DUPLICATE_REVIEW"]
+    database.close()

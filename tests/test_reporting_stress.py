@@ -11,7 +11,7 @@ from core.payee_service import PayeeService
 from core.reporting_service import ReportingService
 
 
-def test_m5_reporting_two_thousand_case_stress(ledger_env) -> None:
+def test_reporting_two_thousand_case_stress(ledger_env) -> None:
     """Stress M5 with 1,000 valid reads and 1,000 invalid/edge-case requests."""
 
     rng = random.Random(20260824)

@@ -193,7 +193,6 @@ class ReconciliationService:
                 state, matched_transaction_id = self._initial_state(
                     book_id=book_id,
                     account_id=account_id,
-                    source_name=source,
                     external_id=item["external_id"],
                     fingerprint=str(item["fingerprint"]),
                     transaction_date=str(item["date"]),
@@ -538,7 +537,6 @@ class ReconciliationService:
         *,
         book_id: int,
         account_id: int,
-        source_name: str,
         external_id: object,
         fingerprint: str,
         transaction_date: str,
@@ -548,15 +546,19 @@ class ReconciliationService:
         tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
         if external_id is not None:
-            link = self._database.connection.execute(
+            # Bank identities belong to the account, not to the free-text
+            # source label: "Intesa" and "intesa sanpaolo" are the same bank.
+            links = self._database.connection.execute(
                 """
-                SELECT transaction_id FROM reconciliation_links
-                WHERE book_id=? AND account_id=? AND source_name=? AND external_id=?
+                SELECT DISTINCT transaction_id FROM reconciliation_links
+                WHERE book_id=? AND account_id=? AND external_id=?
                 """,
-                (book_id, account_id, source_name, str(external_id)),
-            ).fetchone()
-            if link is not None:
-                linked_id = int(link["transaction_id"])
+                (book_id, account_id, str(external_id)),
+            ).fetchall()
+            if len(links) > 1:
+                return "AMBIGUOUS", None
+            if links:
+                linked_id = int(links[0]["transaction_id"])
                 if self._transaction_is_compatible(
                     book_id, account_id, linked_id, transaction_date, amount_minor
                 ):
@@ -581,11 +583,10 @@ class ReconciliationService:
                 SELECT 1
                 FROM import_rows r
                 JOIN import_batches b ON b.id=r.batch_id
-                WHERE r.book_id=? AND b.account_id=? AND b.source_name=?
-                  AND r.external_id=?
+                WHERE r.book_id=? AND b.account_id=? AND r.external_id=?
                 LIMIT 1
                 """,
-                (book_id, account_id, source_name, str(external_id)),
+                (book_id, account_id, str(external_id)),
             ).fetchone()
             if duplicate is not None:
                 return "DUPLICATE_REVIEW", None
@@ -595,11 +596,10 @@ class ReconciliationService:
                 SELECT 1
                 FROM import_rows r
                 JOIN import_batches b ON b.id=r.batch_id
-                WHERE r.book_id=? AND b.account_id=? AND b.source_name=?
-                  AND r.fingerprint=?
+                WHERE r.book_id=? AND b.account_id=? AND r.fingerprint=?
                 LIMIT 1
                 """,
-                (book_id, account_id, source_name, fingerprint),
+                (book_id, account_id, fingerprint),
             ).fetchone()
             if duplicate is not None:
                 return "DUPLICATE_REVIEW", None
@@ -732,6 +732,15 @@ class ReconciliationService:
         external_id: str,
         transaction_id: int,
     ) -> None:
+        existing = conn.execute(
+            """
+            SELECT transaction_id FROM reconciliation_links
+            WHERE book_id=? AND account_id=? AND external_id=?
+            """,
+            (book_id, account_id, external_id),
+        ).fetchone()
+        if existing is not None:
+            raise ReconciliationAmbiguousError("reconciliation identity is already linked")
         try:
             conn.execute(
                 """

@@ -17,7 +17,7 @@ from core.money import CurrencySpec, minor_to_decimal, parse_money
 from core.payee_service import PayeeService
 
 
-def test_m0_m1_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
+def test_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
     rng = random.Random(2026082401)
     specs = (CurrencySpec("EUR", 2), CurrencySpec("JPY", 0), CurrencySpec("KWD", 3))
 
@@ -84,7 +84,7 @@ def test_m0_m1_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
         db.close()
 
 
-def test_m2_thousand_valid_and_invalid_ledger_cases(ledger_env, tmp_path) -> None:
+def test_thousand_valid_and_invalid_ledger_cases(ledger_env, tmp_path) -> None:
     rng = random.Random(2026082402)
     accounts = ledger_env.accounts
     ledger = ledger_env.ledger
@@ -304,7 +304,7 @@ def test_m2_thousand_valid_and_invalid_ledger_cases(ledger_env, tmp_path) -> Non
         verify.close()
 
 
-def test_m3_thousand_case_payee_category_history_and_invalid_state_stress(ledger_env) -> None:
+def test_thousand_case_payee_category_history_and_invalid_state_stress(ledger_env) -> None:
     rng = random.Random(2026082403)
     db = ledger_env.db
     accounts = ledger_env.accounts
@@ -436,7 +436,7 @@ def test_m3_thousand_case_payee_category_history_and_invalid_state_stress(ledger
     db.integrity_check()
 
 
-def test_m4_thousand_valid_and_invalid_controller_workflow_cases(tmp_path) -> None:
+def test_thousand_valid_and_invalid_controller_workflow_cases(tmp_path) -> None:
     rng = random.Random(2026082404)
     db = Database(tmp_path / "m4-thousand.db")
     db.open()

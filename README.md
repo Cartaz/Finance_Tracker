@@ -23,7 +23,7 @@ Release gates that require a physical CachyOS/KDE session (HiDPI rendering, keyb
 
 ### Accounting and money
 
-- `LedgerService` is the only writer of accounting transactions and entries;
+- `LedgerService` is the only writer of accounting transactions and entries; mistakes are corrected by guarded reversals from the transaction list;
 - opening balances, expenses, income, transfers, split transactions, refunds, adjustments, reversals and generic multi-currency postings;
 - monetary persistence uses integer minor units; percentage, amortization and FX calculations use `Decimal` with deterministic rounding;
 - user-entered financial amounts are unsigned positive magnitudes; economic direction belongs to transaction/posting semantics;
@@ -33,7 +33,7 @@ Release gates that require a physical CachyOS/KDE session (HiDPI rendering, keyb
 
 ### Accounts, payees and reporting
 
-- accounts/categories with hierarchy, placeholder and archive semantics;
+- accounts/categories with hierarchy, placeholder, rename and guarded archive/restore from the UI;
 - merchant/payee autocomplete, aliases and atomic payee merge;
 - historical book-scoped FX rates;
 - FX-aware net worth, income, expenses, saving rate, cash flow, category/merchant reporting and account history;

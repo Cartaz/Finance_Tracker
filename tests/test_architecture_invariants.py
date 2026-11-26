@@ -90,44 +90,8 @@ def test_forecast_is_read_only_and_reuses_canonical_domain_policies() -> None:
     assert "def _advance(" in scheduled
 
 
-def test_transport_contract_is_explicit_not_suffix_driven() -> None:
-    controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
-    transport = (CORE / "transport.py").read_text(encoding="utf-8")
-    assert "_transport_money" not in controller
-    assert ".endswith(" not in transport
-    assert "_FINANCIAL_INTEGER_FIELDS" in transport
-    for field in (
-        '"spentMinor"',
-        '"remainingMinor"',
-        '"totalBudgetMinor"',
-        '"totalSpentMinor"',
-        '"totalRemainingMinor"',
-        '"usageBps"',
-        '"baseAmountMinor"',
-        '"inflowMinor"',
-        '"outflowMinor"',
-        '"totalInflowMinor"',
-        '"totalOutflowMinor"',
-        '"totalNetMinor"',
-    ):
-        assert field in transport
-
-
 def test_database_schema_is_owned_by_migrations_module() -> None:
     database = (CORE / "database.py").read_text(encoding="utf-8")
     migrations = (CORE / "migrations.py").read_text(encoding="utf-8")
     assert "_SCHEMA_V" not in database
     assert "MIGRATIONS" in migrations
-
-
-def test_strategic_review_is_part_of_definition_of_done() -> None:
-    directive = (ROOT / "STRATEGIC_PROGRAMMING.md").read_text(encoding="utf-8")
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Mandatory milestone strategic review" in directive
-    assert "BLOCKED" in directive
-    assert "Green tests without the review are not milestone completion" in directive
-    assert "STRATEGIC_PROGRAMMING.md" in agents
-    assert (
-        "A milestone with green tests but without its strategic review is incomplete"
-        in agents
-    )

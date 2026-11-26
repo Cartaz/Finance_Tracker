@@ -348,6 +348,18 @@ class Bridge(QObject):
     def createTransfer(self, payload):
         return self._payload_call(self._controller.create_transfer, payload)
 
+    @Slot("QVariant", result="QVariant")
+    def renameAccount(self, payload):
+        return self._payload_call(self._controller.rename_account, payload)
+
+    @Slot("QVariant", result="QVariant")
+    def setAccountArchived(self, payload):
+        return self._payload_call(self._controller.set_account_archived, payload)
+
+    @Slot("QVariant", result="QVariant")
+    def reverseTransaction(self, payload):
+        return self._payload_call(self._controller.reverse_transaction, payload)
+
     @Slot(str, result="QVariant")
     def suggestPayees(self, query: str):
         return self._call(self._controller.suggest_payees, query)

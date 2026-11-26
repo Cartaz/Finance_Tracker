@@ -418,3 +418,39 @@ def test_budget_with_missing_fx_reports_it_without_a_misleading_label(ui):
     row = ui.find("budgetRow-0")
     assert row.property("value") == "FX mancante"
     assert ui.qml_warnings() == []
+
+
+def test_corrections_from_the_interface(ui):
+    _setup_book(ui)
+    _create_structure(ui)
+    ui.navigate("transactions")
+    ui.set_text("expenseAmount", "10")
+    ui.set_text("expenseDate", "2026-09-30")
+    ui.click("expenseSubmit", "Spesa registrata")
+    expense = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "EXPENSE")
+
+    ui.click(f"reverse-{expense['id']}")
+    QMetaObject.invokeMethod(ui.find("confirmDialog"), "accept")
+    ui.pump()
+    assert ui.toast() == ("Transazione stornata", False)
+    balances = {a["name"]: a["balanceMinor"] for a in ui.controller.snapshot()["accounts"]}
+    assert balances["Bank"] == "100000"
+    assert ui.find(f"reverse-{expense['id']}").property("visible") is False
+
+    ui.navigate("accounts")
+    ui.click("archive-Bank")
+    message, bad = ui.toast()
+    assert bad is True and "saldo non è zero" in message
+    ui.click("archive-Cash", "Archiviato")
+    ui.click("rename-Cash")
+    ui.set_text("promptField", "Wallet")
+    QMetaObject.invokeMethod(ui.find("promptDialog"), "accept")
+    ui.pump()
+    assert ui.toast() == ("Nome aggiornato", False)
+    accounts = {a["name"]: a for a in ui.controller.snapshot()["accounts"]}
+    assert accounts["Wallet"]["archived"] is True
+    assert "Wallet" not in [
+        option["text"].split(" · ")[0]
+        for option in ui.find("expenseAccount").property("options").toVariant()
+    ]
+    assert ui.qml_warnings() == []

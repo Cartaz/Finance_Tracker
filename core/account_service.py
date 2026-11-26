@@ -170,13 +170,51 @@ class AccountService:
         return self.get_account(book_id, account_id)
 
     def set_archived(self, book_id: int, account_id: int, archived: bool) -> Account:
-        self.get_account(book_id, account_id)
+        account = self.get_account(book_id, account_id)
+        if archived and not account.archived:
+            blocker = self._archive_blocker(account)
+            if blocker is not None:
+                raise ValidationError(f"impossibile archiviare {account.name!r}: {blocker}")
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE accounts SET archived = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
                 (int(archived), account_id, book_id),
             )
         return self.get_account(book_id, account_id)
+
+    def _archive_blocker(self, account: Account) -> str | None:
+        """Why archiving would leave other canonical state contradictory."""
+        conn = self._database.connection
+        child = conn.execute(
+            "SELECT 1 FROM accounts WHERE book_id=? AND parent_id=? AND archived=0 LIMIT 1",
+            (account.book_id, account.id),
+        ).fetchone()
+        if child is not None:
+            return "ha sottovoci non archiviate"
+        if account.type in _BALANCE_TYPES and self.native_balance(account.book_id, account.id):
+            return "il saldo non è zero"
+        schedule = conn.execute(
+            """
+            SELECT 1 FROM scheduled_transactions
+            WHERE book_id=? AND active=1 AND ? IN (source_account_id, counter_account_id)
+            LIMIT 1
+            """,
+            (account.book_id, account.id),
+        ).fetchone()
+        if schedule is not None:
+            return "è usato da una transazione programmata attiva"
+        for loan in conn.execute(
+            """
+            SELECT liability_account_id FROM loans
+            WHERE book_id=? AND ? IN (
+                liability_account_id, payment_account_id, interest_expense_account_id
+            )
+            """,
+            (account.book_id, account.id),
+        ).fetchall():
+            if self.native_balance(account.book_id, int(loan["liability_account_id"])):
+                return "è usato da un prestito non estinto"
+        return None
 
     def native_balance(self, book_id: int, account_id: int) -> int:
         account = self.get_account(book_id, account_id)

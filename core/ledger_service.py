@@ -28,6 +28,13 @@ _TRANSACTION_KINDS = {
     "REVERSAL",
 }
 _BALANCE_TYPES = {"ASSET", "LIABILITY"}
+REVERSAL_BLOCKERS = {
+    "REVERSAL": "uno storno non può essere stornato",
+    "REVERSED": "la transazione è già stata stornata",
+    "LOAN": "appartiene a un prestito",
+    "SCHEDULED": "è un'occorrenza di una transazione programmata",
+    "RECONCILED": "è collegata a un movimento bancario riconciliato",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +296,51 @@ class LedgerService:
             connection=connection,
         )
 
+    def reversal_blockers(
+        self,
+        book_id: int,
+        transaction_ids: list[int],
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[int, str]:
+        """Blocker code (see REVERSAL_BLOCKERS) for each non-reversible transaction.
+
+        A reversal must not contradict another workflow that owns the
+        transaction: loan installments, scheduled occurrences and reconciled
+        bank rows keep their own records of it.
+        """
+        if not transaction_ids:
+            return {}
+        conn = connection or self._database.connection
+        placeholders = ",".join("?" for _ in transaction_ids)
+        rows = conn.execute(
+            f"""
+            SELECT t.id,
+                   t.kind = 'REVERSAL' AS reversal,
+                   EXISTS (SELECT 1 FROM transactions r
+                           WHERE r.reverses_transaction_id = t.id) AS reversed,
+                   EXISTS (SELECT 1 FROM loan_payments p WHERE p.transaction_id = t.id)
+                   OR EXISTS (SELECT 1 FROM loans l
+                              WHERE l.origination_transaction_id = t.id) AS loan,
+                   EXISTS (SELECT 1 FROM scheduled_occurrences o
+                           WHERE o.transaction_id = t.id) AS scheduled,
+                   EXISTS (SELECT 1 FROM reconciliation_links k WHERE k.transaction_id = t.id)
+                   OR EXISTS (SELECT 1 FROM import_rows i
+                              WHERE i.matched_transaction_id = t.id
+                                AND i.review_state IN ('MATCHED', 'POSTED')) AS reconciled
+            FROM transactions t
+            WHERE t.book_id = ? AND t.id IN ({placeholders})
+            """,
+            (book_id, *transaction_ids),
+        ).fetchall()
+        blockers: dict[int, str] = {}
+        for row in rows:
+            for code in REVERSAL_BLOCKERS:
+                if row[code.lower()]:
+                    blockers[int(row["id"])] = code
+                    break
+        return blockers
+
     def create_reversal(
         self,
         *,
@@ -299,6 +351,13 @@ class LedgerService:
         connection: sqlite3.Connection | None = None,
     ) -> TransactionRecord:
         original = self.get_transaction(book_id, transaction_id, connection=connection)
+        blocker = self.reversal_blockers(
+            book_id, [transaction_id], connection=connection
+        ).get(transaction_id)
+        if blocker is not None:
+            raise LedgerValidationError(
+                f"storno non consentito: {REVERSAL_BLOCKERS[blocker]}"
+            )
         entries = tuple(
             EntryDraft(
                 account_id=entry.account_id,

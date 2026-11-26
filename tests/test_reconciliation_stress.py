@@ -12,7 +12,7 @@ from core.payee_service import PayeeService
 from core.reconciliation_service import ReconciliationService
 
 
-def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
+def test_thousand_row_reconciliation_and_invalid_state_stress(
     ledger_env, tmp_path: Path
 ) -> None:
     db = ledger_env.db

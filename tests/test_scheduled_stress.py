@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from core.payee_service import PayeeService
 from core.scheduled_transaction_service import ScheduledTransactionService
 
 
-def test_m7_thousand_occurrences_and_invalid_state_stress(
+def test_thousand_occurrences_and_invalid_state_stress(
     ledger_env, tmp_path: Path
 ) -> None:
     db = ledger_env.db
@@ -61,7 +62,9 @@ def test_m7_thousand_occurrences_and_invalid_state_stress(
     )
     payees = PayeeService(db)
     payee = payees.create_payee(book_id=book, name="M7 Merchant")
-    service = ScheduledTransactionService(db, accounts, ledger_env.ledger, payees)
+    service = ScheduledTransactionService(
+        db, accounts, ledger_env.ledger, payees, today=lambda: date(2030, 1, 1)
+    )
 
     schedules = []
     for index in range(100):

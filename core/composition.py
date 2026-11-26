@@ -52,7 +52,7 @@ def build_controller(database: Database, settings: Settings) -> AppController:
         reconciliation=build_reconciliation(database),
         reconciliation_factory=build_reconciliation,
         scheduled=scheduled,
-        app_state=AppStateService(database, accounts),
+        app_state=AppStateService(database, accounts, ledger),
         budgets=BudgetService(database, reporting, fx, accounts, categories),
         loans=loans,
         forecast=ForecastService(scheduled, fx, loans),

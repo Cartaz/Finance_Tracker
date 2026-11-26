@@ -84,6 +84,13 @@ ApplicationWindow {
         toastBox.visible = true
         toastTimer.restart()
     }
+    function prompt(title, label, initialText, onAccepted) {
+        promptDialog.title = title
+        promptField.label = label
+        promptField.text = initialText
+        promptDialog.promptAction = onAccepted
+        promptDialog.open()
+    }
     function confirm(message, onAccepted) {
         confirmDialog.message = message
         confirmDialog.confirmAction = onAccepted
@@ -475,6 +482,41 @@ ApplicationWindow {
             interval: 3600
             onTriggered: toastBox.visible = false
         }
+    }
+
+    Dialog {
+        id: promptDialog
+        property var promptAction: null
+        objectName: "promptDialog"
+        anchors.centerIn: parent
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 480
+        padding: 22
+        background: RaisedSurface { radius: Theme.radiusLG }
+        header: Text {
+            textFormat: Text.PlainText
+            text: promptDialog.title
+            color: Theme.primary
+            font.family: Theme.font
+            font.pixelSize: 18
+            font.bold: true
+            padding: 22
+            bottomPadding: 0
+        }
+        InputField {
+            id: promptField
+            objectName: "promptField"
+            width: parent.width
+            onAccepted: promptDialog.accept()
+        }
+        onAccepted: {
+            const action = promptAction
+            promptAction = null
+            if (action)
+                action(promptField.text)
+        }
+        onRejected: promptAction = null
     }
 
     Dialog {

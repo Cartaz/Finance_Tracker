@@ -27,20 +27,13 @@ ColumnLayout {
         input.text = name
         panel.visible = false
     }
-    // A name typed without picking a suggestion is resolved (or created) on
-    // submit instead of being silently dropped.
-    function resolve() {
+    // Payload fields for a posting: a picked payee by id, otherwise the typed
+    // name, which the backend resolves or creates in the same transaction.
+    function payloadFields() {
+        if (payeeId !== "")
+            return { payeeId: payeeId }
         const text = input.text.trim()
-        if (payeeId !== "" || text === "")
-            return payeeId
-        const wanted = text.toLocaleLowerCase()
-        const exact = app.call("suggestPayees", text)
-            .find(item => item.name.toLocaleLowerCase() === wanted)
-        if (exact)
-            choose(exact.id, exact.name)
-        else
-            create()
-        return payeeId
+        return text === "" ? {} : { payeeName: text }
     }
     function create() {
         const item = app.call("createPayee", input.text)

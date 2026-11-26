@@ -357,6 +357,14 @@ class ReconciliationService:
         ).fetchall()
         return [self._live_row(row, book_id, source_account_id, accounts) for row in rows]
 
+    @staticmethod
+    def _effective_state(stored: str, candidates: list) -> str:
+        """Heuristic suggestions follow the live candidates (they may have been
+        reversed, linked or added since the import)."""
+        if stored == "SUGGESTED" and len(candidates) != 1:
+            return "UNMATCHED" if not candidates else "AMBIGUOUS"
+        return stored
+
     def _live_row(self, row, book_id: int, source_account_id: int, accounts) -> dict[str, object]:
         candidates = self._candidate_details(
             book_id,
@@ -364,10 +372,7 @@ class ReconciliationService:
             str(row["transaction_date"]),
             int(row["amount_minor"]),
         )
-        state = str(row["review_state"])
-        if state == "SUGGESTED" and len(candidates) != 1:
-            # Candidates are live: they may have been reversed, linked or added since.
-            state = "UNMATCHED" if not candidates else "AMBIGUOUS"
+        state = self._effective_state(str(row["review_state"]), candidates)
         return {
                 **dict(row),
                 "review_state": state,
@@ -433,7 +438,15 @@ class ReconciliationService:
         payee_id: int | None = None,
     ) -> dict[str, object]:
         row, batch = self._require_row(book_id, row_id)
-        state = str(row["review_state"])
+        state = self._effective_state(
+            str(row["review_state"]),
+            self._candidate_details(
+                book_id,
+                int(batch["account_id"]),
+                str(row["transaction_date"]),
+                int(row["amount_minor"]),
+            ),
+        )
         if state == "AMBIGUOUS":
             raise ReconciliationAmbiguousError(
                 "ambiguous rows must be resolved before posting"

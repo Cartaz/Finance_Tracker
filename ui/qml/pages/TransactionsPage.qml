@@ -32,8 +32,7 @@ PageScaffold {
                 time: expenseTime.text,
                 description: expenseDescription.text
             }
-            if (expensePayee.resolve() !== "")
-                payload.payeeId = expensePayee.payeeId
+            Object.assign(payload, expensePayee.payloadFields())
             const result = app.call("createExpense", payload)
             resetFields([expenseAmount, expenseTime, expenseDescription, expensePayee])
             app.changed(result.state)
@@ -49,8 +48,7 @@ PageScaffold {
                 time: incomeTime.text,
                 description: incomeDescription.text
             }
-            if (incomePayee.resolve() !== "")
-                payload.payeeId = incomePayee.payeeId
+            Object.assign(payload, incomePayee.payloadFields())
             const result = app.call("createIncome", payload)
             resetFields([incomeAmount, incomeTime, incomeDescription, incomePayee])
             app.changed(result.state)

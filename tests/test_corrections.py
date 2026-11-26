@@ -369,3 +369,25 @@ def test_category_suggestions_ignore_reversed_postings(app) -> None:
         if item.id == ids["food"]
     )
     assert food.usage_count == 0
+
+
+def test_typed_payee_names_resolve_in_the_posting_transaction(app) -> None:
+    controller, ids = app
+    market = controller.create_payee("Super Market")
+
+    def expense(**extra):
+        return controller.create_expense(
+            {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "3",
+             "date": "2026-03-03", **extra}
+        )["id"]
+
+    first = expense(payeeName="super   MARKET")
+    assert _row(controller, first)["payee_name"] == "Super Market"
+    with pytest.raises(LedgerValidationError):
+        controller.create_expense(
+            {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "3",
+             "date": "not-a-date", "payeeName": "Brand New Shop"}
+        )
+    names = {item["name"] for item in controller.suggest_payees("")}
+    assert "Brand New Shop" not in names, "a failed posting must not leave a payee behind"
+    assert market["name"] in names

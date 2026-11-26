@@ -613,3 +613,32 @@ def test_suggested_rows_become_ambiguous_when_candidates_multiply(ledger_env) ->
     )
     expense()
     assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "AMBIGUOUS"
+
+
+def test_posting_uses_the_same_live_state_as_the_ui(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def expense():
+        ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=400,
+            currency_code="EUR",
+            transaction_date="2026-03-14",
+        )
+
+    expense()
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-14,-4\n",
+    )
+    expense()
+    row = service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]
+    with pytest.raises(ReconciliationAmbiguousError):
+        service.post_row(
+            book_id=ledger_env.book_id, row_id=row["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+        )

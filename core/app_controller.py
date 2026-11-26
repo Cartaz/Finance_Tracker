@@ -596,12 +596,22 @@ class AppController:
         self, conn, book_id: int, transaction_id: int, payload: dict[str, object]
     ) -> None:
         payee_id = payload.get("payeeId")
+        payee_name = payload.get("payeeName")
         if payee_id in (None, ""):
-            return
+            if payee_name in (None, ""):
+                return
+            if not isinstance(payee_name, str):
+                raise ValidationError("payee name must be text")
+            # Typed but not picked: resolved/created in the posting's transaction.
+            resolved = self._payees.resolve_or_create(
+                book_id=book_id, name=payee_name, connection=conn
+            )
+        else:
+            resolved = self._positive_id(payee_id)
         self._payees.assign_transaction(
             book_id=book_id,
             transaction_id=transaction_id,
-            payee_id=self._positive_id(payee_id),
+            payee_id=resolved,
             connection=conn,
         )
 

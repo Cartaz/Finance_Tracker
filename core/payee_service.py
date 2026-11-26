@@ -66,6 +66,44 @@ class PayeeService:
             payee_id = int(cursor.lastrowid)
         return self.get_payee(book_id, payee_id)
 
+    def resolve_or_create(self, *, book_id: int, name: str, connection) -> int:
+        """Payee id for a typed name, inside the caller's transaction.
+
+        Matches the active payee whose normalized name or alias equals the
+        text; otherwise creates it (collisions with archived/merged names
+        still raise). Creation rolls back with the caller's posting.
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise ValidationError("payee name cannot be empty")
+        clean_name = name.strip()
+        normalized = normalize_payee_text(clean_name)
+        existing = connection.execute(
+            """
+            SELECT p.id FROM payees p
+            WHERE p.book_id = ? AND p.archived = 0 AND (
+                p.normalized_name = ?
+                OR EXISTS (
+                    SELECT 1 FROM payee_aliases a
+                    WHERE a.book_id = p.book_id AND a.payee_id = p.id
+                      AND a.normalized_alias = ? AND a.match_type = 'EXACT'
+                )
+            )
+            ORDER BY p.id LIMIT 1
+            """,
+            (book_id, normalized, normalized),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+        self._ensure_namespace_available(connection, book_id, normalized)
+        cursor = connection.execute(
+            """
+            INSERT INTO payees(book_id, name, normalized_name, created_at, updated_at)
+            VALUES (?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (book_id, clean_name, normalized),
+        )
+        return int(cursor.lastrowid)
+
     def get_payee(self, book_id: int, payee_id: int) -> Payee:
         row = self._database.connection.execute(
             "SELECT id, book_id, name, normalized_name, archived FROM payees WHERE id = ? AND book_id = ?",

@@ -393,3 +393,38 @@ def test_form_choices_survive_data_refreshes(ui):
     ui.click("refreshButton")
     assert ui.find("rateEffective").property("text") == "2027-05-01"
     assert ui.qml_warnings() == []
+
+
+@pytest.mark.parametrize(
+    ("start", "months", "expected"),
+    [("2026-01-31", 1, "2026-02-28"), ("2026-08-31", 6, "2027-02-28"), ("2024-01-31", 1, "2024-02-29"), ("2026-05-15", 1, "2026-06-15")],
+)
+def test_month_arithmetic_clamps_to_month_end(ui, start, months, expected):
+    result = QMetaObject.invokeMethod(
+        ui.root, "addMonths", Q_RETURN_ARG("QVariant"), Q_ARG("QVariant", start), Q_ARG("QVariant", months)
+    )
+    assert result == expected
+
+
+def test_budget_with_missing_fx_reports_it_without_a_misleading_label(ui):
+    _setup_book(ui)
+    _create_structure(ui)
+    ui.set_text("accountName", "Dollars")
+    ui.choose("accountCurrency", "USD")
+    ui.set_text("trackingDate", "2026-01-01")
+    ui.set_text("openingBalance", "100")
+    ui.click("accountSubmit", "Conto creato")
+    ui.navigate("transactions")
+    dollars = [a for a in ui.controller.snapshot()["accounts"] if a["name"] == "Dollars"][0]
+    ui.choose("expenseAccount", dollars["id"])
+    ui.set_text("expenseAmount", "5")
+    ui.set_text("expenseDate", "2026-09-10")
+    ui.click("expenseSubmit", "Spesa registrata")
+    ui.navigate("budgets")
+    ui.set_text("budgetPeriod", "2026-09")
+    QMetaObject.invokeMethod(ui.find("budgetsPage"), "reload")
+    ui.set_text("budgetAmount", "300")
+    ui.click("budgetSubmit", "Budget salvato")
+    row = ui.find("budgetRow-0")
+    assert row.property("value") == "FX mancante"
+    assert ui.qml_warnings() == []

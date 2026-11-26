@@ -17,7 +17,7 @@ PageScaffold {
         })))
     }
     function remainingText(item) {
-        if (item.remainingMinor === null)
+        if (item.remainingMinor == null)
             return "FX mancante"
         const formatted = app.money(item.remainingMinor, currency)
         return item.overBudget ? "Oltre di " + formatted.replace(/^−/, "") : "Residuo " + formatted
@@ -98,6 +98,8 @@ PageScaffold {
                     delegate: DataRow {
                         id: budgetRow
                         required property var modelData
+                        required property int index
+                        objectName: "budgetRow-" + index
                         title: modelData.categoryPath
                         subtitle: `Utilizzo ${page.app.bps(modelData.usageBps)} · ${page.app.money(modelData.spentMinor, page.currency)} / ${page.app.money(modelData.amountMinor, page.currency)}`
                         value: page.remainingText(modelData)

@@ -242,6 +242,19 @@ class ReconciliationService:
         )
 
     @staticmethod
+    def _looks_like_damaged_utf8(raw: bytes) -> bool:
+        """True when almost every non-ASCII byte belongs to a valid UTF-8 sequence.
+
+        Windows-1252 text can contain isolated byte pairs that happen to be
+        valid UTF-8 (e.g. "È" followed by a no-break space); genuine UTF-8
+        with a stray byte has nearly all of its high bytes in such sequences.
+        """
+        matches = _UTF8_MULTIBYTE_RE.findall(raw)
+        high_bytes = sum(1 for byte in raw if byte >= 0x80)
+        covered = sum(len(match) for match in matches)
+        return len(matches) >= 2 and covered >= 0.8 * high_bytes
+
+    @staticmethod
     def _decode_csv(raw: bytes) -> str:
         """Decode UTF-8, or Windows-1252 only when the file is clearly not UTF-8.
 
@@ -254,7 +267,7 @@ class ReconciliationService:
         try:
             return raw.decode("utf-8-sig")
         except UnicodeDecodeError:
-            if _UTF8_MULTIBYTE_RE.search(raw):
+            if ReconciliationService._looks_like_damaged_utf8(raw):
                 raise ReconciliationError(
                     "CSV is not valid UTF-8; re-export it as UTF-8 or Windows-1252"
                 ) from None

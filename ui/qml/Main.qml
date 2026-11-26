@@ -124,7 +124,16 @@ ApplicationWindow {
     function today() { return isoDate(new Date()) }
     function monthStart() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01` }
     function currentMonth() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}` }
-    function monthsFromToday(months) { const d = new Date(); d.setMonth(d.getMonth() + months); return isoDate(d) }
+    // Calendar month arithmetic clamped to the target month's last day.
+    function addMonths(isoText, months) {
+        const base = new Date(isoText + "T00:00:00")
+        const day = base.getDate()
+        const target = new Date(base.getFullYear(), base.getMonth() + months, 1)
+        const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
+        target.setDate(Math.min(day, lastDay))
+        return isoDate(target)
+    }
+    function monthsFromToday(months) { return addMonths(today(), months) }
 
     function accounts() { return snapshot ? snapshot.accounts : [] }
     function accountById(id) { return accounts().find(item => String(item.id) === String(id)) }

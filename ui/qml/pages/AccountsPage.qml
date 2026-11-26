@@ -191,7 +191,7 @@ PageScaffold {
                             title: modelData.name
                             subtitle: [page.app.accountTypeLabels[modelData.type], modelData.currency,
                                        modelData.placeholder ? "contenitore" : ""].filter(item => !!item).join(" · ")
-                            value: modelData.balanceMinor === null ? "" : page.app.money(modelData.balanceMinor, modelData.currency)
+                            value: modelData.balanceMinor == null ? "" : page.app.money(modelData.balanceMinor, modelData.currency)
                         }
                     }
                     BoundedList {

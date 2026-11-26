@@ -427,7 +427,11 @@ def test_cp1252_csv_file_limit_applies_to_stored_bytes(ledger_env, tmp_path):
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
-        ("data,importo\n2026-09-30,-5\nCaff\u00e8 ".encode("utf-8") + b"\xff\n", "not valid UTF-8"),
+        (
+            "data,importo,descrizione\n2026-09-30,-5,Caff\u00e8 Societ\u00e0 Pi\u00f9\n".encode("utf-8")
+            + b"\xff\n",
+            "not valid UTF-8",
+        ),
         ("data,importo\n2026-09-30,-5\n".encode("utf-16"), "UTF-8 or Windows-1252"),
     ],
 )
@@ -474,3 +478,10 @@ def test_csv_file_read_is_bounded(ledger_env, tmp_path):
             csv_path=csv_path,
             review_mode="FULL_REVIEW",
         )
+
+
+def test_cp1252_pairs_that_look_like_utf8_are_still_accepted():
+    from core.reconciliation_service import ReconciliationService
+
+    raw = "data;importo;descrizione\n2026-09-30;-5,00;CAFFÈ\u00a0BAR PIÙ «centro»\n".encode("cp1252")
+    assert ReconciliationService._decode_csv(raw).endswith("CAFFÈ\u00a0BAR PIÙ «centro»\n")

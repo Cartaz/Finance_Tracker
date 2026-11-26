@@ -119,7 +119,7 @@ PageScaffold {
                 spacing: Theme.gap
                 Card {
                     title: "Backup"
-                    Note { text: "I backup sono snapshot SQLite verificati. Creazione e verifica avvengono in background senza bloccare l'interfaccia." }
+                    Note { text: "I backup sono snapshot SQLite verificati. Creazione e verifica avvengono in background senza bloccare l'interfaccia. Vengono conservati gli ultimi 30 backup locali; i file esportati non vengono mai rimossi." }
                     Flow {
                         Layout.fillWidth: true
                         spacing: 8

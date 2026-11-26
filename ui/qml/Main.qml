@@ -141,6 +141,11 @@ ApplicationWindow {
         return isoDate(target)
     }
     function monthsFromToday(months) { return addMonths(today(), months) }
+    function addDays(isoText, days) {
+        const base = new Date(isoText + "T00:00:00")
+        base.setDate(base.getDate() + days)
+        return isoDate(base)
+    }
 
     function accounts() { return snapshot ? snapshot.accounts : [] }
     function accountById(id) { return accounts().find(item => String(item.id) === String(id)) }

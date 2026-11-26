@@ -385,8 +385,10 @@ class LedgerService:
                 currency_code="",
                 entries=(),
             )
+            entries = by_transaction.get(int(row["id"]), [])
             try:
-                for entry in by_transaction.get(int(row["id"]), []):
+                # Account state first: a later date cannot fix an archived account.
+                for entry in entries:
                     quantity = entry["quantity_minor"]
                     self._validate_entry_semantics(
                         EntryDraft(
@@ -396,11 +398,17 @@ class LedgerService:
                         ),
                         entry,
                     )
-                    self._validate_tracking_boundary(draft, entry, "REVERSAL")
-            except (TrackingBoundaryError, TrackingBoundaryAmbiguousError):
-                invalid[int(row["id"])] = "BOUNDARY"
             except ValidationError:
                 invalid[int(row["id"])] = "INVALID"
+                continue
+            boundary_kind = (
+                "OPENING_BALANCE" if row["kind"] == "OPENING_BALANCE" else "REVERSAL"
+            )
+            try:
+                for entry in entries:
+                    self._validate_tracking_boundary(draft, entry, boundary_kind)
+            except ValidationError:
+                invalid[int(row["id"])] = "BOUNDARY"
         return invalid
 
     def create_reversal(
@@ -440,6 +448,17 @@ class LedgerService:
             raise LedgerValidationError(
                 f"storno non consentito: {REVERSAL_BLOCKERS[blocker]}"
             )
+        reversal_moment = (
+            self._validate_date(transaction_date),
+            None if transaction_time is None else self._validate_time(transaction_time),
+        )
+        if reversal_moment[0] < original.transaction_date or (
+            reversal_moment[0] == original.transaction_date
+            and reversal_moment[1] is not None
+            and original.transaction_time is not None
+            and reversal_moment[1] < original.transaction_time
+        ):
+            raise LedgerValidationError("a reversal cannot precede the transaction it reverses")
         reversal_id = self._create_transaction(
             self._reversal_draft(original, transaction_date, transaction_time), conn
         )
@@ -621,11 +640,20 @@ class LedgerService:
                 "transaction entry values must sum to zero"
             )
 
+        boundary_kind = normalized_kind
+        if normalized_kind == "REVERSAL" and draft.reverses_transaction_id is not None:
+            reversed_row = conn.execute(
+                "SELECT kind FROM transactions WHERE id = ? AND book_id = ?",
+                (draft.reverses_transaction_id, draft.book_id),
+            ).fetchone()
+            # Undoing an opening balance is itself an opening-balance posting.
+            if reversed_row is not None and reversed_row["kind"] == "OPENING_BALANCE":
+                boundary_kind = "OPENING_BALANCE"
         accounts = self._load_accounts(conn, draft.book_id, draft.entries)
         for entry in draft.entries:
             account = accounts[entry.account_id]
             self._validate_entry_semantics(entry, account)
-            self._validate_tracking_boundary(draft, account, normalized_kind)
+            self._validate_tracking_boundary(draft, account, boundary_kind)
 
         if draft.reverses_transaction_id is not None:
             row = conn.execute(

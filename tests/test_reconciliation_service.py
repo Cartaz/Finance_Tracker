@@ -496,3 +496,149 @@ def test_identical_movements_with_distinct_bank_ids_are_not_duplicates(ledger_en
         csv_text="date,amount,description,external_id\n2026-03-01,-1.20,CAFFE,A1\n2026-03-01,-1.20,CAFFE,A2\n",
     )
     assert result["summary"] == {"REVIEW_REQUIRED": 2}
+
+
+def test_row_counter_ids_are_not_bank_identities(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def stage(csv_text):
+        result = service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )
+        return service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+
+    january = stage("date,amount,id\n2026-01-03,-12,1\n2026-01-04,-8,2\n")
+    assert [row["external_id"] for row in january] == [None, None]
+    service.post_row(
+        book_id=ledger_env.book_id, row_id=january[0]["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    february = stage("date,amount,id\n2026-02-05,-30,1\n2026-02-06,-9,2\n")
+    assert [row["review_state"] for row in february] == ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+    real = stage("date,amount,id\n2026-02-07,-1,TX-9\n")
+    assert real[0]["external_id"] == "TX-9"
+
+
+def test_a_suggestion_that_no_longer_exists_is_shown_as_unmatched(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+    expense = ledger_env.ledger.create_expense(
+        book_id=ledger_env.book_id,
+        source_account_id=bank.id,
+        expense_account_id=groceries.id,
+        amount_minor=700,
+        currency_code="EUR",
+        transaction_date="2026-03-09",
+    )
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-09,-7\n",
+    )
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "SUGGESTED"
+    ledger_env.ledger.create_reversal(
+        book_id=ledger_env.book_id, transaction_id=expense.id, transaction_date="2026-03-09"
+    )
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "UNMATCHED"
+
+
+def test_counter_ids_do_not_turn_identical_rows_of_one_file_into_duplicates(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    single = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,id\n2026-03-02,-4,1\n",
+    )
+    # A single row cannot reveal a counter: its id stays a bank identity.
+    assert service.batch_rows(ledger_env.book_id, int(single["batchId"]))[0]["external_id"] == "1"
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,description,id\n2026-03-01,-1.20,CAFFE,1\n2026-03-01,-1.20,CAFFE,2\n",
+    )
+    assert result["summary"] == {"REVIEW_REQUIRED": 2}
+
+
+def test_same_file_duplicates_depend_on_bank_ids(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+
+    def summary(csv_text):
+        return service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )["summary"]
+
+    # Without any id there is no evidence the two lines are distinct.
+    assert summary("date,amount,description\n2026-04-01,-2,PANE\n2026-04-01,-2,PANE\n") == {
+        "REVIEW_REQUIRED": 1,
+        "DUPLICATE_REVIEW": 1,
+    }
+    # Newest-first counters (3, 2, 1) are counters too, and keep lines apart.
+    assert summary(
+        "date,amount,description,id\n2026-04-02,-3,BUS,3\n2026-04-02,-3,BUS,2\n2026-04-02,-3,BUS,1\n"
+    ) == {"REVIEW_REQUIRED": 3}
+
+
+def test_suggested_rows_become_ambiguous_when_candidates_multiply(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def expense():
+        return ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=900,
+            currency_code="EUR",
+            transaction_date="2026-03-12",
+        )
+
+    expense()
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-12,-9\n",
+    )
+    expense()
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "AMBIGUOUS"
+
+
+def test_posting_uses_the_same_live_state_as_the_ui(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def expense():
+        ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=400,
+            currency_code="EUR",
+            transaction_date="2026-03-14",
+        )
+
+    expense()
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-14,-4\n",
+    )
+    expense()
+    row = service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]
+    with pytest.raises(ReconciliationAmbiguousError):
+        service.post_row(
+            book_id=ledger_env.book_id, row_id=row["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+        )

@@ -596,12 +596,22 @@ class AppController:
         self, conn, book_id: int, transaction_id: int, payload: dict[str, object]
     ) -> None:
         payee_id = payload.get("payeeId")
+        payee_name = payload.get("payeeName")
         if payee_id in (None, ""):
-            return
+            if payee_name in (None, ""):
+                return
+            if not isinstance(payee_name, str):
+                raise ValidationError("payee name must be text")
+            # Typed but not picked: resolved/created in the posting's transaction.
+            resolved = self._payees.resolve_or_create(
+                book_id=book_id, name=payee_name, connection=conn
+            )
+        else:
+            resolved = self._positive_id(payee_id)
         self._payees.assign_transaction(
             book_id=book_id,
             transaction_id=transaction_id,
-            payee_id=self._positive_id(payee_id),
+            payee_id=resolved,
             connection=conn,
         )
 
@@ -630,16 +640,32 @@ class AppController:
         return {"id": account.id, "state": self.snapshot()}
 
     def reverse_transaction(self, payload: dict[str, object]) -> dict[str, object]:
-        """Correct a posting by reversing it on its own date and time."""
+        """Correct a posting by reversing it, on its own date unless one is given.
+
+        A later date is needed when the original sits on an untimed tracking
+        start (blocker BOUNDARY); the ledger validates whatever date is used.
+        """
         book = self._require_book()
         original = self._ledger.get_transaction(
             book.id, self._positive_id(payload.get("transactionId"))
         )
+        if "date" not in payload:
+            transaction_date, transaction_time = original.transaction_date, original.transaction_time
+        else:
+            requested = payload.get("date")
+            if not isinstance(requested, str) or not requested.strip():
+                raise ValidationError("indica la data dello storno")
+            blocker = self._ledger.reversal_blockers(book.id, [original.id]).get(original.id)
+            if blocker != "BOUNDARY":
+                raise ValidationError(
+                    "una data diversa è consentita solo quando lo storno non può usare quella originale"
+                )
+            transaction_date, transaction_time = requested.strip(), None
         reversal = self._ledger.create_reversal(
             book_id=book.id,
             transaction_id=original.id,
-            transaction_date=original.transaction_date,
-            transaction_time=original.transaction_time,
+            transaction_date=transaction_date,
+            transaction_time=transaction_time,
         )
         return {"id": reversal.id, "state": self.snapshot()}
 

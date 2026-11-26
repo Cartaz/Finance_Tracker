@@ -152,10 +152,12 @@ def test_hundred_mixed_transactions_preserve_ledger_invariants(ledger_env) -> No
                 )
             )
         else:
+            original = ledger.get_transaction(book, reversible.pop(0))
+            # A reversal can never precede the transaction it reverses.
             tx = ledger.create_reversal(
                 book_id=book,
-                transaction_id=reversible.pop(0),
-                transaction_date=tx_date,
+                transaction_id=original.id,
+                transaction_date=max(tx_date, original.transaction_date),
             )
         created.append(tx)
 

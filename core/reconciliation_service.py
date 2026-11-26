@@ -130,6 +130,10 @@ class ReconciliationService:
         if len(raw_rows) > _MAX_CSV_ROWS:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
+        ignore_external_ids = self._ids_are_row_counters(raw_rows)
+        # Distinct ids (even mere counters) say the bank listed separate lines;
+        # without any id, identical rows of one file are flagged for review.
+        file_has_ids = all((row.get("external_id") or "").strip() for row in raw_rows)
         prepared: list[dict[str, object]] = []
         seen_external: set[str] = set()
         for raw in raw_rows:
@@ -152,7 +156,9 @@ class ReconciliationService:
                     f"row {row_number}: zero amount is not importable"
                 )
             description = (raw.get("description") or "").strip()
-            external_id = (raw.get("external_id") or "").strip() or None
+            external_id = (
+                None if ignore_external_ids else (raw.get("external_id") or "").strip() or None
+            )
             if external_id is not None:
                 if external_id in seen_external:
                     raise ReconciliationAmbiguousError(
@@ -191,6 +197,7 @@ class ReconciliationService:
             summary: dict[str, int] = {}
             for item in prepared:
                 state, matched_transaction_id = self._initial_state(
+                    batch_id=batch_id if file_has_ids else None,
                     book_id=book_id,
                     account_id=account_id,
                     source_name=source,
@@ -267,6 +274,23 @@ class ReconciliationService:
         return len(matches) >= 2 and covered >= 0.8 * high_bytes
 
     @staticmethod
+    def _ids_are_row_counters(raw_rows: list[dict[str, str]]) -> bool:
+        """True when the id column just numbers the rows (0/1, 2, 3, ...).
+
+        Such ids restart in every export, so they cannot identify a bank
+        movement; rows then fall back to fingerprint duplicate detection.
+        """
+        ids = [(row.get("external_id") or "").strip() for row in raw_rows]
+        # One row cannot reveal a counter; keep its id as a real identity.
+        if len(ids) < 2 or not all(item.isascii() and item.isdigit() for item in ids):
+            return False
+        values = [int(item) for item in ids]
+        step = 1 if values[-1] >= values[0] else -1  # newest-first exports count down
+        return min(values) in (0, 1) and all(
+            later == earlier + step for earlier, later in zip(values, values[1:])
+        )
+
+    @staticmethod
     def _decode_csv(raw: bytes) -> str:
         """Decode UTF-8, or Windows-1252 only when the file is clearly not UTF-8.
 
@@ -331,15 +355,28 @@ class ReconciliationService:
             """,
             (book_id, batch_id, -1 if limit is None else limit, offset),
         ).fetchall()
-        return [
-            {
+        return [self._live_row(row, book_id, source_account_id, accounts) for row in rows]
+
+    @staticmethod
+    def _effective_state(stored: str, candidates: list) -> str:
+        """Heuristic suggestions follow the live candidates (they may have been
+        reversed, linked or added since the import)."""
+        if stored == "SUGGESTED" and len(candidates) != 1:
+            return "UNMATCHED" if not candidates else "AMBIGUOUS"
+        return stored
+
+    def _live_row(self, row, book_id: int, source_account_id: int, accounts) -> dict[str, object]:
+        candidates = self._candidate_details(
+            book_id,
+            source_account_id,
+            str(row["transaction_date"]),
+            int(row["amount_minor"]),
+        )
+        state = self._effective_state(str(row["review_state"]), candidates)
+        return {
                 **dict(row),
-                "candidates": self._candidate_details(
-                    book_id,
-                    source_account_id,
-                    str(row["transaction_date"]),
-                    int(row["amount_minor"]),
-                ),
+                "review_state": state,
+                "candidates": candidates,
                 "postingCapabilities": self._posting_capabilities(
                     source_account_id=source_account_id,
                     currency_code=str(row["currency_code"]),
@@ -347,8 +384,6 @@ class ReconciliationService:
                     accounts=accounts,
                 ),
             }
-            for row in rows
-        ]
 
     def link_existing(
         self,
@@ -403,7 +438,15 @@ class ReconciliationService:
         payee_id: int | None = None,
     ) -> dict[str, object]:
         row, batch = self._require_row(book_id, row_id)
-        state = str(row["review_state"])
+        state = self._effective_state(
+            str(row["review_state"]),
+            self._candidate_details(
+                book_id,
+                int(batch["account_id"]),
+                str(row["transaction_date"]),
+                int(row["amount_minor"]),
+            ),
+        )
         if state == "AMBIGUOUS":
             raise ReconciliationAmbiguousError(
                 "ambiguous rows must be resolved before posting"
@@ -536,6 +579,7 @@ class ReconciliationService:
     def _initial_state(
         self,
         *,
+        batch_id: int | None,
         book_id: int,
         account_id: int,
         source_name: str,
@@ -578,14 +622,16 @@ class ReconciliationService:
                 return "TRACKING_AMBIGUOUS", None
 
         # Two indexed lookups (an OR would defeat both indexes): the same
-        # movement for this account under any source label (unless both rows
-        # carry different bank ids), or the same bank id within the source.
+        # movement already staged for this account by an earlier import under
+        # any source label (unless both rows carry different bank ids), or the
+        # same bank id within the source. Identical rows of one file are real.
         duplicate = self._database.connection.execute(
             """
             SELECT 1
             FROM import_rows r
             JOIN import_batches b ON b.id=r.batch_id
             WHERE r.book_id=? AND r.fingerprint=? AND b.account_id=?
+              AND (? IS NULL OR r.batch_id <> ?)
               AND (r.external_id IS NULL OR ? IS NULL OR r.external_id = ?)
             LIMIT 1
             """,
@@ -593,6 +639,8 @@ class ReconciliationService:
                 book_id,
                 fingerprint,
                 account_id,
+                batch_id,
+                batch_id,
                 None if external_id is None else str(external_id),
                 None if external_id is None else str(external_id),
             ),

@@ -15,13 +15,16 @@ PageScaffold {
         .map(item => ({ item: item, path: app.categoryPath(item) }))
         .sort((a, b) => a.item.type.localeCompare(b.item.type) || a.path.localeCompare(b.path, "it"))
 
+    property bool defaultsPending: true
+
     function reload() {
-        const firstLoad = accountCurrency.options.length === 0
         accountCurrency.setOptions(app.currencyOptions(false))
-        if (firstLoad)
+        if (defaultsPending) {
             accountCurrency.select(app.baseCurrency)
+            refreshDirections()
+            defaultsPending = false
+        }
         historyAccount.setOptions(app.accountOptions(app.balanceAccounts(false)))
-        refreshDirections()
         refreshParents()
     }
     function refreshDirections() {
@@ -54,6 +57,7 @@ PageScaffold {
             trackingTime.clear()
             openingBalance.clear()
             accountPlaceholder.checked = false
+            refreshDirections()
             app.changed(result.state)
         }, "Conto creato")
     }
@@ -80,7 +84,10 @@ PageScaffold {
 
     Connections {
         target: page.app
-        function onSessionReset() { page.history = null }
+        function onSessionReset() {
+            page.history = null
+            page.defaultsPending = true
+        }
     }
     Component.onCompleted: {
         trackingDate.text = app.today()

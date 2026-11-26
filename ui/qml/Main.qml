@@ -204,7 +204,9 @@ ApplicationWindow {
         }
     }
 
-    Component.onCompleted: start()
+    // Pages initialise their default dates in their own onCompleted handlers;
+    // booting afterwards guarantees the first reload sees those values.
+    Component.onCompleted: Qt.callLater(start)
 
     onClosing: function(close) {
         if (root.backend.busy) {

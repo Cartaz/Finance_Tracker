@@ -77,13 +77,15 @@ PageScaffold {
             return
         }
         const payload = { loanId: String(loanId) }
+        const changedLoan = selectedLoanId !== String(loanId) || rateEffective.text === ""
         selectedLoanId = String(loanId)
         selectedLoan = loan
         plan = app.call("getLoanPlan", payload)
         payments = app.call("getLoanPayments", payload)
         revisions = app.call("getLoanRateRevisions", payload)
         customRecast.setOptions(recastOptions(loan.rateType, loan.amortizationType))
-        rateEffective.text = loan.nextDueDate || app.today()
+        if (changedLoan)
+            rateEffective.text = loan.nextDueDate || app.today()
     }
     function submitLoan() {
         app.attempt(() => {
@@ -174,7 +176,7 @@ PageScaffold {
             ChoiceField { id: mode; objectName: "loanMode"; label: "Modalità" }
             ChoiceField { id: paymentAccount; label: "Conto pagamenti" }
             ChoiceField { id: interestAccount; label: "Categoria interessi" }
-            ChoiceField { id: rateType; label: "Tipo tasso"; onActivated: page.refreshRecast() }
+            ChoiceField { id: rateType; objectName: "loanRateType"; label: "Tipo tasso"; onActivated: page.refreshRecast() }
             ChoiceField { id: amortizationType; label: "Ammortamento"; onActivated: page.refreshRecast() }
             ChoiceField { id: recastStrategy; label: "Dopo pagamento personalizzato" }
             InputField { id: annualRate; objectName: "loanRate"; label: "Tasso annuo iniziale %"; placeholderText: "5,25" }
@@ -284,7 +286,7 @@ PageScaffold {
                         Note { text: "Il piano usa l'ultima revisione effettiva nota fino a una nuova revisione esplicita: non vengono previsti indici futuri." }
                         RowLayout {
                             Layout.fillWidth: true
-                            DateField { id: rateEffective; label: "Effettivo dal" }
+                            DateField { id: rateEffective; objectName: "rateEffective"; label: "Effettivo dal" }
                             InputField { id: rateValue; label: "Tasso annuo %"; placeholderText: "5,25" }
                             ActionButton {
                                 text: "Salva revisione"

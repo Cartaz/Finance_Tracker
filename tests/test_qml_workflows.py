@@ -76,8 +76,7 @@ class QmlHarness:
 
     def close(self) -> None:
         self.root.close()
-        self.root.deleteLater()
-        self.shell.engine.deleteLater()
+        self.shell.close()
         self.pump()
         qInstallMessageHandler(self._previous_handler)
         self.database.close()
@@ -209,7 +208,9 @@ def test_first_run_manual_postings_and_csv_import(ui, tmp_path):
     ui.csv_path = csv_file
     ui.navigate("tools")
     ui.set_text("importSource", "Audit CSV")
-    ui.click("importSubmit", "Importazione CSV in corso")
+    # The worker may finish within the click's event pump, replacing the
+    # transient "in corso" toast; only the final outcome is asserted.
+    ui.click("importSubmit")
     result = ui.wait_for_task(1)
     assert result["ok"] is True, result
     assert ui.toast() == ("Importate 1 righe", False)
@@ -277,6 +278,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     ui.set_text("trackingDate", "2026-01-01")
     ui.click("accountSubmit", "Conto creato")
     ui.find("transactionsPage").setProperty("payeeId", "5")
+    ui.choose("accountCurrency", "USD")
     started = ui.bridge.startManagedRestore(backup_name)
     assert started["ok"] is True
     assert ui.bridge.busy is True
@@ -290,6 +292,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     assert "After backup" not in names
     assert ui.list_count("accountsList") == 3
     assert ui.find("transactionsPage").property("payeeId") == ""
+    assert ui.find("accountCurrency").property("value") == "EUR"
     assert ui.qml_warnings() == []
 
 
@@ -339,3 +342,54 @@ def test_failed_startup_shows_a_retry_state(tmp_path, monkeypatch):
         assert harness.qml_warnings() == []
     finally:
         harness.close()
+
+
+def test_restart_with_existing_book_loads_the_dashboard(tmp_path):
+    first = QmlHarness(tmp_path)
+    try:
+        _setup_book(first)
+        _create_structure(first)
+    finally:
+        first.close()
+    second = QmlHarness(tmp_path)
+    try:
+        assert second.root.property("hasBook") is True
+        assert second.find("metricNetWorth").property("value") == "1.000,00 EUR"
+        assert second.find("toast").property("visible") is False
+        assert second.qml_warnings() == []
+    finally:
+        second.close()
+
+
+def test_form_choices_survive_data_refreshes(ui):
+    _setup_book(ui)
+    _create_structure(ui)
+    ui.choose("accountType", "LIABILITY")
+    ui.click("accountSubmit")  # no name: rejected, choices must stay intact
+    ui.choose("accountType", "ASSET")
+    ui.choose("openingDirection", "NEGATIVE")
+    ui.click("refreshButton")
+    assert ui.find("openingDirection").property("value") == "NEGATIVE"
+    ui.set_text("accountName", "Overdraft")
+    ui.set_text("trackingDate", "2026-01-01")
+    ui.set_text("openingBalance", "500")
+    ui.click("accountSubmit", "Conto creato")
+    overdraft = [a for a in ui.controller.snapshot()["accounts"] if a["name"] == "Overdraft"]
+    assert overdraft[0]["balanceMinor"] == "-50000"
+    assert ui.find("openingDirection").property("value") == "POSITIVE"
+
+    ui.choose("accountType", "LIABILITY")
+    ui.set_text("accountName", "Mutuo variabile")
+    ui.set_text("trackingDate", "2026-01-01")
+    ui.click("accountSubmit", "Conto creato")
+    ui.navigate("loans")
+    ui.set_text("loanName", "Variabile")
+    ui.choose("loanMode", "NEW_DISBURSEMENT")
+    ui.choose("loanRateType", "VARIABLE")
+    ui.set_text("loanRate", "4")
+    ui.set_text("loanPrincipal", "1200")
+    ui.click("loanSubmit", "Prestito creato")
+    ui.set_text("rateEffective", "2027-05-01")
+    ui.click("refreshButton")
+    assert ui.find("rateEffective").property("text") == "2027-05-01"
+    assert ui.qml_warnings() == []

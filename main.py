@@ -124,8 +124,11 @@ def main() -> int:
         backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
         bridge = Bridge(controller, backup_tasks)
         shell = QuickShell(bridge, BACKUP_DIR)
-        shell.load()
-        return app.exec()
+        try:
+            shell.load()
+            return app.exec()
+        finally:
+            shell.close()
     except Exception:
         log.exception("Finance Tracker failed to start")
         return 1

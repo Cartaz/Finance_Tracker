@@ -21,6 +21,9 @@ from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
 _MAX_CSV_BYTES = 10_000_000
 _MAX_CSV_ROWS = 10_000
+_UTF8_MULTIBYTE_RE = re.compile(
+    rb"[\xc2-\xdf][\x80-\xbf]|[\xe0-\xef][\x80-\xbf]{2}|[\xf0-\xf4][\x80-\xbf]{3}"
+)
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _BLOCKED_POST_STATES = {"OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
@@ -223,12 +226,12 @@ class ReconciliationService:
     ) -> dict[str, object]:
         """Read a user-selected CSV within the byte limit, then stage it."""
         try:
-            size = csv_path.stat().st_size
-            if size > _MAX_CSV_BYTES:
-                raise ReconciliationError("CSV content exceeds 10 MB")
-            raw = csv_path.read_bytes()
+            with csv_path.open("rb") as stream:
+                raw = stream.read(_MAX_CSV_BYTES + 1)
         except OSError as exc:
             raise ReconciliationError("CSV file cannot be read") from exc
+        if len(raw) > _MAX_CSV_BYTES:
+            raise ReconciliationError("CSV content exceeds 10 MB")
         # The byte limit applies to the file as stored, not to its UTF-8 form.
         return self._stage_csv_text(
             book_id=book_id,
@@ -240,14 +243,27 @@ class ReconciliationService:
 
     @staticmethod
     def _decode_csv(raw: bytes) -> str:
-        # Italian bank exports are commonly UTF-8 or Windows-1252; both are
-        # decoded strictly so undecodable bytes fail closed.
-        for encoding in ("utf-8-sig", "cp1252"):
-            try:
-                return raw.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        raise ReconciliationError("CSV encoding must be UTF-8 or Windows-1252")
+        """Decode UTF-8, or Windows-1252 only when the file is clearly not UTF-8.
+
+        Italian bank exports are commonly one of the two. Damaged UTF-8 (valid
+        multi-byte sequences plus a stray byte) and UTF-16 are refused rather
+        than silently decoded into garbled descriptions.
+        """
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in raw:
+            raise ReconciliationError("CSV encoding must be UTF-8 or Windows-1252")
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            if _UTF8_MULTIBYTE_RE.search(raw):
+                raise ReconciliationError(
+                    "CSV is not valid UTF-8; re-export it as UTF-8 or Windows-1252"
+                ) from None
+        try:
+            return raw.decode("cp1252")
+        except UnicodeDecodeError as exc:
+            raise ReconciliationError(
+                "CSV encoding must be UTF-8 or Windows-1252"
+            ) from exc
 
     def list_batches(self, book_id: int, *, limit: int = 50) -> list[dict[str, object]]:
         if (

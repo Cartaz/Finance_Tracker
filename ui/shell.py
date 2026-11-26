@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QFileDialog
@@ -39,6 +39,17 @@ class QuickShell:
         self.engine.load(QUrl.fromLocalFile(str(MAIN_QML)))
         if not self.engine.rootObjects():
             raise RuntimeError(f"Qt Quick interface could not load: {MAIN_QML}")
+
+    def close(self) -> None:
+        """Destroy windows and the engine before QApplication is destroyed.
+
+        Qt Quick's render loop must not outlive its windows; relying on
+        Python's teardown order can crash the process on exit.
+        """
+        for root in self.engine.rootObjects():
+            root.deleteLater()
+        self.engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     @property
     def root(self):

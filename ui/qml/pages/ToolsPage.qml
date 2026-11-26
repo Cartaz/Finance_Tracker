@@ -15,7 +15,13 @@ PageScaffold {
     property bool hasNextPage: false
     readonly property int pageSize: 100
 
+    property bool defaultsPending: true
+
     function reload() {
+        if (defaultsPending) {
+            reviewMode.select(app.initial.reconciliationReviewMode)
+            defaultsPending = false
+        }
         backups = app.call("listBackups")
         importAccount.setOptions(app.accountOptions(app.balanceAccounts(true)))
         fxCurrency.setOptions(app.currencyOptions(true))
@@ -74,14 +80,11 @@ PageScaffold {
         }, "Tasso FX salvato")
     }
 
-    Component.onCompleted: {
-        fxDate.text = app.today()
-        if (app.initial)
-            reviewMode.select(app.initial.reconciliationReviewMode)
-    }
+    Component.onCompleted: fxDate.text = app.today()
     Connections {
         target: page.app
         function onSessionReset() {
+            page.defaultsPending = true
             page.batchId = ""
             page.pageIndex = 0
             page.rows = []

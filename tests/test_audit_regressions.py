@@ -422,3 +422,55 @@ def test_cp1252_csv_file_limit_applies_to_stored_bytes(ledger_env, tmp_path):
         review_mode="FULL_REVIEW",
     )
     assert result["rowCount"] == 9_000
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("data,importo\n2026-09-30,-5\nCaff\u00e8 ".encode("utf-8") + b"\xff\n", "not valid UTF-8"),
+        ("data,importo\n2026-09-30,-5\n".encode("utf-16"), "UTF-8 or Windows-1252"),
+    ],
+)
+def test_csv_file_decoding_fails_closed(ledger_env, tmp_path, payload, message):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    csv_path = tmp_path / "broken.csv"
+    csv_path.write_bytes(payload)
+    with pytest.raises(ReconciliationError, match=message):
+        service.import_csv_file(
+            book_id=env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            csv_path=csv_path,
+            review_mode="FULL_REVIEW",
+        )
+
+
+def test_csv_file_read_is_bounded(ledger_env, tmp_path):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    csv_path = tmp_path / "huge.csv"
+    csv_path.write_bytes(b"a" * 10_000_001)
+    with pytest.raises(ReconciliationError, match="exceeds 10 MB"):
+        service.import_csv_file(
+            book_id=env.book_id,
+            account_id=1,
+            source_name="Bank",
+            csv_path=csv_path,
+            review_mode="FULL_REVIEW",
+        )

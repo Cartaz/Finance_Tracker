@@ -154,12 +154,11 @@ Download the GitHub Actions artifact `bug-hunting-test-csv-corpus` from workflow
 - [ ] **N09 BLOCKER** Failed restore leaves original live DB usable and unchanged.
 - [ ] N10 Repeat backup/mutate/restore cycle five times; test read-only external path if available.
 
-## O. WebEngine / security / hostile text
+## O. Qt Quick / security / hostile text
 
-- [ ] **O01 BLOCKER** HTTP(S) navigation never renders inside Finance Tracker; intentional link opens system browser.
-- [ ] **O02 BLOCKER** Remote scripts/images/subresources are blocked.
-- [ ] **O03 BLOCKER** Enter `<img src=x onerror=alert(1)>`, quotes, ampersands and angle brackets in user text fields; content must render as text and never execute.
-- [ ] **O04 BLOCKER** No arbitrary filesystem or command API exposed over QWebChannel.
+- [ ] **O01 BLOCKER** The interface loads only local QML files; no remote content is fetched.
+- [ ] **O03 BLOCKER** Enter `<img src=x onerror=alert(1)>`, quotes, ampersands and angle brackets in user text fields; content must render as plain text.
+- [ ] **O04 BLOCKER** No arbitrary filesystem or command API is exposed to QML; files are chosen only through native dialogs.
 
 ## P. Filesystem / failure recovery
 
@@ -176,7 +175,7 @@ Download the GitHub Actions artifact `bug-hunting-test-csv-corpus` from workflow
 - [ ] Q02 Perform 100+ mixed operations and rapid view switching.
 - [ ] Q03 Observe CPU at idle and RAM growth over the session.
 - [ ] Q04 Suspend/resume system if safe.
-- [ ] **Q05 BLOCKER** Normal close leaves no orphan Finance Tracker / QtWebEngine process.
+- [ ] **Q05 BLOCKER** Normal close leaves no orphan Finance Tracker process.
 - [ ] Q06 Reopen and verify DB/content integrity.
 
 ## R. Final pre-tag gate
@@ -185,7 +184,7 @@ Download the GitHub Actions artifact `bug-hunting-test-csv-corpus` from workflow
 - [ ] **R02 BLOCKER** `./install.sh` passes.
 - [ ] **R03 BLOCKER** `.venv/bin/python -m compileall -q main.py config core ui tests` passes.
 - [ ] **R04 BLOCKER** `.venv/bin/python -m pytest` passes.
-- [ ] **R05 BLOCKER** `.venv/bin/ruff check main.py config core ui tests` passes.
+- [ ] **R05 BLOCKER** `.venv/bin/ruff check main.py config core ui tests` and `.venv/bin/pyside6-qmllint --max-warnings 0 ui/qml/*.qml ui/qml/pages/*.qml` pass.
 - [ ] **R06 BLOCKER** GitHub Actions for tested `main` is green.
 - [ ] **R07 BLOCKER** Review `finance-tracker.log`; no unexplained exceptions/errors remain.
 - [ ] **R08 BLOCKER** No test artifact contains real financial data.

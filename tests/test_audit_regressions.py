@@ -273,12 +273,18 @@ def test_large_csv_worker_keeps_event_loop_alive_and_paginates(ledger_env):
     deadline = QTimer()
     deadline.setSingleShot(True)
     deadline.timeout.connect(loop.quit)
-    csv_text = "date,amount,externalid\n" + "".join(
-        f"2026-09-30,-5,row-{i}\n" for i in range(10_000)
+    csv_path = env.db.path.parent / "large.csv"
+    csv_path.write_text(
+        "date,amount,externalid\n"
+        + "".join(f"2026-09-30,-5,row-{i}\n" for i in range(10_000)),
+        encoding="utf-8",
     )
-    started = bridge.startCsvImport(
-        {"accountId": bank.id, "sourceName": "Bank", "csvText": csv_text}
+    bridge.set_file_dialogs(
+        export_picker=lambda: None,
+        restore_picker=lambda: None,
+        csv_picker=lambda: str(csv_path),
     )
+    started = bridge.startCsvImport({"accountId": bank.id, "sourceName": "Bank"})
     assert started["ok"] is True
     assert manager.maintenance is True
     assert bridge.createPayee("Blocked")["ok"] is False
@@ -301,20 +307,6 @@ def test_large_csv_worker_keeps_event_loop_alive_and_paginates(ledger_env):
     assert first[100]["id"] == second[0]["id"]
     assert bridge.getSnapshot()["ok"] is True
     app.processEvents()
-
-
-def test_local_navigation_is_confined_to_frontend(monkeypatch):
-    from PySide6.QtCore import QUrl
-
-    from ui.window import _local_resource_allowed
-
-    root = Path(__file__).resolve().parents[1] / "ui" / "web"
-    assert _local_resource_allowed(QUrl.fromLocalFile(str(root / "index.html")))
-    assert not _local_resource_allowed(QUrl("file:///etc/passwd"))
-    assert not _local_resource_allowed(
-        QUrl.fromLocalFile(str(root / ".." / "bridge.py"))
-    )
-    assert not _local_resource_allowed(QUrl("about:version"))
 
 
 def test_payee_merge_keeps_future_schedules_postable(ledger_env):
@@ -401,3 +393,95 @@ def test_invalid_settings_encoding_does_not_break_startup(tmp_path):
     path = tmp_path / "settings.json"
     path.write_bytes(b"\xff\xfeinvalid")
     assert SettingsStore(path).load() == Settings()
+
+
+def test_cp1252_csv_file_limit_applies_to_stored_bytes(ledger_env, tmp_path):
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    description = "è" * 700  # one byte in Windows-1252, two bytes in UTF-8
+    rows = "".join(f"2026-09-30;-5,00;{description} {i}\n" for i in range(9_000))
+    csv_path = tmp_path / "accented.csv"
+    csv_path.write_bytes(("data;importo;descrizione\n" + rows).encode("cp1252"))
+    assert csv_path.stat().st_size < 10_000_000
+    assert len(csv_path.read_bytes().decode("cp1252").encode("utf-8")) > 10_000_000
+    result = service.import_csv_file(
+        book_id=env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        csv_path=csv_path,
+        review_mode="FULL_REVIEW",
+    )
+    assert result["rowCount"] == 9_000
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            "data,importo,descrizione\n2026-09-30,-5,Caff\u00e8 Societ\u00e0 Pi\u00f9\n".encode("utf-8")
+            + b"\xff\n",
+            "not valid UTF-8",
+        ),
+        ("data,importo\n2026-09-30,-5\n".encode("utf-16"), "UTF-8 or Windows-1252"),
+    ],
+)
+def test_csv_file_decoding_fails_closed(ledger_env, tmp_path, payload, message):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    csv_path = tmp_path / "broken.csv"
+    csv_path.write_bytes(payload)
+    with pytest.raises(ReconciliationError, match=message):
+        service.import_csv_file(
+            book_id=env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            csv_path=csv_path,
+            review_mode="FULL_REVIEW",
+        )
+
+
+def test_csv_file_read_is_bounded(ledger_env, tmp_path):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    csv_path = tmp_path / "huge.csv"
+    csv_path.write_bytes(b"a" * 10_000_001)
+    with pytest.raises(ReconciliationError, match="exceeds 10 MB"):
+        service.import_csv_file(
+            book_id=env.book_id,
+            account_id=1,
+            source_name="Bank",
+            csv_path=csv_path,
+            review_mode="FULL_REVIEW",
+        )
+
+
+def test_cp1252_pairs_that_look_like_utf8_are_still_accepted():
+    from core.reconciliation_service import ReconciliationService
+
+    raw = "data;importo;descrizione\n2026-09-30;-5,00;CAFFÈ\u00a0BAR PIÙ «centro»\n".encode("cp1252")
+    assert ReconciliationService._decode_csv(raw).endswith("CAFFÈ\u00a0BAR PIÙ «centro»\n")

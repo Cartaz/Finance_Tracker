@@ -29,7 +29,7 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - Loan installment projection and posting consume the same canonical remaining-plan calculation. Principal repayment remains balance-sheet neutral in book-level flow semantics; interest is the expense component.
 - Variable-rate history is effective-dated and append/update-only for future periods: a revision must never rewrite the rate applied to an already-posted installment. Future variable-rate projections use the latest effective known revision until another explicit revision exists; they do not invent future index values.
 - Custom loan payments are explicit domain events. They must cover accrued interest and reduce principal; arrears, unpaid-interest capitalization, penalties and negative amortization are never inferred silently.
-- Loan creation/account/policy capabilities are backend-owned; JavaScript renders allowed targets and policy values rather than inferring them from account types, currencies, balances or financial formulas.
+- Loan creation/account/policy capabilities are backend-owned; QML renders allowed targets and policy values rather than inferring them from account types, currencies, balances or financial formulas.
 - Backup/restore has one canonical core owner. Presentation and the bridge may select files and orchestrate progress but must not implement SQLite verification, migration, copying or replacement rules.
 - A restore never writes an unverified external database directly over the live database. The source is opened read-only, verified, copied to staging, migrated to the current schema and integrity-checked before any live-file replacement.
 - Every restore creates a verified safety backup of the current live state before replacement. The final swap is rollback-safe and must either reopen the prepared database or restore the previous live database.
@@ -37,12 +37,12 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - While restore preparation is active, normal application mutations are blocked by an explicit maintenance state so committed changes cannot be made after the safety snapshot and then lost at swap time.
 - Backup/export/restore operations are serialized. A prepared restore reserves the backup lifecycle through finalization or cancellation; another persistence snapshot operation cannot interleave with it.
 - Normal application shutdown must not race an active backup/restore worker. The native shell blocks normal close while owned background persistence I/O is active.
-- Native file selection belongs to the Qt shell. JavaScript never receives arbitrary filesystem powers or user-controlled command execution.
-- QWebChannel transport must preserve financial integer precision explicitly.
-- One main QWebChannel backend proxy is shared by frontend modules; feature modules must not create competing channel clients on the same transport.
+- Native file selection belongs to the Qt shell (`ui/shell.py`). QML never receives filesystem paths, arbitrary filesystem powers or user-controlled command execution.
+- The QML boundary must preserve financial integer precision explicitly: money crosses as integer text and is formatted in Python; QML never parses or computes money.
+- One backend object is injected into the QML root; pages reach it through the root and must not create competing backend objects.
 - `AppController` coordinates; it must not accumulate SQL or become the owner of domain rules.
 - `ui/bridge.py` validates transport shape and delegates; it does not implement business rules.
-- JavaScript owns presentation and temporary UI state only.
+- QML owns presentation and temporary UI state only.
 - Database migrations are separated from database connection/lifecycle responsibilities.
 - Prefer a small number of deep modules over many shallow wrappers, repositories, factories or interfaces.
 - Do not introduce abstractions without a current source of complexity they remove.
@@ -82,6 +82,7 @@ Before a milestone is declared complete:
 .venv/bin/python -m compileall -q main.py config core ui tests
 .venv/bin/python -m pytest
 .venv/bin/ruff check main.py config core ui tests
+.venv/bin/pyside6-qmllint --max-warnings 0 ui/qml/*.qml ui/qml/pages/*.qml
 ```
 
 Then perform the mandatory strategic review above. Green tests without the review are not milestone completion.

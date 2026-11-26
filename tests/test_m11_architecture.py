@@ -5,7 +5,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "core"
 UI = ROOT / "ui"
-WEB = UI / "web"
 
 
 def test_backup_restore_has_one_deep_core_owner() -> None:
@@ -67,7 +66,7 @@ def test_backup_work_is_off_gui_thread_and_restore_enters_maintenance() -> None:
     assert "class BackgroundTask(QRunnable)" in worker
 
 
-def test_qwebchannel_bridge_remains_transport_only() -> None:
+def test_qml_bridge_remains_transport_only() -> None:
     bridge = (UI / "bridge.py").read_text(encoding="utf-8")
 
     assert "sqlite3" not in bridge
@@ -78,17 +77,17 @@ def test_qwebchannel_bridge_remains_transport_only() -> None:
     assert "BackgroundTask" not in bridge
 
 
-def test_native_shell_owns_backup_file_selection() -> None:
-    window = (UI / "window.py").read_text(encoding="utf-8")
+def test_native_shell_owns_file_selection() -> None:
+    shell = (UI / "shell.py").read_text(encoding="utf-8")
     manager = (UI / "backup_task_manager.py").read_text(encoding="utf-8")
-    frontend = (WEB / "backup.js").read_text(encoding="utf-8")
+    qml = "\n".join(path.read_text(encoding="utf-8") for path in (UI / "qml").rglob("*.qml"))
 
-    assert "QFileDialog.getSaveFileName" in window
-    assert "QFileDialog.getOpenFileName" in window
-    assert "set_file_dialogs(" in window
+    assert "QFileDialog.getSaveFileName" in shell
+    assert "QFileDialog.getOpenFileName" in shell
+    assert "csv_picker=self.choose_csv_path" in shell
     assert "Path(selected)" in manager
-    assert "QFileDialog" not in frontend
-    assert "file://" not in frontend
+    assert "FileDialog" not in qml
+    assert "file:" not in qml
 
 
 def test_external_backup_sources_are_opened_read_only() -> None:
@@ -98,20 +97,6 @@ def test_external_backup_sources_are_opened_read_only() -> None:
     assert '"?mode=ro"' in service
     assert "uri=True" in service
     assert "source_conn = cls._connect_readonly(source)" in service
-
-
-def test_frontend_uses_one_shared_qwebchannel_instance() -> None:
-    index = (WEB / "index.html").read_text(encoding="utf-8")
-    adapter = (WEB / "backend-channel.js").read_text(encoding="utf-8")
-    app = (WEB / "app.js").read_text(encoding="utf-8")
-    backup = (WEB / "backup.js").read_text(encoding="utf-8")
-
-    assert index.index('src="backend-channel.js"') < index.index('src="app.js"')
-    assert "financeTrackerBackend" in adapter
-    assert "finance-backend-ready" in adapter
-    assert app.count("new QWebChannel(") == 1
-    assert "new QWebChannel(" not in backup
-    assert "financeTrackerBackend" in backup
 
 
 def test_backup_catalog_does_not_run_full_integrity_check_on_ui_path() -> None:
@@ -127,16 +112,16 @@ def test_backup_catalog_does_not_run_full_integrity_check_on_ui_path() -> None:
 
 def test_normal_window_close_is_blocked_only_by_owned_backup_work() -> None:
     main = (ROOT / "main.py").read_text(encoding="utf-8")
-    window = (UI / "window.py").read_text(encoding="utf-8")
+    main_qml = (UI / "qml" / "Main.qml").read_text(encoding="utf-8")
+    bridge = (UI / "bridge.py").read_text(encoding="utf-8")
     manager = (UI / "backup_task_manager.py").read_text(encoding="utf-8")
 
     assert "def active(self) -> bool" in manager
-    assert "MainWindow(bridge, backup_tasks)" in main
-    assert "self._backup_tasks.active" in window
-    assert "QThreadPool.globalInstance().activeThreadCount()" not in window
-    assert "def closeEvent(" in window
-    assert "event.ignore()" in window
-    assert "Operazione in corso" in window
+    assert "QuickShell(bridge, BACKUP_DIR)" in main
+    assert "self._backup_tasks.active" in bridge
+    assert "onClosing:" in main_qml
+    assert "root.backend.busy" in main_qml
+    assert "close.accepted = false" in main_qml
 
 
 def test_backup_controller_serializes_backup_and_restore_lifecycle() -> None:

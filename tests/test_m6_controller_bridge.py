@@ -23,6 +23,14 @@ def _bridge_env(tmp_path):
     return db, accounts, ledger, controller, Bridge(controller)
 
 
+def _import(controller, tmp_path, payload):
+    """Run the CSV worker task synchronously, as the background worker would."""
+    payload = dict(payload)
+    csv_path = tmp_path / "import.csv"
+    csv_path.write_text(payload.pop("csvText"), encoding="utf-8")
+    return {"ok": True, "data": controller.csv_import_task(payload)(csv_path)}
+
+
 def test_reconciliation_bridge_preserves_large_imported_minor_units(tmp_path) -> None:
     db, accounts, _ledger, controller, bridge = _bridge_env(tmp_path)
     try:
@@ -34,7 +42,9 @@ def test_reconciliation_bridge_preserves_large_imported_minor_units(tmp_path) ->
             currency_code="EUR",
             tracking_start_date="2026-01-01",
         )
-        imported = bridge.importCsv(
+        imported = _import(
+            controller,
+            tmp_path,
             {
                 "accountId": bank.id,
                 "sourceName": "Bank",
@@ -78,7 +88,9 @@ def test_reconciliation_bridge_posts_expense_refund_and_transfer_explicitly(tmp_
             account_type="EXPENSE",
             name="Expense",
         )
-        imported = bridge.importCsv(
+        imported = _import(
+            controller,
+            tmp_path,
             {
                 "accountId": bank.id,
                 "sourceName": "Bank",

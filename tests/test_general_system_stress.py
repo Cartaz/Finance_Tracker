@@ -348,7 +348,7 @@ def test_pre_m6_whole_system_stress(tmp_path) -> None:
                 )
                 assert history["complete"] is True
 
-        # Controller/QWebChannel transport: 1,000 canonical read calls.
+        # Controller/QML transport: 1,000 canonical read calls.
         for index in range(1_000):
             if index % 4 == 0:
                 result = bridge.getSnapshot()

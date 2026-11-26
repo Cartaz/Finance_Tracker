@@ -7,6 +7,7 @@ import re
 import sqlite3
 import unicodedata
 from datetime import date
+from pathlib import Path
 
 from core.account_service import AccountService
 from core.database import Database
@@ -18,6 +19,11 @@ from core.posting_policy import PostingPolicy
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
+_MAX_CSV_BYTES = 10_000_000
+_MAX_CSV_ROWS = 10_000
+_UTF8_MULTIBYTE_RE = re.compile(
+    rb"[\xc2-\xdf][\x80-\xbf]|[\xe0-\xef][\x80-\xbf]{2}|[\xf0-\xf4][\x80-\xbf]{3}"
+)
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _BLOCKED_POST_STATES = {"OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
@@ -72,6 +78,25 @@ class ReconciliationService:
         csv_text: str,
         review_mode: str,
     ) -> dict[str, object]:
+        if isinstance(csv_text, str) and len(csv_text.encode("utf-8")) > _MAX_CSV_BYTES:
+            raise ReconciliationError("CSV content exceeds 10 MB")
+        return self._stage_csv_text(
+            book_id=book_id,
+            account_id=account_id,
+            source_name=source_name,
+            csv_text=csv_text,
+            review_mode=review_mode,
+        )
+
+    def _stage_csv_text(
+        self,
+        *,
+        book_id: int,
+        account_id: int,
+        source_name: str,
+        csv_text: str,
+        review_mode: str,
+    ) -> dict[str, object]:
         account = self._accounts.get_account(book_id, account_id)
         if account.type not in {"ASSET", "LIABILITY"} or account.currency_code is None:
             raise ReconciliationError("imports require a balance account")
@@ -92,13 +117,11 @@ class ReconciliationService:
             )
         if not isinstance(csv_text, str) or not csv_text.strip():
             raise ReconciliationError("CSV content is empty")
-        if len(csv_text.encode("utf-8")) > 10_000_000:
-            raise ReconciliationError("CSV content exceeds 10 MB")
 
         raw_rows = self._parse_csv(csv_text)
         if not raw_rows:
             raise ReconciliationError("CSV contains no data rows")
-        if len(raw_rows) > 10_000:
+        if len(raw_rows) > _MAX_CSV_ROWS:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
         prepared: list[dict[str, object]] = []
@@ -191,6 +214,69 @@ class ReconciliationService:
                 )
                 summary[state] = summary.get(state, 0) + 1
         return {"batchId": batch_id, "rowCount": len(prepared), "summary": summary}
+
+    def import_csv_file(
+        self,
+        *,
+        book_id: int,
+        account_id: int,
+        source_name: str,
+        csv_path: Path,
+        review_mode: str,
+    ) -> dict[str, object]:
+        """Read a user-selected CSV within the byte limit, then stage it."""
+        try:
+            with csv_path.open("rb") as stream:
+                raw = stream.read(_MAX_CSV_BYTES + 1)
+        except OSError as exc:
+            raise ReconciliationError("CSV file cannot be read") from exc
+        if len(raw) > _MAX_CSV_BYTES:
+            raise ReconciliationError("CSV content exceeds 10 MB")
+        # The byte limit applies to the file as stored, not to its UTF-8 form.
+        return self._stage_csv_text(
+            book_id=book_id,
+            account_id=account_id,
+            source_name=source_name,
+            csv_text=self._decode_csv(raw),
+            review_mode=review_mode,
+        )
+
+    @staticmethod
+    def _looks_like_damaged_utf8(raw: bytes) -> bool:
+        """True when almost every non-ASCII byte belongs to a valid UTF-8 sequence.
+
+        Windows-1252 text can contain isolated byte pairs that happen to be
+        valid UTF-8 (e.g. "È" followed by a no-break space); genuine UTF-8
+        with a stray byte has nearly all of its high bytes in such sequences.
+        """
+        matches = _UTF8_MULTIBYTE_RE.findall(raw)
+        high_bytes = sum(1 for byte in raw if byte >= 0x80)
+        covered = sum(len(match) for match in matches)
+        return len(matches) >= 2 and covered >= 0.8 * high_bytes
+
+    @staticmethod
+    def _decode_csv(raw: bytes) -> str:
+        """Decode UTF-8, or Windows-1252 only when the file is clearly not UTF-8.
+
+        Italian bank exports are commonly one of the two. Damaged UTF-8 (valid
+        multi-byte sequences plus a stray byte) and UTF-16 are refused rather
+        than silently decoded into garbled descriptions.
+        """
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in raw:
+            raise ReconciliationError("CSV encoding must be UTF-8 or Windows-1252")
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            if ReconciliationService._looks_like_damaged_utf8(raw):
+                raise ReconciliationError(
+                    "CSV is not valid UTF-8; re-export it as UTF-8 or Windows-1252"
+                ) from None
+        try:
+            return raw.decode("cp1252")
+        except UnicodeDecodeError as exc:
+            raise ReconciliationError(
+                "CSV encoding must be UTF-8 or Windows-1252"
+            ) from exc
 
     def list_batches(self, book_id: int, *, limit: int = 50) -> list[dict[str, object]]:
         if (
@@ -719,7 +805,7 @@ class ReconciliationService:
                     ),
                 }
             )
-            if len(result) > 10_000:
+            if len(result) > _MAX_CSV_ROWS:
                 raise ReconciliationError("CSV import is limited to 10000 rows")
         return result
 

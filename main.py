@@ -33,7 +33,7 @@ from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
 from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
-from ui.window import MainWindow
+from ui.shell import QuickShell
 
 log = logging.getLogger(__name__)
 
@@ -123,9 +123,12 @@ def main() -> int:
         )
         backup_tasks = BackupTaskManager(backup_controller, controller.error_payload)
         bridge = Bridge(controller, backup_tasks)
-        window = MainWindow(bridge, backup_tasks)
-        window.show()
-        return app.exec()
+        shell = QuickShell(bridge, BACKUP_DIR)
+        try:
+            shell.load()
+            return app.exec()
+        finally:
+            shell.close()
     except Exception:
         log.exception("Finance Tracker failed to start")
         return 1

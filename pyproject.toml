@@ -1,0 +1,10 @@
+[tool.ruff]
+target-version = "py312"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# Explicit rule set: a new Ruff release must not silently change the lint gate.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B006", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

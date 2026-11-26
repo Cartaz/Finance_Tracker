@@ -6,7 +6,6 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-
 HEADERS = ["date", "amount", "currency", "description", "external_id"]
 DESCRIPTIONS = (
     "Supermercato, spesa settimanale",

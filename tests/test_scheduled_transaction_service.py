@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from core.errors import AccountNotFoundError, ScheduledTransactionError
 from core.payee_service import PayeeService
 from core.scheduled_transaction_service import ScheduledTransactionService
+from tests.conftest import force_legacy_archive
 
 
 def _setup(ledger_env):
@@ -40,7 +43,7 @@ def _setup(ledger_env):
     payees = PayeeService(ledger_env.db)
     landlord = payees.create_payee(book_id=book, name="Landlord")
     service = ScheduledTransactionService(
-        ledger_env.db, accounts, ledger_env.ledger, payees
+        ledger_env.db, accounts, ledger_env.ledger, payees, today=lambda: date(2030, 1, 1)
     )
     return service, bank, savings, usd, expense, income, landlord
 
@@ -198,7 +201,7 @@ def test_post_due_batch_rolls_back_all_schedules_if_one_becomes_invalid(ledger_e
         interval=1,
         start_date="2026-02-01",
     )
-    ledger_env.accounts.set_archived(ledger_env.book_id, expense.id, True)
+    force_legacy_archive(ledger_env.db, expense.id)
     before = (
         ledger_env.db.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
         ledger_env.db.connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
@@ -250,3 +253,23 @@ def test_invalid_schedule_inputs_and_cross_book_are_rejected(ledger_env) -> None
         "SELECT COUNT(*) FROM scheduled_transactions"
     ).fetchone()[0] == 0
     ledger_env.db.integrity_check()
+
+
+def test_occurrences_cannot_be_posted_after_today(ledger_env) -> None:
+    from core.errors import ScheduledTransactionError
+
+    service, bank, _, _, expense, _, _ = _setup(ledger_env)
+    service._today = lambda: date(2026, 3, 10)  # noqa: SLF001 - fixed clock
+    service.create_schedule(
+        book_id=ledger_env.book_id,
+        kind="EXPENSE",
+        source_account_id=bank.id,
+        counter_account_id=expense.id,
+        amount_minor=100,
+        frequency="MONTHLY",
+        interval=1,
+        start_date="2026-03-01",
+    )
+    with pytest.raises(ScheduledTransactionError, match="up to today"):
+        service.post_due(book_id=ledger_env.book_id, as_of_date="2026-04-01")
+    assert len(service.post_due(book_id=ledger_env.book_id, as_of_date="2026-03-10")) == 1

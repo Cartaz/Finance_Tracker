@@ -75,7 +75,6 @@ class AppController:
             "app": "Finance Tracker",
             "schemaVersion": SCHEMA_VERSION,
             "bookCurrency": self._settings.book_currency,
-            "locale": self._settings.locale,
             "reconciliationReviewMode": self._settings.reconciliation_review_mode,
             "currencies": self._app_state.supported_currencies(),
             "needsSetup": book is None,
@@ -605,6 +604,44 @@ class AppController:
             payee_id=self._positive_id(payee_id),
             connection=conn,
         )
+
+    def rename_account(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        account = self._accounts.get_account(book.id, self._positive_id(payload.get("accountId")))
+        name = payload.get("name")
+        if not isinstance(name, str):
+            raise ValidationError("name must be text")
+        if account.type in {"EXPENSE", "INCOME"}:
+            self._categories.rename_category(book.id, account.id, name)
+        else:
+            self._accounts.rename_account(book.id, account.id, name)
+        return {"id": account.id, "state": self.snapshot()}
+
+    def set_account_archived(self, payload: dict[str, object]) -> dict[str, object]:
+        book = self._require_book()
+        archived = payload.get("archived")
+        if not isinstance(archived, bool):
+            raise ValidationError("archived must be boolean")
+        account = self._accounts.get_account(book.id, self._positive_id(payload.get("accountId")))
+        if account.type in {"EXPENSE", "INCOME"}:
+            self._categories.set_archived(book.id, account.id, archived)
+        else:
+            self._accounts.set_archived(book.id, account.id, archived)
+        return {"id": account.id, "state": self.snapshot()}
+
+    def reverse_transaction(self, payload: dict[str, object]) -> dict[str, object]:
+        """Correct a posting by reversing it on its own date and time."""
+        book = self._require_book()
+        original = self._ledger.get_transaction(
+            book.id, self._positive_id(payload.get("transactionId"))
+        )
+        reversal = self._ledger.create_reversal(
+            book_id=book.id,
+            transaction_id=original.id,
+            transaction_date=original.transaction_date,
+            transaction_time=original.transaction_time,
+        )
+        return {"id": reversal.id, "state": self.snapshot()}
 
     def suggest_payees(self, query: str) -> list[dict[str, object]]:
         book = self._require_book()

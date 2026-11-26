@@ -36,7 +36,7 @@ PageScaffold {
     function refreshParents() {
         const options = [{ value: "", text: "Nessuna (categoria principale)" }]
         for (const entry of categoryItems) {
-            if (entry.item.type === categoryType.value)
+            if (entry.item.type === categoryType.value && !entry.item.archived)
                 options.push({ value: String(entry.item.id), text: entry.path + (entry.item.placeholder ? " · contenitore" : "") })
         }
         categoryParent.setOptions(options)
@@ -73,6 +73,18 @@ PageScaffold {
             categoryPlaceholder.checked = false
             app.changed(result.state)
         }, "Categoria creata")
+    }
+    function rename(account) {
+        app.prompt("Rinomina", "Nuovo nome", account.name, name => app.attempt(() => {
+            const result = app.call("renameAccount", { accountId: String(account.id), name: name })
+            app.changed(result.state)
+        }, "Nome aggiornato"))
+    }
+    function setArchived(account, archived) {
+        app.attempt(() => {
+            const result = app.call("setAccountArchived", { accountId: String(account.id), archived: archived })
+            app.changed(result.state)
+        }, archived ? "Archiviato" : "Ripristinato")
     }
     function loadHistory() {
         history = app.call("getAccountHistory", {
@@ -187,20 +199,53 @@ PageScaffold {
                         emptyText: "Nessun conto o debito."
                         model: page.balanceItems
                         delegate: DataRow {
+                            id: accountRow
                             required property var modelData
+                            objectName: "account-" + modelData.name
                             title: modelData.name
                             subtitle: [page.app.accountTypeLabels[modelData.type], modelData.currency,
-                                       modelData.placeholder ? "contenitore" : ""].filter(item => !!item).join(" · ")
+                                       modelData.placeholder ? "contenitore" : "",
+                                       modelData.archived ? "archiviato" : ""].filter(item => !!item).join(" · ")
                             value: modelData.balanceMinor == null ? "" : page.app.money(modelData.balanceMinor, modelData.currency)
+                            valueColor: modelData.archived ? Theme.muted : Theme.primary
+                            ActionButton {
+                                objectName: "rename-" + accountRow.modelData.name
+                                text: "Rinomina"
+                                primary: false
+                                compact: true
+                                onClicked: page.rename(accountRow.modelData)
+                            }
+                            ActionButton {
+                                objectName: "archive-" + accountRow.modelData.name
+                                text: accountRow.modelData.archived ? "Ripristina" : "Archivia"
+                                primary: false
+                                compact: true
+                                onClicked: page.setArchived(accountRow.modelData, !accountRow.modelData.archived)
+                            }
                         }
                     }
                     BoundedList {
                         emptyText: "Nessuna categoria."
                         model: page.categoryItems
                         delegate: DataRow {
+                            id: categoryRow
                             required property var modelData
                             title: modelData.path
-                            subtitle: page.app.accountTypeLabels[modelData.item.type] + (modelData.item.placeholder ? " · contenitore" : "")
+                            subtitle: page.app.accountTypeLabels[modelData.item.type]
+                                + (modelData.item.placeholder ? " · contenitore" : "")
+                                + (modelData.item.archived ? " · archiviata" : "")
+                            ActionButton {
+                                text: "Rinomina"
+                                primary: false
+                                compact: true
+                                onClicked: page.rename(categoryRow.modelData.item)
+                            }
+                            ActionButton {
+                                text: categoryRow.modelData.item.archived ? "Ripristina" : "Archivia"
+                                primary: false
+                                compact: true
+                                onClicked: page.setArchived(categoryRow.modelData.item, !categoryRow.modelData.item.archived)
+                            }
                         }
                     }
                 }

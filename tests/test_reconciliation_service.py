@@ -382,3 +382,117 @@ def test_multiple_semantic_csv_headers_are_rejected_fail_closed(ledger_env) -> N
             ),
         )
     assert ledger_env.db.connection.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == before
+
+
+def test_duplicates_and_identities_follow_the_account_not_the_source_label(tmp_path) -> None:
+    from core.account_service import AccountService
+    from core.book_service import BookService
+    from core.database import Database
+    from core.ledger_service import LedgerService
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    database = Database(tmp_path / "labels.db")
+    database.migrate()
+    book = BookService(database).create_personal_book(
+        user_name="u", book_name="b", currency_code="EUR"
+    )
+    accounts = AccountService(database)
+    bank = accounts.create_account(
+        book_id=book.id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    food = accounts.create_account(book_id=book.id, account_type="EXPENSE", name="Food")
+    service = ReconciliationService(
+        database, accounts, LedgerService(database), PayeeService(database)
+    )
+    csv_text = "date,amount,description,external_id\n2026-03-01,-5,Bar,ext-1\n2026-03-02,-7,Shop,\n"
+
+    def stage(label):
+        result = service.import_csv(
+            book_id=book.id,
+            account_id=bank.id,
+            source_name=label,
+            csv_text=csv_text,
+            review_mode="FULL_REVIEW",
+        )
+        return service.batch_rows(book.id, result["batchId"])
+
+    first = stage("Intesa")
+    service.post_row(
+        book_id=book.id, row_id=first[0]["id"], posting_kind="EXPENSE", counter_account_id=food.id
+    )
+    second = stage("intesa sanpaolo")
+    states = [row["review_state"] for row in second]
+    # Another label never auto-matches; both rows surface as duplicates for review.
+    assert states == ["DUPLICATE_REVIEW", "DUPLICATE_REVIEW"]
+    database.close()
+
+
+def test_reversed_transactions_are_not_reconciliation_candidates(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+    kept, mistaken = (
+        ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=5000,
+            currency_code="EUR",
+            transaction_date="2026-03-05",
+        )
+        for _ in range(2)
+    )
+    ledger_env.ledger.create_reversal(
+        book_id=ledger_env.book_id, transaction_id=mistaken.id, transaction_date="2026-03-05"
+    )
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-05,-50\n2026-03-05,50\n",
+    )
+    rows = service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+    assert rows[0]["review_state"] == "SUGGESTED"
+    assert [item["id"] for item in rows[0]["candidates"]] == [kept.id]
+    assert rows[1]["candidates"] == []
+
+
+def test_generic_ids_from_another_export_do_not_collide(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def stage(source, csv_text):
+        result = service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name=source,
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )
+        return service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]
+
+    card = stage("Card", "date,amount,id\n2026-03-01,-12,1\n")
+    service.post_row(
+        book_id=ledger_env.book_id, row_id=card["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    current = stage("Current account", "date,amount,id\n2026-03-04,-30,1\n")
+    assert current["review_state"] == "REVIEW_REQUIRED"
+    posted = service.post_row(
+        book_id=ledger_env.book_id, row_id=current["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    assert posted["state"] == "POSTED"
+
+
+def test_identical_movements_with_distinct_bank_ids_are_not_duplicates(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,description,external_id\n2026-03-01,-1.20,CAFFE,A1\n2026-03-01,-1.20,CAFFE,A2\n",
+    )
+    assert result["summary"] == {"REVIEW_REQUIRED": 2}

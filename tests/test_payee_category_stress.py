@@ -16,7 +16,7 @@ from core.errors import (
 from core.payee_service import PayeeService
 
 
-def test_m3_stress_payees_aliases_categories_and_invalid_states(ledger_env) -> None:
+def test_stress_payees_aliases_categories_and_invalid_states(ledger_env) -> None:
     rng = random.Random(20260824)
     db = ledger_env.db
     book = ledger_env.book_id

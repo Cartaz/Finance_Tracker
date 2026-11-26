@@ -19,6 +19,8 @@ The project does not pursue speculative abstraction or big-design-up-front. Stra
 - Other workflows may stage evidence or metadata, but accounting mutations delegate to `LedgerService` atomically.
 - Monetary persistence uses integer minor units; financial multiplication, division, percentage and FX math use `Decimal`; financial `float` is prohibited.
 - User-entered transaction/budget/loan-principal/custom-payment amounts are unsigned, strictly positive monetary magnitudes. Economic direction belongs to transaction/posting semantics, never to a user-entered `+` or `-` sign. Signed monetary parsing remains available only for external data where the sign is part of the source evidence.
+- Money parsing never guesses magnitude: a single separator followed by three digits that could be a thousands group is refused for currencies with fewer than three decimals, and trailing zeros are never dropped when they could hide a group.
+- A posted transaction is corrected only by an explicit reversal owned by `LedgerService`; a reversal is refused for transactions owned by another workflow (loans, scheduled occurrences, reconciled bank rows), and archiving is refused while it would leave balances, schedules or loans contradictory.
 - Temporal tracking-boundary semantics have one canonical policy.
 - Posting capability rules have one canonical policy; presentation renders capabilities rather than re-deriving accounting decisions.
 - Scheduled recurrence has one canonical owner. Forecasting and other projections consume the scheduled service's read-only occurrence projection rather than reimplementing recurrence rules.

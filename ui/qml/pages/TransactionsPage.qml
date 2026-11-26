@@ -233,7 +233,7 @@ PageScaffold {
                 maxHeight: 720
                 emptyText: "Nessuna transazione."
                 model: page.app.snapshot ? page.app.snapshot.transactions : []
-                delegate: TransactionRow { app: page.app }
+                delegate: TransactionRow { app: page.app; withActions: true }
             }
         }
     }

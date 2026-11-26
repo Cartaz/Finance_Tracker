@@ -132,10 +132,11 @@ class AccountService:
         return [self._row_to_account(row) for row in rows]
 
     def rename_account(self, book_id: int, account_id: int, name: str) -> Account:
-        clean_name = name.strip()
-        if not clean_name:
+        if not isinstance(name, str) or not name.strip():
             raise ValidationError("account name cannot be empty")
-        self.get_account(book_id, account_id)
+        clean_name = name.strip()
+        if self.get_account(book_id, account_id).type == "EQUITY":
+            raise ValidationError("system equity accounts cannot be renamed")
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE accounts SET name = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
@@ -170,13 +171,79 @@ class AccountService:
         return self.get_account(book_id, account_id)
 
     def set_archived(self, book_id: int, account_id: int, archived: bool) -> Account:
-        self.get_account(book_id, account_id)
+        account = self.get_account(book_id, account_id)
         with self._database.transaction() as conn:
+            if archived and not account.archived:
+                blocker = self._archive_blocker(account)
+                if blocker is not None:
+                    raise ValidationError(f"impossibile archiviare {account.name!r}: {blocker}")
+            if not archived and account.archived and account.parent_id is not None:
+                parent = self.get_account(book_id, account.parent_id)
+                if parent.archived:
+                    raise ValidationError(
+                        f"ripristina prima {parent.name!r}: la voce padre è archiviata"
+                    )
             conn.execute(
                 "UPDATE accounts SET archived = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
                 (int(archived), account_id, book_id),
             )
         return self.get_account(book_id, account_id)
+
+    def _archive_blocker(self, account: Account) -> str | None:
+        """Why archiving would leave other canonical state contradictory."""
+        if account.type == "EQUITY":
+            return "è un conto di sistema"
+        conn = self._database.connection
+        pending = conn.execute(
+            """
+            SELECT 1 FROM import_rows r
+            JOIN import_batches b ON b.id = r.batch_id AND b.book_id = r.book_id
+            WHERE b.book_id = ? AND b.account_id = ?
+              AND r.review_state NOT IN ('MATCHED', 'POSTED', 'IGNORED')
+            LIMIT 1
+            """,
+            (account.book_id, account.id),
+        ).fetchone()
+        if pending is not None:
+            return "ha righe importate ancora da riconciliare"
+        child = conn.execute(
+            "SELECT 1 FROM accounts WHERE book_id=? AND parent_id=? AND archived=0 LIMIT 1",
+            (account.book_id, account.id),
+        ).fetchone()
+        if child is not None:
+            return "ha sottovoci non archiviate"
+        if account.type in _BALANCE_TYPES and self.native_balance(account.book_id, account.id):
+            return "il saldo non è zero"
+        schedule = conn.execute(
+            """
+            SELECT 1 FROM scheduled_transactions
+            WHERE book_id=? AND ? IN (source_account_id, counter_account_id)
+              AND (end_date IS NULL OR next_due_date <= end_date)
+            LIMIT 1
+            """,
+            (account.book_id, account.id),
+        ).fetchone()
+        if schedule is not None:
+            # Paused schedules count too: they can be resumed at any time.
+            return "è usato da una transazione programmata non conclusa"
+        budget = conn.execute(
+            "SELECT 1 FROM budgets WHERE book_id=? AND category_account_id=? AND period >= ? LIMIT 1",
+            (account.book_id, account.id, date.today().strftime("%Y-%m")),
+        ).fetchone()
+        if budget is not None:
+            return "ha un budget per il mese corrente o futuri"
+        for loan in conn.execute(
+            """
+            SELECT liability_account_id FROM loans
+            WHERE book_id=? AND ? IN (
+                liability_account_id, payment_account_id, interest_expense_account_id
+            )
+            """,
+            (account.book_id, account.id),
+        ).fetchall():
+            if self.native_balance(account.book_id, int(loan["liability_account_id"])):
+                return "è usato da un prestito non estinto"
+        return None
 
     def native_balance(self, book_id: int, account_id: int) -> int:
         account = self.get_account(book_id, account_id)

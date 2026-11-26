@@ -5,15 +5,19 @@ from collections import defaultdict
 from core.account_service import Account, AccountService
 from core.currency_registry import CurrencyRegistry
 from core.database import Database
+from core.ledger_service import LedgerService
 from core.posting_policy import PostingPolicy
 
 
 class AppStateService:
     """Build presentation-ready read models without leaking queries into orchestration."""
 
-    def __init__(self, database: Database, accounts: AccountService) -> None:
+    def __init__(
+        self, database: Database, accounts: AccountService, ledger: LedgerService
+    ) -> None:
         self._database = database
         self._accounts = accounts
+        self._ledger = ledger
 
     def snapshot(
         self,
@@ -22,12 +26,14 @@ class AppStateService:
         book_name: str,
         book_currency: str,
     ) -> dict[str, object]:
-        accounts = self._accounts.list_accounts(book_id)
+        # Archived accounts stay visible (and restorable); posting capabilities
+        # below never offer them as targets.
+        accounts = self._accounts.list_accounts(book_id, include_archived=True)
         visible_accounts = [account for account in accounts if account.type != "EQUITY"]
         transaction_rows = self._database.connection.execute(
             """
             SELECT t.id, t.kind, t.transaction_date, t.transaction_time, t.currency_code,
-                   t.description, p.name AS payee_name
+                   t.description, t.reverses_transaction_id, p.name AS payee_name
             FROM transactions t LEFT JOIN payees p ON p.id = t.payee_id
             WHERE t.book_id = ?
             ORDER BY t.transaction_date DESC, COALESCE(t.transaction_time, '') DESC, t.id DESC
@@ -35,10 +41,9 @@ class AppStateService:
             """,
             (book_id,),
         ).fetchall()
-        transaction_flows = self._transaction_flows(
-            book_id,
-            [int(row["id"]) for row in transaction_rows],
-        )
+        transaction_ids = [int(row["id"]) for row in transaction_rows]
+        transaction_flows = self._transaction_flows(book_id, transaction_ids)
+        reversal_blockers = self._ledger.reversal_blockers(book_id, transaction_ids)
         return {
             "book": {"id": book_id, "name": book_name, "currency": book_currency},
             "accounts": [
@@ -46,9 +51,13 @@ class AppStateService:
                 for item in visible_accounts
             ],
             "transactions": [
-                self._transaction_payload(
-                    row, transaction_flows.get(int(row["id"]), [])
-                )
+                {
+                    **self._transaction_payload(
+                        row, transaction_flows.get(int(row["id"]), [])
+                    ),
+                    "reversible": int(row["id"]) not in reversal_blockers,
+                    "reversalBlocker": reversal_blockers.get(int(row["id"])),
+                }
                 for row in transaction_rows
             ],
         }

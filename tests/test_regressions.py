@@ -23,7 +23,7 @@ from ui.bridge import Bridge
         {"book_currency": None},
         {"book_currency": 123},
         {"reconciliation_review_mode": []},
-        {"locale": None},
+        {"reconciliation_review_mode": "SOMETIMES"},
     ],
 )
 def test_malformed_setting_types_use_defaults(tmp_path, raw):
@@ -52,7 +52,7 @@ def test_controller_identifiers_never_truncate(value):
 
 
 def test_currency_metadata_survives_database_reopen(ledger_env):
-    state = AppStateService(ledger_env.db, ledger_env.accounts)
+    state = AppStateService(ledger_env.db, ledger_env.accounts, ledger_env.ledger)
     before = state.supported_currencies()
     ledger_env.db.close()
     ledger_env.db.open()

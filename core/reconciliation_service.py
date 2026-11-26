@@ -548,6 +548,8 @@ class ReconciliationService:
         tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
         if external_id is not None:
+            # A bank id identifies a movement only within its own source:
+            # generic export ids (row numbers) repeat across files.
             link = self._database.connection.execute(
                 """
                 SELECT transaction_id FROM reconciliation_links
@@ -575,34 +577,40 @@ class ReconciliationService:
             if boundary.status is TrackingBoundaryStatus.AMBIGUOUS:
                 return "TRACKING_AMBIGUOUS", None
 
-        if external_id is not None:
+        # Two indexed lookups (an OR would defeat both indexes): the same
+        # movement for this account under any source label (unless both rows
+        # carry different bank ids), or the same bank id within the source.
+        duplicate = self._database.connection.execute(
+            """
+            SELECT 1
+            FROM import_rows r
+            JOIN import_batches b ON b.id=r.batch_id
+            WHERE r.book_id=? AND r.fingerprint=? AND b.account_id=?
+              AND (r.external_id IS NULL OR ? IS NULL OR r.external_id = ?)
+            LIMIT 1
+            """,
+            (
+                book_id,
+                fingerprint,
+                account_id,
+                None if external_id is None else str(external_id),
+                None if external_id is None else str(external_id),
+            ),
+        ).fetchone()
+        if duplicate is None and external_id is not None:
             duplicate = self._database.connection.execute(
                 """
                 SELECT 1
                 FROM import_rows r
                 JOIN import_batches b ON b.id=r.batch_id
-                WHERE r.book_id=? AND b.account_id=? AND b.source_name=?
-                  AND r.external_id=?
+                WHERE r.book_id=? AND r.external_id=? AND b.account_id=?
+                  AND b.source_name=?
                 LIMIT 1
                 """,
-                (book_id, account_id, source_name, str(external_id)),
+                (book_id, str(external_id), account_id, source_name),
             ).fetchone()
-            if duplicate is not None:
-                return "DUPLICATE_REVIEW", None
-        else:
-            duplicate = self._database.connection.execute(
-                """
-                SELECT 1
-                FROM import_rows r
-                JOIN import_batches b ON b.id=r.batch_id
-                WHERE r.book_id=? AND b.account_id=? AND b.source_name=?
-                  AND r.fingerprint=?
-                LIMIT 1
-                """,
-                (book_id, account_id, source_name, fingerprint),
-            ).fetchone()
-            if duplicate is not None:
-                return "DUPLICATE_REVIEW", None
+        if duplicate is not None:
+            return "DUPLICATE_REVIEW", None
 
         if review_mode == "FULL_REVIEW":
             return "REVIEW_REQUIRED", None
@@ -656,6 +664,11 @@ class ReconciliationService:
             JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
             LEFT JOIN payees p ON p.id=t.payee_id AND p.book_id=t.book_id
             WHERE t.book_id=? AND e.account_id=? AND t.transaction_date=?
+              AND t.kind <> 'REVERSAL'
+              AND NOT EXISTS (
+                  SELECT 1 FROM transactions r
+                  WHERE r.book_id=t.book_id AND r.reverses_transaction_id=t.id
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM reconciliation_links l
                   WHERE l.book_id=t.book_id AND l.account_id=? AND l.transaction_id=t.id
@@ -696,7 +709,11 @@ class ReconciliationService:
             FROM transactions t
             JOIN entries e ON e.transaction_id=t.id AND e.book_id=t.book_id
             WHERE t.id=? AND t.book_id=? AND e.account_id=?
-              AND t.transaction_date=?
+              AND t.transaction_date=? AND t.kind <> 'REVERSAL'
+              AND NOT EXISTS (
+                  SELECT 1 FROM transactions r
+                  WHERE r.book_id=t.book_id AND r.reverses_transaction_id=t.id
+              )
             GROUP BY t.id HAVING SUM(e.quantity_minor)=?
             LIMIT 1
             """,

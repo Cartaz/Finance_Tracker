@@ -105,6 +105,7 @@ class QmlHarness:
     def click(self, name: str, expected_toast: str | None = None) -> None:
         button = self.find(name)
         assert button.property("enabled"), f"{name} is disabled"
+        assert button.property("visible"), f"{name} is not visible"
         QMetaObject.invokeMethod(button, "clicked")
         self.pump()
         if expected_toast is not None:
@@ -112,6 +113,10 @@ class QmlHarness:
 
     def navigate(self, view: str) -> None:
         self.click(f"nav-{view}")
+
+    def tab(self, bar: str, index: int) -> None:
+        self.find(bar).setProperty("currentIndex", index)
+        self.pump()
 
     def toast(self) -> tuple[str, bool]:
         return (
@@ -163,12 +168,14 @@ def _create_structure(ui: QmlHarness) -> None:
     ui.set_text("accountName", "Cash")
     ui.set_text("trackingDate", "2026-01-01")
     ui.click("accountSubmit", "Conto creato")
+    ui.tab("accountCreateTabs", 1)
     ui.set_text("categoryName", "Food")
     ui.choose("categoryType", "EXPENSE")
     ui.click("categorySubmit", "Categoria creata")
     ui.set_text("categoryName", "Salary")
     ui.choose("categoryType", "INCOME")
     ui.click("categorySubmit", "Categoria creata")
+    ui.tab("accountCreateTabs", 0)
     assert ui.list_count("accountsList") == 2
 
 
@@ -181,9 +188,11 @@ def test_first_run_manual_postings_and_csv_import(ui, tmp_path):
     ui.set_text("expenseDate", "2026-09-30")
     ui.set_text("expenseDescription", "UI expense")
     ui.click("expenseSubmit", "Spesa registrata")
+    ui.tab("transactionTabs", 1)
     ui.set_text("incomeAmount", "100")
     ui.set_text("incomeDate", "2026-09-30")
     ui.click("incomeSubmit", "Entrata registrata")
+    ui.tab("transactionTabs", 2)
     ui.set_text("transferAmount", "20")
     ui.set_text("transferDate", "2026-09-30")
     ui.click("transferSubmit", "Giroconto registrato")
@@ -197,6 +206,7 @@ def test_first_run_manual_postings_and_csv_import(ui, tmp_path):
     csv_file.write_text("date,amount,externalid\n2026-09-30,-5,ui-csv\n", encoding="utf-8")
     ui.csv_path = csv_file
     ui.navigate("tools")
+    ui.tab("toolsTabs", 1)
     ui.set_text("importSource", "Audit CSV")
     # The worker may finish within the click's event pump, replacing the
     # transient "in corso" toast; only the final outcome is asserted.
@@ -251,11 +261,13 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     assert ui.find("forecastOccurrences").property("count") > 0
 
     ui.navigate("tools")
+    ui.tab("toolsTabs", 2)
     ui.choose("fxCurrency", "USD")
     ui.set_text("fxDate", "2026-01-01")
     ui.set_text("fxRate", "0,92")
     ui.click("fxSubmit", "Tasso FX salvato")
 
+    ui.tab("toolsTabs", 0)
     ui.click("backupCreate", "Creazione backup avviata")
     created = ui.wait_for_task(1)
     assert created["ok"] is True, created
@@ -417,4 +429,40 @@ def test_budget_with_missing_fx_reports_it_without_a_misleading_label(ui):
     ui.click("budgetSubmit", "Budget salvato")
     row = ui.find("budgetRow-0")
     assert row.property("value") == "FX mancante"
+    assert ui.qml_warnings() == []
+
+
+def test_corrections_from_the_interface(ui):
+    _setup_book(ui)
+    _create_structure(ui)
+    ui.navigate("transactions")
+    ui.set_text("expenseAmount", "10")
+    ui.set_text("expenseDate", "2026-09-30")
+    ui.click("expenseSubmit", "Spesa registrata")
+    expense = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "EXPENSE")
+
+    ui.click(f"reverse-{expense['id']}")
+    QMetaObject.invokeMethod(ui.find("confirmDialog"), "accept")
+    ui.pump()
+    assert ui.toast() == ("Transazione stornata", False)
+    balances = {a["name"]: a["balanceMinor"] for a in ui.controller.snapshot()["accounts"]}
+    assert balances["Bank"] == "100000"
+    assert ui.find(f"reverse-{expense['id']}").property("visible") is False
+
+    ui.navigate("accounts")
+    ui.click("archive-Bank")
+    message, bad = ui.toast()
+    assert bad is True and "saldo non è zero" in message
+    ui.click("archive-Cash", "Archiviato")
+    ui.click("rename-Cash")
+    ui.set_text("promptField", "Wallet")
+    QMetaObject.invokeMethod(ui.find("promptDialog"), "accept")
+    ui.pump()
+    assert ui.toast() == ("Nome aggiornato", False)
+    accounts = {a["name"]: a for a in ui.controller.snapshot()["accounts"]}
+    assert accounts["Wallet"]["archived"] is True
+    assert "Wallet" not in [
+        option["text"].split(" · ")[0]
+        for option in ui.find("expenseAccount").property("options").toVariant()
+    ]
     assert ui.qml_warnings() == []

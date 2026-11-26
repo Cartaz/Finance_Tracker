@@ -7,6 +7,7 @@ from core.forecast_service import ForecastService
 from core.fx_service import FxService
 from core.payee_service import PayeeService
 from core.scheduled_transaction_service import ScheduledTransactionService
+from tests.conftest import force_legacy_archive
 
 
 def _services(env):
@@ -46,7 +47,7 @@ def test_forecast_fails_closed_when_active_schedule_becomes_unmaterializable(
         interval=1,
         start_date="2026-02-01",
     )
-    ledger_env.accounts.set_archived(ledger_env.book_id, category.id, True)
+    force_legacy_archive(ledger_env.db, category.id)
 
     with pytest.raises(ScheduledTransactionError, match="not eligible"):
         forecast.cash_flow_forecast(

@@ -11,6 +11,9 @@ Item {
     property string value: ""
     property color valueColor: Theme.primary
     default property alias actions: actionRow.data
+    // Effective visibility of children cannot drive this (they are hidden
+    // whenever the row is), so callers state whether actions are shown.
+    property bool showActions: true
 
     width: ListView.view ? ListView.view.width - 12 : parent ? parent.width : implicitWidth
     implicitWidth: layout.implicitWidth
@@ -78,7 +81,7 @@ Item {
             id: actionRow
             Layout.fillWidth: true
             spacing: 10
-            visible: children.length > 0
+            visible: row.showActions && children.length > 0
         }
     }
     Rectangle {

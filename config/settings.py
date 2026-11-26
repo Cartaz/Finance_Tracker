@@ -7,7 +7,6 @@ from pathlib import Path
 
 from config.constants import (
     DEFAULT_BOOK_CURRENCY,
-    DEFAULT_LOCALE,
     DEFAULT_RECONCILIATION_REVIEW_MODE,
     SETTINGS_PATH,
 )
@@ -20,7 +19,6 @@ _ALLOWED_REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
 @dataclass(slots=True)
 class Settings:
     book_currency: str = DEFAULT_BOOK_CURRENCY
-    locale: str = DEFAULT_LOCALE
     reconciliation_review_mode: str = DEFAULT_RECONCILIATION_REVIEW_MODE
 
     def validate(self) -> None:
@@ -32,8 +30,6 @@ class Settings:
         ):
             raise ValueError("book_currency must be a three-letter currency code")
         self.book_currency = self.book_currency.upper()
-        if not isinstance(self.locale, str) or not self.locale.strip():
-            raise ValueError("locale must be non-empty text")
         if (
             not isinstance(self.reconciliation_review_mode, str)
             or self.reconciliation_review_mode not in _ALLOWED_REVIEW_MODES
@@ -80,13 +76,3 @@ class SettingsStore:
             settings = Settings()
             settings.validate()
         return settings
-
-    def save(self, settings: Settings) -> None:
-        settings.validate()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._path.with_suffix(".tmp")
-        temp_path.write_text(
-            json.dumps(asdict(settings), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        temp_path.replace(self._path)

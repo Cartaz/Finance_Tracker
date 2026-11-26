@@ -21,7 +21,7 @@ from core.reporting_service import ReportingService
 from ui.bridge import Bridge
 
 
-def test_pre_m6_whole_system_stress(tmp_path) -> None:
+def test_whole_system_stress(tmp_path) -> None:
     """Exercise every implemented M0-M5 feature in one deterministic workload."""
 
     rng = random.Random(2026082406)

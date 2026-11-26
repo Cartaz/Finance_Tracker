@@ -2,7 +2,7 @@
 
 **TEST DATA ONLY - NEVER PUT REAL FINANCIAL DATA IN THIS DIRECTORY.**
 
-This directory contains the manual V1 release-candidate bug-hunting plan and deterministic synthetic fixtures.
+This directory contains the manual V1 release-candidate bug-hunting plan and deterministic synthetic fixtures. The CSV and restore fixtures are also exercised automatically by `tests/test_bug_hunting_fixtures.py`.
 
 ## Files committed to the repository
 

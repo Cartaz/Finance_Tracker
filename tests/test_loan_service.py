@@ -11,6 +11,7 @@ from core.database import Database
 from core.errors import LoanError
 from core.ledger_service import LedgerService
 from core.loan_service import LoanService
+from tests.conftest import force_legacy_archive
 
 
 @dataclass(slots=True)
@@ -284,7 +285,7 @@ def test_zero_interest_payment_uses_principal_only(loan_env: LoanEnv) -> None:
 def test_stale_archived_contract_fails_closed(loan_env: LoanEnv) -> None:
     env = loan_env
     loan = _new_loan(env)
-    env.accounts.set_archived(env.book_id, env.interest_id, True)
+    force_legacy_archive(env.db, env.interest_id)
     with pytest.raises(LoanError, match="interest account"):
         env.loans.status(env.book_id, loan.id)
 

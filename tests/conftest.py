@@ -47,3 +47,13 @@ def ledger_env(tmp_path: Path) -> LedgerEnv:
         yield env
     finally:
         db.close()
+
+
+def force_legacy_archive(db: Database, account_id: int) -> None:
+    """Archive an account bypassing today's guards.
+
+    Simulates data written by versions that allowed archiving accounts still
+    used by schedules or loans; downstream workflows must fail closed on it.
+    """
+    with db.transaction() as conn:
+        conn.execute("UPDATE accounts SET archived = 1 WHERE id = ?", (account_id,))

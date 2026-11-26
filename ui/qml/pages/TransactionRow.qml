@@ -16,7 +16,8 @@ DataRow {
         const shell = app
         const transactionId = String(modelData.id)
         if (needsReversalDate) {
-            shell.prompt("Storna", "Data dello storno (AAAA-MM-GG, successiva all'inizio del monitoraggio)", shell.today(),
+            shell.prompt("Storna", "Data dello storno (AAAA-MM-GG, successiva all'inizio del monitoraggio)",
+                shell.addDays(modelData.transaction_date, 1),
                 chosen => shell.attempt(() => {
                     const result = shell.call("reverseTransaction", { transactionId: transactionId, date: chosen })
                     shell.changed(result.state)

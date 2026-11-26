@@ -131,6 +131,9 @@ class ReconciliationService:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
         ignore_external_ids = self._ids_are_row_counters(raw_rows)
+        # Distinct ids (even mere counters) say the bank listed separate lines;
+        # without any id, identical rows of one file are flagged for review.
+        file_has_ids = all((row.get("external_id") or "").strip() for row in raw_rows)
         prepared: list[dict[str, object]] = []
         seen_external: set[str] = set()
         for raw in raw_rows:
@@ -194,7 +197,7 @@ class ReconciliationService:
             summary: dict[str, int] = {}
             for item in prepared:
                 state, matched_transaction_id = self._initial_state(
-                    batch_id=batch_id,
+                    batch_id=batch_id if file_has_ids else None,
                     book_id=book_id,
                     account_id=account_id,
                     source_name=source,
@@ -282,8 +285,9 @@ class ReconciliationService:
         if len(ids) < 2 or not all(item.isascii() and item.isdigit() for item in ids):
             return False
         values = [int(item) for item in ids]
-        return values[0] in (0, 1) and all(
-            later == earlier + 1 for earlier, later in zip(values, values[1:])
+        step = 1 if values[-1] >= values[0] else -1  # newest-first exports count down
+        return min(values) in (0, 1) and all(
+            later == earlier + step for earlier, later in zip(values, values[1:])
         )
 
     @staticmethod
@@ -361,9 +365,9 @@ class ReconciliationService:
             int(row["amount_minor"]),
         )
         state = str(row["review_state"])
-        if state == "SUGGESTED" and not candidates:
-            # The suggested transaction was reversed or linked elsewhere since.
-            state = "UNMATCHED"
+        if state == "SUGGESTED" and len(candidates) != 1:
+            # Candidates are live: they may have been reversed, linked or added since.
+            state = "UNMATCHED" if not candidates else "AMBIGUOUS"
         return {
                 **dict(row),
                 "review_state": state,
@@ -562,7 +566,7 @@ class ReconciliationService:
     def _initial_state(
         self,
         *,
-        batch_id: int,
+        batch_id: int | None,
         book_id: int,
         account_id: int,
         source_name: str,
@@ -614,7 +618,7 @@ class ReconciliationService:
             FROM import_rows r
             JOIN import_batches b ON b.id=r.batch_id
             WHERE r.book_id=? AND r.fingerprint=? AND b.account_id=?
-              AND r.batch_id <> ?
+              AND (? IS NULL OR r.batch_id <> ?)
               AND (r.external_id IS NULL OR ? IS NULL OR r.external_id = ?)
             LIMIT 1
             """,
@@ -622,6 +626,7 @@ class ReconciliationService:
                 book_id,
                 fingerprint,
                 account_id,
+                batch_id,
                 batch_id,
                 None if external_id is None else str(external_id),
                 None if external_id is None else str(external_id),

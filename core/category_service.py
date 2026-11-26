@@ -131,7 +131,7 @@ class CategoryService:
         rows = self._database.connection.execute(
             """
             SELECT a.id, a.name, a.type,
-                   COUNT(e.id) AS usage_count,
+                   COUNT(t.id) AS usage_count,
                    MAX(t.transaction_date || COALESCE('T' || t.transaction_time, '')) AS last_used,
                    SUM(CASE WHEN ? IS NOT NULL AND t.payee_id = ? THEN 1 ELSE 0 END)
                        AS payee_usage_count
@@ -140,6 +140,11 @@ class CategoryService:
                 ON e.book_id = a.book_id AND e.account_id = a.id
             LEFT JOIN transactions t
                 ON t.book_id = e.book_id AND t.id = e.transaction_id
+               AND t.kind <> 'REVERSAL'
+               AND NOT EXISTS (
+                   SELECT 1 FROM transactions r
+                   WHERE r.book_id = t.book_id AND r.reverses_transaction_id = t.id
+               )
             WHERE a.book_id = ? AND a.type = ?
               AND a.archived = 0 AND a.placeholder = 0
             GROUP BY a.id

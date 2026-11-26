@@ -129,10 +129,10 @@ def test_rename_uses_each_owner_rules(app) -> None:
 def test_reversal_capability_matches_what_the_ledger_accepts(app) -> None:
     controller, ids = app
     opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
-    # The opening balance sits on the untimed tracking boundary: not reversible.
-    assert opening["reversalBlocker"] == "BOUNDARY"
-    with pytest.raises(LedgerValidationError):
-        controller.reverse_transaction({"transactionId": opening["id"]})
+    # Undoing an opening balance follows opening-balance boundary rules.
+    assert opening["reversible"] is True
+    controller.reverse_transaction({"transactionId": opening["id"]})
+    assert _balance(controller, ids["bank"]) == "0"
 
     out = controller.create_transfer(
         {"sourceAccountId": ids["bank"], "destinationAccountId": ids["cash"], "amount": "10", "date": "2026-03-01"}
@@ -262,37 +262,59 @@ def test_paused_schedules_and_open_budgets_block_archiving(app) -> None:
         controller.set_scheduled_active({"scheduleId": schedule["id"], "active": True})
 
 
+def _legacy_untimed_boundary_expense(controller, ids) -> int:
+    """An untimed expense on the tracking start, as older versions could store."""
+    expense = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "5", "date": "2026-01-02"}
+    )["id"]
+    with controller._database.transaction() as conn:  # noqa: SLF001
+        conn.execute(
+            "UPDATE transactions SET transaction_date='2026-01-01', transaction_time=NULL WHERE id=?",
+            (expense,),
+        )
+    return expense
+
+
 def test_boundary_blocked_reversal_can_use_a_later_date(app) -> None:
     controller, ids = app
-    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
-    assert opening["reversalBlocker"] == "BOUNDARY"
-    controller.reverse_transaction({"transactionId": opening["id"], "date": "2026-02-01"})
-    assert _balance(controller, ids["bank"]) == "0"
+    expense = _legacy_untimed_boundary_expense(controller, ids)
+    assert _row(controller, expense)["reversalBlocker"] == "BOUNDARY"
+    controller.reverse_transaction({"transactionId": expense, "date": "2026-02-01"})
+    assert _balance(controller, ids["bank"]) == "100000"
     with pytest.raises(ValidationError, match="indica la data"):
-        controller.reverse_transaction({"transactionId": opening["id"], "date": 20260201})
+        controller.reverse_transaction({"transactionId": expense, "date": 20260201})
 
 
 def test_custom_reversal_dates_are_limited(app) -> None:
     controller, ids = app
-    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    legacy = _legacy_untimed_boundary_expense(controller, ids)
     with pytest.raises(ValidationError, match="indica la data"):
-        controller.reverse_transaction({"transactionId": opening["id"], "date": " "})
+        controller.reverse_transaction({"transactionId": legacy, "date": " "})
     with pytest.raises(LedgerValidationError, match="cannot precede"):
-        controller.reverse_transaction({"transactionId": opening["id"], "date": "2025-12-31"})
+        controller.reverse_transaction({"transactionId": legacy, "date": "2025-12-31"})
     expense = controller.create_expense(
         {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "5", "date": "2026-03-20"}
     )["id"]
     with pytest.raises(ValidationError, match="solo quando"):
         controller.reverse_transaction({"transactionId": expense, "date": "2026-03-01"})
+    timed = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "5",
+         "date": "2026-03-21", "time": "18:00"}
+    )["id"]
+    with pytest.raises(LedgerValidationError, match="cannot precede"):
+        controller._ledger.create_reversal(  # noqa: SLF001
+            book_id=controller.initial_state()["book"]["id"], transaction_id=timed,
+            transaction_date="2026-03-21", transaction_time="09:00",
+        )
 
 
 def test_archived_accounts_take_precedence_over_the_boundary(app) -> None:
     from tests.conftest import force_legacy_archive
 
     controller, ids = app
-    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
-    force_legacy_archive(controller._database, ids["bank"])  # noqa: SLF001
-    assert _row(controller, opening["id"])["reversalBlocker"] == "INVALID"
+    legacy = _legacy_untimed_boundary_expense(controller, ids)
+    force_legacy_archive(controller._database, ids["food"])  # noqa: SLF001
+    assert _row(controller, legacy)["reversalBlocker"] == "INVALID"
 
 
 def test_reversal_pairs_split_across_periods_still_count(app) -> None:
@@ -312,3 +334,38 @@ def test_reversal_pairs_split_across_periods_still_count(app) -> None:
     assert [(m["name"], m["amountMinor"], m["transactionCount"]) for m in merchants("2026-03-01", "2026-03-31")] == [("Bar", "5000", 1)]
     assert [(m["name"], m["amountMinor"], m["transactionCount"]) for m in merchants("2026-04-01", "2026-04-30")] == [("Bar", "-5000", 1)]
     assert merchants("2026-03-01", "2026-04-30") == []
+
+
+def test_foreign_currency_reversal_nets_out_at_the_original_rate(app) -> None:
+    controller, ids = app
+    usd = controller.create_account(
+        {"type": "ASSET", "name": "Dollars", "currency": "USD", "trackingStartDate": "2026-01-01",
+         "openingBalance": "500"}
+    )["id"]
+    controller.set_fx_rate({"currency": "USD", "date": "2026-01-01", "rate": "0,90"})
+    controller.set_fx_rate({"currency": "USD", "date": "2026-03-15", "rate": "0,95"})
+    expense = controller.create_expense(
+        {"sourceAccountId": usd, "categoryAccountId": ids["food"], "amount": "100", "date": "2026-03-01"}
+    )["id"]
+    controller._ledger.create_reversal(  # noqa: SLF001 - reversal at a later rate
+        book_id=controller.initial_state()["book"]["id"], transaction_id=expense, transaction_date="2026-03-20"
+    )
+    report = controller.dashboard({"startDate": "2026-03-01", "endDate": "2026-03-31", "asOfDate": "2026-03-31"})
+    assert report["categories"] == []
+    assert report["overview"]["expenseMinor"] == "0"
+
+
+def test_category_suggestions_ignore_reversed_postings(app) -> None:
+    controller, ids = app
+    expense = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "5", "date": "2026-03-01"}
+    )["id"]
+    controller.reverse_transaction({"transactionId": expense})
+    book_id = controller.initial_state()["book"]["id"]
+    food = next(
+        item for item in controller._categories.suggest_categories(  # noqa: SLF001
+            book_id=book_id, category_type="EXPENSE", query="Food"
+        )
+        if item.id == ids["food"]
+    )
+    assert food.usage_count == 0

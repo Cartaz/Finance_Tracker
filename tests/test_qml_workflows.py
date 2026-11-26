@@ -476,23 +476,25 @@ def test_corrections_from_the_interface(ui):
     assert ui.qml_warnings() == []
 
 
-def test_income_payee_and_dated_reversal_from_the_interface(ui):
+def test_income_payee_and_opening_balance_reversal_from_the_interface(ui):
     _setup_book(ui)
     _create_structure(ui)
     ui.navigate("transactions")
     ui.tab("transactionTabs", 1)
+    # Typed but never picked from the suggestions: resolved on submit.
     ui.set_text("incomePayeeInput", "ACME")
-    QMetaObject.invokeMethod(ui.find("incomePayee"), "create")
     ui.set_text("incomeAmount", "100")
     ui.set_text("incomeDate", "2026-09-30")
     ui.click("incomeSubmit", "Entrata registrata")
     income = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "INCOME")
     assert income["payee_name"] == "ACME"
+    assert QMetaObject.invokeMethod(
+        ui.root, "addDays", Q_RETURN_ARG("QVariant"), Q_ARG("QVariant", "2026-02-28"), Q_ARG("QVariant", 1)
+    ) == "2026-03-01"
 
     opening = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
     ui.click(f"reverse-{opening['id']}")
-    ui.set_text("promptField", "2026-02-01")
-    QMetaObject.invokeMethod(ui.find("promptDialog"), "accept")
+    QMetaObject.invokeMethod(ui.find("confirmDialog"), "accept")
     ui.pump()
     assert ui.toast() == ("Transazione stornata", False)
     balances = {a["name"]: a["balanceMinor"] for a in ui.controller.snapshot()["accounts"]}

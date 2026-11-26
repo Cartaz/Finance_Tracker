@@ -565,3 +565,51 @@ def test_counter_ids_do_not_turn_identical_rows_of_one_file_into_duplicates(ledg
         csv_text="date,amount,description,id\n2026-03-01,-1.20,CAFFE,1\n2026-03-01,-1.20,CAFFE,2\n",
     )
     assert result["summary"] == {"REVIEW_REQUIRED": 2}
+
+
+def test_same_file_duplicates_depend_on_bank_ids(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+
+    def summary(csv_text):
+        return service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )["summary"]
+
+    # Without any id there is no evidence the two lines are distinct.
+    assert summary("date,amount,description\n2026-04-01,-2,PANE\n2026-04-01,-2,PANE\n") == {
+        "REVIEW_REQUIRED": 1,
+        "DUPLICATE_REVIEW": 1,
+    }
+    # Newest-first counters (3, 2, 1) are counters too, and keep lines apart.
+    assert summary(
+        "date,amount,description,id\n2026-04-02,-3,BUS,3\n2026-04-02,-3,BUS,2\n2026-04-02,-3,BUS,1\n"
+    ) == {"REVIEW_REQUIRED": 3}
+
+
+def test_suggested_rows_become_ambiguous_when_candidates_multiply(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def expense():
+        return ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=900,
+            currency_code="EUR",
+            transaction_date="2026-03-12",
+        )
+
+    expense()
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-12,-9\n",
+    )
+    expense()
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "AMBIGUOUS"

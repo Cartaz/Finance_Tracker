@@ -511,6 +511,8 @@ class ReportingService:
                    a.name AS account_name, a.type AS account_type,
                    t.transaction_date, t.currency_code, t.payee_id,
                    p.name AS payee_name,
+                   -- A reversal undoes its original at the original's rate.
+                   COALESCE(o.transaction_date, t.transaction_date) AS rate_date,
                    -- A reversal pair inside the period nets to zero and is not
                    -- a real purchase; a half outside the period still counts.
                    NOT (
@@ -529,6 +531,8 @@ class ReportingService:
             JOIN accounts a ON a.id = e.account_id AND a.book_id = e.book_id
             JOIN transactions t ON t.id = e.transaction_id AND t.book_id = e.book_id
             LEFT JOIN payees p ON p.id = t.payee_id AND p.book_id = t.book_id
+            LEFT JOIN transactions o
+              ON o.book_id = t.book_id AND o.id = t.reverses_transaction_id
             WHERE e.book_id = ? AND t.transaction_date BETWEEN ? AND ?
               AND a.type IN ('INCOME', 'EXPENSE')
               {type_clause}
@@ -547,6 +551,7 @@ class ReportingService:
                     "transactionId": int(row["transaction_id"]),
                     "accountType": str(row["account_type"]),
                     "transactionDate": str(row["transaction_date"]),
+                    "rateDate": str(row["rate_date"]),
                     "currency": str(row["currency_code"]),
                     "counted": bool(row["counted"]),
                     "payeeId": None
@@ -567,7 +572,7 @@ class ReportingService:
                 book_id,
                 int(group["raw"]),
                 str(group["currency"]),
-                str(group["transactionDate"]),
+                str(group["rateDate"]),
                 missing,
             )
             result.append(
@@ -593,7 +598,7 @@ class ReportingService:
                 book_id,
                 raw_total,
                 str(group_rows[0]["currency_code"]),
-                str(group_rows[0]["transaction_date"]),
+                str(group_rows[0]["rate_date"]),
                 group_missing,
             )
 
@@ -606,7 +611,7 @@ class ReportingService:
                         book_id,
                         int(row["value_minor"]),
                         str(row["currency_code"]),
-                        str(row["transaction_date"]),
+                        str(row["rate_date"]),
                         row_missing,
                     )
                 )

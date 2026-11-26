@@ -4,7 +4,7 @@ import logging
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -69,7 +69,7 @@ class BackupService:
                     path=path,
                     size_bytes=stat.st_size,
                     modified_utc=datetime.fromtimestamp(
-                        stat.st_mtime, timezone.utc
+                        stat.st_mtime, UTC
                     ).isoformat(),
                     schema_version=schema_version,
                 )
@@ -87,7 +87,7 @@ class BackupService:
 
     def create_managed_backup(self) -> dict[str, object]:
         self._backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
         destination = self._backup_dir / f"{_BACKUP_PREFIX}{stamp}{_BACKUP_SUFFIX}"
         return self.backup_to(destination)
 
@@ -118,7 +118,7 @@ class BackupService:
             raise BackupError("backup file does not exist")
         schema_version = self._verify_sqlite_file(source)
         stat = source.stat()
-        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
+        modified = datetime.fromtimestamp(stat.st_mtime, UTC).isoformat()
         return BackupInfo(
             name=source.name,
             path=source,

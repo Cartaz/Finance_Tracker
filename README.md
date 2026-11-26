@@ -1,22 +1,22 @@
 # Finance Tracker
 
-Local-first personal finance tracker for desktop Linux, built with Python, PySide6/Qt WebEngine, local HTML/CSS/vanilla JS, QWebChannel and SQLite.
+Local-first personal finance tracker for desktop Linux, built with Python, PySide6/Qt Quick (QML) and SQLite.
 
 ## Current status
 
-V1 workflows are implemented on `main` through M11. The [30 September corrective audit](AUDIT_2026-09-30.md) repairs restore data loss, financial transport, CSV responsiveness and boundary defects and records executed verification. The corrective strategic review is `STRATEGIC AFTER CLEANUP`; target CachyOS/KDE visual/native release gates remain unverified.
+V1 workflows are implemented on `main` through M11. The desktop interface is native Qt Quick/QML; the former WebEngine/HTML frontend has been removed. Audit history lives in [`docs/audits/`](docs/audits/): the [26 November full audit](docs/audits/ANALISI_2026-11-26.md) lists the open findings and the cleanup plan, and the [30 September corrective audit](docs/audits/AUDIT_2026-09-30.md) documents the restore and transport repairs.
 
-Production still uses WebEngine. The open Q1 Qt Quick preview is read-only and is not a complete frontend migration. Release and QML cutover remain blocked until the documented parity and native gates pass.
+Release gates that require a physical CachyOS/KDE session (HiDPI rendering, keyboard focus, native dialogs, Wayland) are still verified manually with [`bug-hunting-test/BUG_HUNTING_TEST_PLAN.md`](bug-hunting-test/BUG_HUNTING_TEST_PLAN.md).
 
 ## Implemented
 
 ### Desktop architecture
 
-- Python 3.12+ with PySide6/Qt6, Qt WebEngine and QWebChannel;
-- local/buildless HTML, CSS and vanilla JavaScript frontend;
-- one main QWebChannel backend proxy shared by frontend modules;
-- local-only in-app navigation, with external HTTP(S) navigation opened in the system browser;
-- dark neumorphic UI using `rgb(20,20,20)` surfaces and `rgb(255,102,0)` accent;
+- Python 3.12+ with PySide6/Qt6 and a native Qt Quick (QML) interface in `ui/qml/`;
+- one backend object (`ui/bridge.py`) injected into the QML root; pages reach it through the root window;
+- money crosses into QML only as exact integer text and is formatted by Python (`ui/formatting.py`);
+- native file dialogs are owned by the Python shell (`ui/shell.py`); QML never receives filesystem paths;
+- dark neumorphic Qt Quick design system shared with the author's other QML apps: a single `rgb(20,20,20)` surface, depth from paired shadows (`RaisedSurface`) and a compiled inset shader (`InsetSurface`, `ui/qml/shaders/`), `rgb(255,102,0)` accent used as a state cue;
 - minimum window size 1200×800;
 - XDG-based data/config/cache paths;
 - SQLite with foreign-key enforcement, WAL mode and migrations through schema v9.
@@ -41,7 +41,7 @@ Production still uses WebEngine. The open Q1 Qt Quick preview is read-only and i
 
 ### Reconciliation and scheduled transactions
 
-- background CSV import into external staging evidence, never directly into the ledger, with owned worker SQLite connections and bounded reconciliation pages;
+- background CSV import (file chosen with the native dialog, UTF-8 or Windows-1252) into external staging evidence, never directly into the ledger, with owned worker SQLite connections and bounded reconciliation pages;
 - full-review and assisted-review reconciliation workflows;
 - persisted external identity matching, duplicate detection and ambiguity handling;
 - explicit posting of reconciled rows through semantic `LedgerService` APIs;
@@ -85,7 +85,7 @@ Production still uses WebEngine. The open Q1 Qt Quick preview is read-only and i
 - restore activates maintenance mode so application mutations cannot race the safety snapshot and final swap;
 - backup/export/restore lifecycle operations are serialized;
 - the native window blocks normal application close while owned background persistence I/O is active;
-- restore completion reloads the local frontend so all UI state is rebuilt from the newly canonical database.
+- restore completion resets the QML session so all UI state is rebuilt from the newly canonical database.
 
 ## Strategic programming directive
 
@@ -97,7 +97,7 @@ The review outcome must be `STRATEGIC`, `STRATEGIC AFTER CLEANUP`, or `BLOCKED`.
 
 - Linux desktop; CachyOS/Arch + KDE is first-class
 - Python 3.12+
-- Qt runtime dependencies required by PySide6/Qt WebEngine
+- Qt runtime dependencies required by PySide6/Qt Quick
 
 ## Install
 
@@ -120,6 +120,7 @@ No virtualenv activation is required.
 .venv/bin/python -m compileall -q main.py config core ui tests
 .venv/bin/python -m pytest
 .venv/bin/ruff check main.py config core ui tests
+.venv/bin/pyside6-qmllint --max-warnings 0 ui/qml/*.qml ui/qml/pages/*.qml
 ```
 
 After validation, perform the mandatory milestone review in `STRATEGIC_PROGRAMMING.md` before declaring a milestone complete.

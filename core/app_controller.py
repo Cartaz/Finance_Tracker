@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 from config.constants import SCHEMA_VERSION
 from config.settings import Settings
 from core.account_service import AccountService
@@ -24,7 +27,7 @@ from core.transport import TransportSerializer
 
 
 class AppController:
-    """Thin coordinator used by the QWebChannel bridge."""
+    """Thin coordinator used by the QML bridge."""
 
     def __init__(
         self,
@@ -330,18 +333,15 @@ class AppController:
             for item in self._fx.list_rates(book.id)
         ]
 
-    def import_csv(self, payload: dict[str, object]) -> dict[str, object]:
-        return self._reconciliation.import_csv(**self._csv_arguments(payload))
-
-    def csv_import_task(self, payload: dict[str, object]):
-        """Prepare immutable arguments; the task owns its worker SQLite connection."""
+    def csv_import_task(self, payload: dict[str, object]) -> Callable[[Path], object]:
+        """Validate arguments now; the returned task owns its worker SQLite connection."""
         arguments = self._csv_arguments(payload)
         path = self._database.path
         # Release the UI read snapshot before maintenance hands work to a worker.
         # Domain mutations are committed by their canonical services already.
         self._database.connection.commit()
 
-        def run():
+        def run(csv_path: Path):
             worker_database = Database(path)
             try:
                 accounts = AccountService(worker_database)
@@ -351,7 +351,7 @@ class AppController:
                     LedgerService(worker_database),
                     PayeeService(worker_database),
                 )
-                return service.import_csv(**arguments)
+                return service.import_csv_file(csv_path=csv_path, **arguments)
             finally:
                 worker_database.close()
 
@@ -363,7 +363,6 @@ class AppController:
             "book_id": book.id,
             "account_id": self._positive_id(payload.get("accountId")),
             "source_name": payload.get("sourceName", ""),
-            "csv_text": payload.get("csvText", ""),
             "review_mode": payload.get(
                 "reviewMode", self._settings.reconciliation_review_mode
             ),
@@ -656,6 +655,9 @@ class AppController:
             "payeeId": item.payee_id,
             "active": item.active,
         }
+
+    def currency_digits(self, currency_code: str) -> int:
+        return self._database.currency(currency_code).minor_unit_digits
 
     def _require_book(self):
         book = self._books.current_book()

@@ -3,18 +3,34 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from core.app_controller import AppController
 from core.errors import BackupError, FinanceTrackerError, ValidationError
 from ui.backup_task_manager import BackupTaskManager
+from ui.formatting import format_money, format_percent_bps
 
 log = logging.getLogger(__name__)
 
 
+def _plain_payload(payload: object) -> object:
+    """Convert a QML object argument (QJSValue) into plain Python data."""
+    to_variant = getattr(payload, "toVariant", None)
+    if callable(to_variant):
+        return to_variant()
+    return payload
+
+
 class Bridge(QObject):
+    """The single backend object exposed to QML.
+
+    It validates transport shape, converts QML values and delegates. Business
+    rules, SQL and financial arithmetic stay in core services.
+    """
+
     backupTaskFinished = Signal("QVariant")
     maintenanceChanged = Signal(bool)
+    busyChanged = Signal()
 
     def __init__(
         self,
@@ -25,20 +41,39 @@ class Bridge(QObject):
         self._controller = controller
         self._backup_tasks = backup_tasks
         if self._backup_tasks is not None:
-            self._backup_tasks.finished.connect(self.backupTaskFinished.emit)
-            self._backup_tasks.maintenanceChanged.connect(self.maintenanceChanged.emit)
+            self._backup_tasks.finished.connect(self._on_task_finished)
+            self._backup_tasks.maintenanceChanged.connect(self._on_maintenance_changed)
 
     def set_file_dialogs(
         self,
         *,
         export_picker: Callable[[], str | None],
         restore_picker: Callable[[], str | None],
+        csv_picker: Callable[[], str | None] | None = None,
     ) -> None:
         if self._backup_tasks is not None:
             self._backup_tasks.set_file_dialogs(
                 export_picker=export_picker,
                 restore_picker=restore_picker,
+                csv_picker=csv_picker,
             )
+
+    @Property(bool, notify=maintenanceChanged)
+    def maintenance(self) -> bool:
+        return self._backup_tasks is not None and self._backup_tasks.maintenance
+
+    @Property(bool, notify=busyChanged)
+    def busy(self) -> bool:
+        """Owned persistence work is active and the window must not close."""
+        return self._backup_tasks is not None and self._backup_tasks.active
+
+    def _on_task_finished(self, result: object) -> None:
+        self.busyChanged.emit()
+        self.backupTaskFinished.emit(result)
+
+    def _on_maintenance_changed(self, active: bool) -> None:
+        self.busyChanged.emit()
+        self.maintenanceChanged.emit(active)
 
     def _call(self, function, *args):
         if self._backup_tasks is not None and self._backup_tasks.maintenance:
@@ -47,14 +82,17 @@ class Bridge(QObject):
             )
         return self._invoke(function, *args)
 
-    def _backup_call(self, function, *args):
-        return self._invoke(function, *args)
+    def _task_call(self, function, *args):
+        result = self._invoke(function, *args)
+        self.busyChanged.emit()
+        return result
 
     def _payload_call(self, function, payload):
         def validated_call():
-            if not isinstance(payload, dict):
+            data = _plain_payload(payload)
+            if not isinstance(data, dict):
                 raise ValidationError("payload must be an object")
-            return function(payload)
+            return function(data)
 
         return self._call(validated_call)
 
@@ -65,7 +103,7 @@ class Bridge(QObject):
             return self._controller.error_payload(exc)
         except Exception as exc:
             log.error(
-                "unexpected QWebChannel bridge failure",
+                "unexpected backend bridge failure",
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
             return {
@@ -81,45 +119,73 @@ class Bridge(QObject):
             raise BackupError("backup service is unavailable")
         return self._backup_tasks
 
+    # Presentation formatting: exact integers never become JavaScript numbers.
+
+    @Slot("QVariant", str, result=str)
+    def formatMoney(self, minor, currency: str) -> str:
+        if minor is None or minor == "":
+            return format_money(None, currency, 0)
+        if not currency:
+            return "—"
+        try:
+            digits = self._controller.currency_digits(currency)
+            return format_money(minor, currency, digits)
+        except (FinanceTrackerError, TypeError, ValueError):
+            log.warning("cannot format money value for currency %r", currency)
+            return "—"
+
+    @Slot("QVariant", result=str)
+    def formatPercentBps(self, bps) -> str:
+        try:
+            return format_percent_bps(bps)
+        except (TypeError, ValueError):
+            return "—"
+
+    # Backup, restore and CSV staging run as owned background tasks.
+
     @Slot(result="QVariant")
     def listBackups(self):
-        try:
-            manager = self._require_backup_tasks()
-        except FinanceTrackerError as exc:
-            return self._controller.error_payload(exc)
-        return self._call(manager.list_backups)
+        return self._call(lambda: self._require_backup_tasks().list_backups())
 
     @Slot(result="QVariant")
     def startManagedBackup(self):
-        try:
-            manager = self._require_backup_tasks()
-        except FinanceTrackerError as exc:
-            return self._controller.error_payload(exc)
-        return self._backup_call(manager.start_managed_backup)
+        return self._task_call(
+            lambda: self._require_backup_tasks().start_managed_backup()
+        )
 
     @Slot(result="QVariant")
     def startExportBackup(self):
-        try:
-            manager = self._require_backup_tasks()
-        except FinanceTrackerError as exc:
-            return self._controller.error_payload(exc)
-        return self._backup_call(manager.start_export_backup)
+        return self._task_call(
+            lambda: self._require_backup_tasks().start_export_backup()
+        )
 
     @Slot(str, result="QVariant")
     def startManagedRestore(self, name: str):
-        try:
-            manager = self._require_backup_tasks()
-        except FinanceTrackerError as exc:
-            return self._controller.error_payload(exc)
-        return self._backup_call(manager.start_managed_restore, name)
+        return self._task_call(
+            lambda: self._require_backup_tasks().start_managed_restore(name)
+        )
 
     @Slot(result="QVariant")
     def startExternalRestore(self):
-        try:
+        return self._task_call(
+            lambda: self._require_backup_tasks().start_external_restore()
+        )
+
+    @Slot("QVariant", result="QVariant")
+    def startCsvImport(self, payload):
+        def start(data):
             manager = self._require_backup_tasks()
-        except FinanceTrackerError as exc:
-            return self._controller.error_payload(exc)
-        return self._backup_call(manager.start_external_restore)
+            if manager.active:
+                raise BackupError(
+                    "another persistence operation is already in progress"
+                )
+            return manager.start_csv_import(self._controller.csv_import_task(data))
+
+        result = self._payload_call(start, payload)
+        self.busyChanged.emit()
+        return result
+
+    # Application state and domain workflows.
 
     @Slot(result="QVariant")
     def getInitialState(self):
@@ -196,22 +262,6 @@ class Bridge(QObject):
     @Slot(result="QVariant")
     def listFxRates(self):
         return self._call(self._controller.list_fx_rates)
-
-    @Slot("QVariant", result="QVariant")
-    def startCsvImport(self, payload):
-        def start(data):
-            manager = self._require_backup_tasks()
-            if manager.active:
-                raise BackupError(
-                    "another persistence operation is already in progress"
-                )
-            return manager.start_csv_import(self._controller.csv_import_task(data))
-
-        return self._payload_call(start, payload)
-
-    @Slot("QVariant", result="QVariant")
-    def importCsv(self, payload):
-        return self._payload_call(self._controller.import_csv, payload)
 
     @Slot(result="QVariant")
     def listImportBatches(self):

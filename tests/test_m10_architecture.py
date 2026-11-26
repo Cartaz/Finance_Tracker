@@ -39,20 +39,20 @@ def test_loan_amortization_math_is_isolated_and_decimal_only() -> None:
 def test_loan_creation_capabilities_are_backend_owned() -> None:
     service = (CORE / "loan_service.py").read_text(encoding="utf-8")
     controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
-    frontend = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+    frontend = (ROOT / "ui" / "qml" / "pages" / "LoansPage.qml").read_text(encoding="utf-8")
 
     assert "def creation_capabilities(" in service
     assert "def loan_capabilities(" in controller
-    assert 'call("getLoanCapabilities"' in frontend
-    assert "target?.allowedModes" in frontend
-    assert "target?.paymentAccountIds" in frontend
-    assert "target?.fundingAccountIds" in frontend
-    assert "currentLoanCapabilities.rateTypes" in frontend
-    assert "currentLoanCapabilities.amortizationTypes" in frontend
-    assert "currentLoanCapabilities.policyCombinations" in frontend
-    assert "combination?.recastStrategies" in frontend
-    assert 'state.accounts.filter((a) => a.type === "LIABILITY"' not in frontend
-    assert 'state.accounts.filter((a) => a.type === "ASSET"' not in frontend
+    assert 'app.call("getLoanCapabilities")' in frontend
+    assert "target.allowedModes" in frontend
+    assert "target.paymentAccountIds" in frontend
+    assert "target.fundingAccountIds" in frontend
+    assert "capabilities.rateTypes" in frontend
+    assert "capabilities.amortizationTypes" in frontend
+    assert "capabilities.policyCombinations" in frontend
+    assert "combination.recastStrategies" in frontend
+    assert '"LIABILITY"' not in frontend
+    assert '"ASSET"' not in frontend
 
 
 def test_forecast_consumes_canonical_loan_projection() -> None:
@@ -92,14 +92,14 @@ def test_loan_transport_fields_are_explicit_protocol_vocabulary() -> None:
 def test_rate_history_and_payment_policy_are_not_ui_math() -> None:
     controller = (CORE / "app_controller.py").read_text(encoding="utf-8")
     service = (CORE / "loan_service.py").read_text(encoding="utf-8")
-    frontend = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+    frontend = (ROOT / "ui" / "qml" / "pages" / "LoansPage.qml").read_text(encoding="utf-8")
 
     assert "def set_variable_rate(" in service
     assert "def post_custom_payment(" in service
     assert "def set_loan_variable_rate(" in controller
     assert "def post_custom_loan_payment(" in controller
-    assert 'call("setLoanVariableRate"' in frontend
-    assert 'call("postCustomLoanPayment"' in frontend
+    assert 'app.call("setLoanVariableRate"' in frontend
+    assert 'app.call("postCustomLoanPayment"' in frontend
     assert "Math.pow(" not in frontend
     assert "parseFloat(" not in frontend
 

@@ -56,12 +56,6 @@ def test_bridge_imports_only_controller_and_expected_errors_from_core() -> None:
     assert core_imports <= {"core.app_controller", "core.errors"}
 
 
-def test_frontend_does_not_rederive_reconciliation_posting_rules() -> None:
-    text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
-    assert "postingKindsForRow" not in text
-    assert "row.postingCapabilities" in text
-
-
 def test_scheduled_service_uses_canonical_posting_policy() -> None:
     text = (CORE / "scheduled_transaction_service.py").read_text(encoding="utf-8")
     assert "from core.posting_policy import PostingPolicy" in text
@@ -81,16 +75,6 @@ def test_budget_service_is_read_model_consumer_not_accounting_writer() -> None:
     assert "INSERT INTO entries" not in text
 
 
-def test_budget_frontend_uses_backend_status_and_target_capabilities() -> None:
-    text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
-    assert 'call("getBudgetStatus"' in text
-    assert 'call("setBudget"' in text
-    assert "report.totalSpentMinor" in text
-    assert "report.totalRemainingMinor" in text
-    assert "report.targets" in text
-    assert '$("budget-category").innerHTML = snapshot.accounts.filter' not in text
-
-
 def test_forecast_is_read_only_and_reuses_canonical_domain_policies() -> None:
     forecast = (CORE / "forecast_service.py").read_text(encoding="utf-8")
     scheduled = (CORE / "scheduled_transaction_service.py").read_text(encoding="utf-8")
@@ -104,17 +88,6 @@ def test_forecast_is_read_only_and_reuses_canonical_domain_policies() -> None:
     assert "DELETE FROM " not in forecast
     assert "def project_occurrences(" in scheduled
     assert "def _advance(" in scheduled
-
-
-def test_forecast_frontend_renders_backend_projection_without_financial_math() -> None:
-    text = (ROOT / "ui" / "web" / "app.js").read_text(encoding="utf-8")
-    assert 'call("getForecast"' in text
-    assert "report.totalInflowMinor" in text
-    assert "report.totalOutflowMinor" in text
-    assert "report.totalNetMinor" in text
-    assert "report.buckets" in text
-    assert "report.occurrences" in text
-    assert "Math.random(" not in text
 
 
 def test_transport_contract_is_explicit_not_suffix_driven() -> None:

@@ -7,6 +7,7 @@ import re
 import sqlite3
 import unicodedata
 from datetime import date
+from pathlib import Path
 
 from core.account_service import AccountService
 from core.database import Database
@@ -18,6 +19,8 @@ from core.posting_policy import PostingPolicy
 from core.tracking_policy import TrackingBoundaryPolicy, TrackingBoundaryStatus
 
 _REVIEW_MODES = {"FULL_REVIEW", "ASSISTED_REVIEW"}
+_MAX_CSV_BYTES = 10_000_000
+_MAX_CSV_ROWS = 10_000
 _TERMINAL_STATES = {"MATCHED", "POSTED", "IGNORED"}
 _BLOCKED_POST_STATES = {"OUTSIDE_TRACKING", "TRACKING_AMBIGUOUS"}
 _HEADER_RE = re.compile(r"[^a-z0-9]+")
@@ -92,13 +95,13 @@ class ReconciliationService:
             )
         if not isinstance(csv_text, str) or not csv_text.strip():
             raise ReconciliationError("CSV content is empty")
-        if len(csv_text.encode("utf-8")) > 10_000_000:
+        if len(csv_text.encode("utf-8")) > _MAX_CSV_BYTES:
             raise ReconciliationError("CSV content exceeds 10 MB")
 
         raw_rows = self._parse_csv(csv_text)
         if not raw_rows:
             raise ReconciliationError("CSV contains no data rows")
-        if len(raw_rows) > 10_000:
+        if len(raw_rows) > _MAX_CSV_ROWS:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
         prepared: list[dict[str, object]] = []
@@ -191,6 +194,42 @@ class ReconciliationService:
                 )
                 summary[state] = summary.get(state, 0) + 1
         return {"batchId": batch_id, "rowCount": len(prepared), "summary": summary}
+
+    def import_csv_file(
+        self,
+        *,
+        book_id: int,
+        account_id: int,
+        source_name: str,
+        csv_path: Path,
+        review_mode: str,
+    ) -> dict[str, object]:
+        """Read a user-selected CSV within the byte limit, then stage it."""
+        try:
+            size = csv_path.stat().st_size
+            if size > _MAX_CSV_BYTES:
+                raise ReconciliationError("CSV content exceeds 10 MB")
+            raw = csv_path.read_bytes()
+        except OSError as exc:
+            raise ReconciliationError("CSV file cannot be read") from exc
+        return self.import_csv(
+            book_id=book_id,
+            account_id=account_id,
+            source_name=source_name,
+            csv_text=self._decode_csv(raw),
+            review_mode=review_mode,
+        )
+
+    @staticmethod
+    def _decode_csv(raw: bytes) -> str:
+        # Italian bank exports are commonly UTF-8 or Windows-1252; both are
+        # decoded strictly so undecodable bytes fail closed.
+        for encoding in ("utf-8-sig", "cp1252"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        raise ReconciliationError("CSV encoding must be UTF-8 or Windows-1252")
 
     def list_batches(self, book_id: int, *, limit: int = 50) -> list[dict[str, object]]:
         if (
@@ -719,7 +758,7 @@ class ReconciliationService:
                     ),
                 }
             )
-            if len(result) > 10_000:
+            if len(result) > _MAX_CSV_ROWS:
                 raise ReconciliationError("CSV import is limited to 10000 rows")
         return result
 

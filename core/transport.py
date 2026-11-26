@@ -55,7 +55,7 @@ _FINANCIAL_INTEGER_FIELDS = {
 
 
 class TransportSerializer:
-    """Serialize values crossing QWebChannel without JS integer precision loss.
+    """Serialize values crossing the QML boundary without JS integer precision loss.
 
     Financial integer fields are explicit protocol vocabulary. Adding a new
     monetary or basis-point field requires adding it here and exercising it in

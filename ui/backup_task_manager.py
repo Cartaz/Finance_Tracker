@@ -40,6 +40,7 @@ class BackupTaskManager(QObject):
         self._maintenance = False
         self._export_picker: Callable[[], str | None] | None = None
         self._restore_picker: Callable[[], str | None] | None = None
+        self._csv_picker: Callable[[], str | None] | None = None
 
     @property
     def maintenance(self) -> bool:
@@ -55,9 +56,11 @@ class BackupTaskManager(QObject):
         *,
         export_picker: Callable[[], str | None],
         restore_picker: Callable[[], str | None],
+        csv_picker: Callable[[], str | None] | None = None,
     ) -> None:
         self._export_picker = export_picker
         self._restore_picker = restore_picker
+        self._csv_picker = csv_picker
 
     def list_backups(self) -> list[dict[str, object]]:
         return self._controller.list_backups()
@@ -65,8 +68,18 @@ class BackupTaskManager(QObject):
     def start_managed_backup(self) -> dict[str, object]:
         return self._start_background("BACKUP_CREATE", self._controller.create_backup)
 
-    def start_csv_import(self, function: Callable[[], object]) -> dict[str, object]:
-        return self._start_background("CSV_IMPORT", function, maintenance=True)
+    def start_csv_import(self, task: Callable[[Path], object]) -> dict[str, object]:
+        """Ask the native shell for a CSV file, then stage it on the worker."""
+        if self._tasks or self._maintenance:
+            raise BackupError("another persistence operation is already in progress")
+        if self._csv_picker is None:
+            raise BackupError("native CSV dialog is unavailable")
+        selected = self._csv_picker()
+        if not selected:
+            return {"cancelled": True}
+        return self._start_background(
+            "CSV_IMPORT", lambda: task(Path(selected)), maintenance=True
+        )
 
     def start_export_backup(self) -> dict[str, object]:
         if self._export_picker is None:

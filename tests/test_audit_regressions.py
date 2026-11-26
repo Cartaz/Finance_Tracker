@@ -273,12 +273,18 @@ def test_large_csv_worker_keeps_event_loop_alive_and_paginates(ledger_env):
     deadline = QTimer()
     deadline.setSingleShot(True)
     deadline.timeout.connect(loop.quit)
-    csv_text = "date,amount,externalid\n" + "".join(
-        f"2026-09-30,-5,row-{i}\n" for i in range(10_000)
+    csv_path = env.db.path.parent / "large.csv"
+    csv_path.write_text(
+        "date,amount,externalid\n"
+        + "".join(f"2026-09-30,-5,row-{i}\n" for i in range(10_000)),
+        encoding="utf-8",
     )
-    started = bridge.startCsvImport(
-        {"accountId": bank.id, "sourceName": "Bank", "csvText": csv_text}
+    bridge.set_file_dialogs(
+        export_picker=lambda: None,
+        restore_picker=lambda: None,
+        csv_picker=lambda: str(csv_path),
     )
+    started = bridge.startCsvImport({"accountId": bank.id, "sourceName": "Bank"})
     assert started["ok"] is True
     assert manager.maintenance is True
     assert bridge.createPayee("Blocked")["ok"] is False
@@ -301,20 +307,6 @@ def test_large_csv_worker_keeps_event_loop_alive_and_paginates(ledger_env):
     assert first[100]["id"] == second[0]["id"]
     assert bridge.getSnapshot()["ok"] is True
     app.processEvents()
-
-
-def test_local_navigation_is_confined_to_frontend(monkeypatch):
-    from PySide6.QtCore import QUrl
-
-    from ui.window import _local_resource_allowed
-
-    root = Path(__file__).resolve().parents[1] / "ui" / "web"
-    assert _local_resource_allowed(QUrl.fromLocalFile(str(root / "index.html")))
-    assert not _local_resource_allowed(QUrl("file:///etc/passwd"))
-    assert not _local_resource_allowed(
-        QUrl.fromLocalFile(str(root / ".." / "bridge.py"))
-    )
-    assert not _local_resource_allowed(QUrl("about:version"))
 
 
 def test_payee_merge_keeps_future_schedules_postable(ledger_env):

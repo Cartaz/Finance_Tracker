@@ -15,10 +15,6 @@ class TrackingBoundaryStatus(StrEnum):
 class TrackingBoundaryResult:
     status: TrackingBoundaryStatus
 
-    @property
-    def is_valid(self) -> bool:
-        return self.status is TrackingBoundaryStatus.VALID
-
 
 class TrackingBoundaryPolicy:
     """Canonical interpretation of account tracking boundaries.

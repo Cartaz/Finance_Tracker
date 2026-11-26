@@ -17,8 +17,9 @@ KWD = CurrencySpec("KWD", 3)
         ("12,3", 1230),
         ("12.30", 1230),
         ("12,30", 1230),
-        ("12,,30", 1230),
-        ("12...30", 1230),
+        ("1.500.000", 150000000),
+        ("1,500,000", 150000000),
+        ("1.500,00", 150000),
         ("12,3000", 1230),
         ("1.234,56", 123456),
         ("1,234.56", 123456),
@@ -30,7 +31,26 @@ def test_parse_eur(raw: str, expected: int) -> None:
     assert parse_money(raw, EUR) == expected
 
 
-@pytest.mark.parametrize("raw", ["12,345", "12.345", "12,3,0", "1,,234,56", "abc12,30", "", ",12"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "12,345",
+        "12.345",
+        "12,3,0",
+        "1,,234,56",
+        "abc12,30",
+        "",
+        ",12",
+        "12,,30",
+        "12...30",
+        # Thousands group or decimals? Refused instead of read as 1,50 EUR.
+        "1.500",
+        "1,500",
+        "10.000",
+        "-1.500",
+        "1.50.0",
+    ],
+)
 def test_rejects_ambiguous_or_overprecise_eur(raw: str) -> None:
     with pytest.raises((MoneyParseError, CurrencyPrecisionError)):
         parse_money(raw, EUR)
@@ -42,6 +62,14 @@ def test_currency_specific_precision() -> None:
     with pytest.raises(CurrencyPrecisionError):
         parse_money("1234,5", JPY)
     assert parse_money("12,345", KWD) == 12345
+    assert parse_money("1.000.000", JPY) == 1000000
+    with pytest.raises(MoneyParseError, match="ambiguo"):
+        parse_money("1.000", JPY)
+
+
+def test_ambiguous_amount_message_suggests_unambiguous_forms() -> None:
+    with pytest.raises(MoneyParseError, match="scrivi 1500 oppure 1.500,00"):
+        parse_money("1.500", EUR)
 
 
 def test_decimal_conversion_is_explicit() -> None:

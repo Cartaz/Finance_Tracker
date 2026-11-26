@@ -103,7 +103,16 @@ class Bridge(QObject):
     def _invoke(self, function, *args):
         try:
             return {"ok": True, "data": function(*args)}
-        except (FinanceTrackerError, TypeError, ValueError) as exc:
+        except FinanceTrackerError as exc:
+            return self._controller.error_payload(exc)
+        except (TypeError, ValueError) as exc:
+            # Reported to the user as invalid input, but these can also be
+            # programming errors: keep the traceback in the log.
+            log.warning(
+                "backend call rejected by %s",
+                type(exc).__name__,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             return self._controller.error_payload(exc)
         except Exception as exc:
             log.error(

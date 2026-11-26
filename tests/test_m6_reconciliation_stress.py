@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from core.backup_service import BackupService
 from core.category_service import CategoryService
 from core.database import Database
 from core.errors import AccountNotFoundError, ReconciliationError
@@ -280,7 +281,7 @@ def test_m6_thousand_row_reconciliation_and_invalid_state_stress(
     db.integrity_check()
 
     backup = tmp_path / "m6-backup.db"
-    db.backup_to(backup)
+    BackupService(db, backup.parent).backup_to(backup)
     restored = Database(backup)
     restored.open()
     try:

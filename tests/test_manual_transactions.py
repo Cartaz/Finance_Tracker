@@ -3,28 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from config.settings import Settings
-from core.app_controller import AppController
-from core.book_service import BookService
-from core.fx_service import FxService
-from core.payee_service import PayeeService
-from core.reporting_service import ReportingService
+from core.composition import build_controller
 from ui.bridge import Bridge
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _bridge(ledger_env) -> Bridge:
-    fx = FxService(ledger_env.db)
-    controller = AppController(
-        ledger_env.db,
-        Settings(),
-        ledger_env.accounts,
-        ledger_env.ledger,
-        BookService(ledger_env.db),
-        PayeeService(ledger_env.db),
-        fx,
-        ReportingService(ledger_env.db, fx, ledger_env.accounts),
-    )
+    controller = build_controller(ledger_env.db, Settings())
     return Bridge(controller)
 
 
@@ -129,3 +115,51 @@ def test_manual_transfer_rejects_currency_mismatch_without_mutation(ledger_env) 
     assert result["error"]["code"] == "LedgerValidationError"
     assert ledger_env.accounts.native_balance(ledger_env.book_id, eur.id) == 0
     assert ledger_env.accounts.native_balance(ledger_env.book_id, usd.id) == 0
+
+
+def test_income_records_payee_and_transfer_refuses_one(ledger_env) -> None:
+    bank = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    cash = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id,
+        account_type="ASSET",
+        name="Cash",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    salary = ledger_env.accounts.create_account(
+        book_id=ledger_env.book_id, account_type="INCOME", name="Salary"
+    )
+    bridge = _bridge(ledger_env)
+    employer = bridge.createPayee("ACME")["data"]
+    income = bridge.createIncome(
+        {
+            "destinationAccountId": bank.id,
+            "incomeAccountId": salary.id,
+            "amount": "100",
+            "date": "2026-09-30",
+            "payeeId": str(employer["id"]),
+        }
+    )
+    assert income["ok"] is True
+    stored = ledger_env.db.connection.execute(
+        "SELECT payee_id FROM transactions WHERE id=?", (income["data"]["id"],)
+    ).fetchone()[0]
+    assert stored == employer["id"]
+
+    transfer = bridge.createTransfer(
+        {
+            "sourceAccountId": bank.id,
+            "destinationAccountId": cash.id,
+            "amount": "10",
+            "date": "2026-09-30",
+            "payeeId": str(employer["id"]),
+        }
+    )
+    assert transfer["ok"] is False
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, cash.id) == 0

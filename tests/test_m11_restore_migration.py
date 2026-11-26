@@ -4,7 +4,7 @@ import sqlite3
 
 from core.backup_service import BackupService
 from core.database import Database
-from core.migration_catalog import apply_migrations
+from core.migrations import apply_migrations
 
 
 def test_restore_preparation_migrates_older_backup_only_in_staging(tmp_path) -> None:

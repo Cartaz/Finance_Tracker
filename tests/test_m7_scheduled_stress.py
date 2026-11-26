@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from core.backup_service import BackupService
 from core.database import Database
 from core.errors import AccountNotFoundError, ScheduledTransactionError
 from core.payee_service import PayeeService
@@ -165,7 +166,7 @@ def test_m7_thousand_occurrences_and_invalid_state_stress(
 
     db.integrity_check()
     backup = tmp_path / "m7-backup.db"
-    db.backup_to(backup)
+    BackupService(db, backup.parent).backup_to(backup)
     restored = Database(backup)
     restored.open()
     try:

@@ -23,14 +23,11 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
 
 from config.settings import Settings
-from core.account_service import AccountService
 from core.app_controller import AppController
 from core.backup_controller import BackupController
 from core.backup_service import BackupService
-from core.book_service import BookService
+from core.composition import build_controller
 from core.database import Database
-from core.ledger_service import LedgerService
-from core.payee_service import PayeeService
 from ui.backup_task_manager import BackupTaskManager
 from ui.bridge import Bridge
 from ui.shell import QuickShell
@@ -43,14 +40,7 @@ class QmlHarness:
         self._previous_handler = qInstallMessageHandler(self._capture)
         self.database = Database(tmp_path / "ui.db")
         self.database.migrate()
-        self.controller = AppController(
-            self.database,
-            settings or Settings(),
-            AccountService(self.database),
-            LedgerService(self.database),
-            BookService(self.database),
-            PayeeService(self.database),
-        )
+        self.controller = build_controller(self.database, settings or Settings())
         self.tasks = BackupTaskManager(
             BackupController(BackupService(self.database, tmp_path / "backups")),
             self.controller.error_payload,

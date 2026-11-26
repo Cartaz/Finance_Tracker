@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from core.account_service import AccountService
+from core.calendar_math import shift_months
 from core.database import Database
 from core.errors import ScheduledTransactionError
 from core.ledger_service import LedgerService
@@ -448,14 +448,8 @@ class ScheduledTransactionService:
             return current + timedelta(weeks=interval)
         anchor = date.fromisoformat(anchor_date)
         if frequency == "MONTHLY":
-            month_index = current.year * 12 + current.month - 1 + interval
-            year, zero_month = divmod(month_index, 12)
-            month = zero_month + 1
-            day = min(anchor.day, calendar.monthrange(year, month)[1])
-            return date(year, month, day)
-        year = current.year + interval
-        day = min(anchor.day, calendar.monthrange(year, anchor.month)[1])
-        return date(year, anchor.month, day)
+            return shift_months(current, interval, anchor.day)
+        return shift_months(date(current.year, anchor.month, 1), 12 * interval, anchor.day)
 
     @staticmethod
     def _parse_date(value: str, field: str) -> date:

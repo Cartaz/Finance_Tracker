@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.account_service import AccountService
 from core.book_service import BookService
 from core.database import Database
-from core.migration_catalog import apply_migrations
+from core.migrations import apply_migrations
 
 
 def test_v8_loan_migrates_to_explicit_fixed_french_policy(tmp_path) -> None:

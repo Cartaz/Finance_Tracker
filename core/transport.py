@@ -78,7 +78,3 @@ class TransportSerializer:
         if isinstance(value, tuple):
             return [cls.serialize(item) for item in value]
         return value
-
-    @staticmethod
-    def financial_integer_fields() -> frozenset[str]:
-        return frozenset(_FINANCIAL_INTEGER_FIELDS)

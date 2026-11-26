@@ -7,7 +7,7 @@ CORE = ROOT / "core"
 
 
 def test_loan_balance_has_no_parallel_persisted_state() -> None:
-    migration = (CORE / "migration_catalog.py").read_text(encoding="utf-8")
+    migration = (CORE / "migrations.py").read_text(encoding="utf-8")
     service = (CORE / "loan_service.py").read_text(encoding="utf-8")
 
     assert "outstanding_principal_minor" not in migration
@@ -106,9 +106,9 @@ def test_rate_history_and_payment_policy_are_not_ui_math() -> None:
 
 def test_database_still_delegates_schema_to_migration_layer() -> None:
     database = (CORE / "database.py").read_text(encoding="utf-8")
-    catalog = (CORE / "migration_catalog.py").read_text(encoding="utf-8")
+    catalog = (CORE / "migrations.py").read_text(encoding="utf-8")
 
-    assert "from core.migration_catalog import apply_migrations" in database
+    assert "from core.migrations import apply_migrations" in database
     assert "CREATE TABLE IF NOT EXISTS loans" not in database
     assert "CREATE TABLE IF NOT EXISTS loans" in catalog
     assert "CREATE TABLE loan_rate_revisions" in catalog

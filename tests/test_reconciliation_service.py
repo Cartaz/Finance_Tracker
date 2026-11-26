@@ -429,3 +429,57 @@ def test_duplicates_and_identities_follow_the_account_not_the_source_label(tmp_p
     states = [row["review_state"] for row in second]
     assert states == ["MATCHED", "DUPLICATE_REVIEW"]
     database.close()
+
+
+def test_reversed_transactions_are_not_reconciliation_candidates(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+    kept, mistaken = (
+        ledger_env.ledger.create_expense(
+            book_id=ledger_env.book_id,
+            source_account_id=bank.id,
+            expense_account_id=groceries.id,
+            amount_minor=5000,
+            currency_code="EUR",
+            transaction_date="2026-03-05",
+        )
+        for _ in range(2)
+    )
+    ledger_env.ledger.create_reversal(
+        book_id=ledger_env.book_id, transaction_id=mistaken.id, transaction_date="2026-03-05"
+    )
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-05,-50\n2026-03-05,50\n",
+    )
+    rows = service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+    assert rows[0]["review_state"] == "SUGGESTED"
+    assert [item["id"] for item in rows[0]["candidates"]] == [kept.id]
+    assert rows[1]["candidates"] == []
+
+
+def test_generic_ids_from_another_export_do_not_collide(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def stage(source, csv_text):
+        result = service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name=source,
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )
+        return service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]
+
+    card = stage("Card", "date,amount,id\n2026-03-01,-12,1\n")
+    service.post_row(
+        book_id=ledger_env.book_id, row_id=card["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    current = stage("Current account", "date,amount,id\n2026-03-04,-30,1\n")
+    assert current["review_state"] == "REVIEW_REQUIRED"
+    posted = service.post_row(
+        book_id=ledger_env.book_id, row_id=current["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    assert posted["state"] == "POSTED"

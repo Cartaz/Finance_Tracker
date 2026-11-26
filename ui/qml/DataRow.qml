@@ -78,7 +78,7 @@ Item {
             id: actionRow
             Layout.fillWidth: true
             spacing: 10
-            visible: children.length > 0
+            visible: visibleChildren.length > 0
         }
     }
     Rectangle {

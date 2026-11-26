@@ -124,3 +124,46 @@ def test_rename_uses_each_owner_rules(app) -> None:
         controller.rename_account({"accountId": ids["food"], "name": "Transport"})
     names = {a["name"] for a in controller.snapshot()["accounts"]}
     assert {"Wallet", "Food", "Transport"} <= names
+
+
+def test_reversal_capability_matches_what_the_ledger_accepts(app) -> None:
+    controller, ids = app
+    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    # The opening balance sits on the untimed tracking boundary: not reversible.
+    assert opening["reversalBlocker"] == "INVALID"
+    with pytest.raises(LedgerValidationError):
+        controller.reverse_transaction({"transactionId": opening["id"]})
+
+    out = controller.create_transfer(
+        {"sourceAccountId": ids["bank"], "destinationAccountId": ids["cash"], "amount": "10", "date": "2026-03-01"}
+    )["id"]
+    controller.create_transfer(
+        {"sourceAccountId": ids["cash"], "destinationAccountId": ids["bank"], "amount": "10", "date": "2026-03-02"}
+    )
+    controller.set_account_archived({"accountId": ids["cash"], "archived": True})
+    assert _row(controller, out)["reversalBlocker"] == "INVALID"
+
+
+def test_reversal_keeps_the_payee_so_merchant_reports_net_out(app) -> None:
+    controller, ids = app
+    bar = controller.create_payee("Bar")
+    expense = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "7",
+         "date": "2026-03-10", "payeeId": str(bar["id"])}
+    )["id"]
+    controller.reverse_transaction({"transactionId": expense})
+    merchants = controller.dashboard(
+        {"startDate": "2026-03-01", "endDate": "2026-03-31", "asOfDate": "2026-03-31"}
+    )["merchants"]
+    assert all(item["amountMinor"] == "0" for item in merchants), merchants
+
+
+def test_restore_refuses_a_child_under_an_archived_parent(app) -> None:
+    controller, ids = app
+    child = controller.create_account(
+        {"type": "EXPENSE", "name": "Groceries", "parentId": ids["food"]}
+    )["id"]
+    controller.set_account_archived({"accountId": child, "archived": True})
+    controller.set_account_archived({"accountId": ids["food"], "archived": True})
+    with pytest.raises(ValidationError, match="voce padre è archiviata"):
+        controller.set_account_archived({"accountId": child, "archived": False})

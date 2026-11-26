@@ -171,11 +171,17 @@ class AccountService:
 
     def set_archived(self, book_id: int, account_id: int, archived: bool) -> Account:
         account = self.get_account(book_id, account_id)
-        if archived and not account.archived:
-            blocker = self._archive_blocker(account)
-            if blocker is not None:
-                raise ValidationError(f"impossibile archiviare {account.name!r}: {blocker}")
         with self._database.transaction() as conn:
+            if archived and not account.archived:
+                blocker = self._archive_blocker(account)
+                if blocker is not None:
+                    raise ValidationError(f"impossibile archiviare {account.name!r}: {blocker}")
+            if not archived and account.archived and account.parent_id is not None:
+                parent = self.get_account(book_id, account.parent_id)
+                if parent.archived:
+                    raise ValidationError(
+                        f"ripristina prima {parent.name!r}: la voce padre è archiviata"
+                    )
             conn.execute(
                 "UPDATE accounts SET archived = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
                 (int(archived), account_id, book_id),

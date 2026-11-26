@@ -217,13 +217,21 @@ class AccountService:
         schedule = conn.execute(
             """
             SELECT 1 FROM scheduled_transactions
-            WHERE book_id=? AND active=1 AND ? IN (source_account_id, counter_account_id)
+            WHERE book_id=? AND ? IN (source_account_id, counter_account_id)
+              AND (end_date IS NULL OR next_due_date <= end_date)
             LIMIT 1
             """,
             (account.book_id, account.id),
         ).fetchone()
         if schedule is not None:
-            return "è usato da una transazione programmata attiva"
+            # Paused schedules count too: they can be resumed at any time.
+            return "è usato da una transazione programmata non conclusa"
+        budget = conn.execute(
+            "SELECT 1 FROM budgets WHERE book_id=? AND category_account_id=? AND period >= ? LIMIT 1",
+            (account.book_id, account.id, date.today().strftime("%Y-%m")),
+        ).fetchone()
+        if budget is not None:
+            return "ha un budget per il mese corrente o futuri"
         for loan in conn.execute(
             """
             SELECT liability_account_id FROM loans

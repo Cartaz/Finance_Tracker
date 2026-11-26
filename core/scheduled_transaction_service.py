@@ -254,6 +254,9 @@ class ScheduledTransactionService:
             > date.fromisoformat(schedule.end_date)
         ):
             raise ScheduledTransactionError("completed schedule cannot be reactivated")
+        if active:
+            # A paused schedule must still be postable before it is resumed.
+            self._materializable_accounts(schedule)
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE scheduled_transactions SET active=?, updated_at=datetime('now') WHERE id=? AND book_id=?",

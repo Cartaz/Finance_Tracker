@@ -9,11 +9,14 @@ DataRow {
     property bool withActions: false
 
     function reverse() {
-        app.confirm(
+        // Capture now: the row may be rebuilt while the dialog is open.
+        const shell = app
+        const transactionId = String(modelData.id)
+        shell.confirm(
             "Stornare questa transazione? Verrà registrata una transazione uguale e contraria alla stessa data; l'originale resta nello storico.",
-            () => app.attempt(() => {
-                const result = app.call("reverseTransaction", { transactionId: String(row.modelData.id) })
-                app.changed(result.state)
+            () => shell.attempt(() => {
+                const result = shell.call("reverseTransaction", { transactionId: transactionId })
+                shell.changed(result.state)
             }, "Transazione stornata"))
     }
 

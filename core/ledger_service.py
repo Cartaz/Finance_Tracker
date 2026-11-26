@@ -35,8 +35,10 @@ REVERSAL_BLOCKERS = {
     "LOAN": "appartiene a un prestito",
     "SCHEDULED": "è un'occorrenza di una transazione programmata",
     "RECONCILED": "è collegata a un movimento bancario riconciliato",
-    "INVALID": "i conti coinvolti non accettano più registrazioni alla sua data "
-    "(archiviati, contenitori o fuori dal periodo monitorato)",
+    "INVALID": "i conti coinvolti non accettano più registrazioni "
+    "(archiviati o contenitori)",
+    "BOUNDARY": "cade sull'inizio del monitoraggio di un conto, dove senza un'ora "
+    "non si può ordinare una nuova registrazione",
 }
 
 
@@ -352,12 +354,11 @@ class LedgerService:
             else:
                 candidates.append(row)
         if check_postability and candidates:
-            for transaction_id in self._unpostable_reversals(conn, book_id, candidates):
-                blockers[transaction_id] = "INVALID"
+            blockers.update(self._unpostable_reversals(conn, book_id, candidates))
         return blockers
 
-    def _unpostable_reversals(self, conn, book_id: int, candidates) -> set[int]:
-        """Ids whose reversal on the original date breaks entry/boundary rules."""
+    def _unpostable_reversals(self, conn, book_id: int, candidates) -> dict[int, str]:
+        """Blocker code for reversals that break entry/boundary rules on their date."""
         ids = [int(row["id"]) for row in candidates]
         placeholders = ",".join("?" for _ in ids)
         entries = conn.execute(
@@ -374,7 +375,7 @@ class LedgerService:
         by_transaction: dict[int, list] = {}
         for entry in entries:
             by_transaction.setdefault(int(entry["transaction_id"]), []).append(entry)
-        invalid: set[int] = set()
+        invalid: dict[int, str] = {}
         for row in candidates:
             draft = TransactionDraft(
                 book_id=book_id,
@@ -396,8 +397,10 @@ class LedgerService:
                         entry,
                     )
                     self._validate_tracking_boundary(draft, entry, "REVERSAL")
+            except (TrackingBoundaryError, TrackingBoundaryAmbiguousError):
+                invalid[int(row["id"])] = "BOUNDARY"
             except ValidationError:
-                invalid.add(int(row["id"]))
+                invalid[int(row["id"])] = "INVALID"
         return invalid
 
     def create_reversal(

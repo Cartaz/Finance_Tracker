@@ -102,7 +102,7 @@ def test_archiving_is_refused_while_it_would_contradict_other_state(app) -> None
         {"kind": "TRANSFER", "sourceAccountId": ids["bank"], "counterAccountId": ids["cash"],
          "amount": "10", "frequency": "MONTHLY", "interval": "1", "startDate": "2026-02-01"}
     )
-    with pytest.raises(ValidationError, match="programmata attiva"):
+    with pytest.raises(ValidationError, match="programmata non conclusa"):
         archive(ids["cash"])
     groceries = controller.create_account(
         {"type": "EXPENSE", "name": "Groceries", "parentId": ids["food"]}
@@ -130,7 +130,7 @@ def test_reversal_capability_matches_what_the_ledger_accepts(app) -> None:
     controller, ids = app
     opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
     # The opening balance sits on the untimed tracking boundary: not reversible.
-    assert opening["reversalBlocker"] == "INVALID"
+    assert opening["reversalBlocker"] == "BOUNDARY"
     with pytest.raises(LedgerValidationError):
         controller.reverse_transaction({"transactionId": opening["id"]})
 
@@ -228,3 +228,32 @@ def test_snapshot_query_count_does_not_grow_with_transactions(app) -> None:
             {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "1", "date": "2026-03-01"}
         )
     assert statements() == few
+
+
+def test_paused_schedules_and_open_budgets_block_archiving(app) -> None:
+    from datetime import date
+
+    from core.errors import ScheduledTransactionError
+
+    controller, ids = app
+    rent = controller.create_account({"type": "EXPENSE", "name": "Rent"})["id"]
+    schedule = controller.create_scheduled_transaction(
+        {"kind": "EXPENSE", "sourceAccountId": ids["bank"], "counterAccountId": rent,
+         "amount": "10", "frequency": "MONTHLY", "interval": "1", "startDate": "2026-02-01"}
+    )
+    controller.set_scheduled_active({"scheduleId": schedule["id"], "active": False})
+    with pytest.raises(ValidationError, match="programmata non conclusa"):
+        controller.set_account_archived({"accountId": rent, "archived": True})
+
+    controller.set_budget(
+        {"categoryAccountId": ids["food"], "period": date.today().strftime("%Y-%m"), "amount": "100"}
+    )
+    with pytest.raises(ValidationError, match="budget"):
+        controller.set_account_archived({"accountId": ids["food"], "archived": True})
+
+    # A paused schedule whose account is archived (legacy data) cannot resume.
+    from tests.conftest import force_legacy_archive
+
+    force_legacy_archive(controller._database, rent)  # noqa: SLF001
+    with pytest.raises(ScheduledTransactionError):
+        controller.set_scheduled_active({"scheduleId": schedule["id"], "active": True})

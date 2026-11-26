@@ -132,10 +132,11 @@ class AccountService:
         return [self._row_to_account(row) for row in rows]
 
     def rename_account(self, book_id: int, account_id: int, name: str) -> Account:
-        clean_name = name.strip()
-        if not clean_name:
+        if not isinstance(name, str) or not name.strip():
             raise ValidationError("account name cannot be empty")
-        self.get_account(book_id, account_id)
+        clean_name = name.strip()
+        if self.get_account(book_id, account_id).type == "EQUITY":
+            raise ValidationError("system equity accounts cannot be renamed")
         with self._database.transaction() as conn:
             conn.execute(
                 "UPDATE accounts SET name = ?, updated_at = datetime('now') WHERE id = ? AND book_id = ?",
@@ -190,7 +191,21 @@ class AccountService:
 
     def _archive_blocker(self, account: Account) -> str | None:
         """Why archiving would leave other canonical state contradictory."""
+        if account.type == "EQUITY":
+            return "è un conto di sistema"
         conn = self._database.connection
+        pending = conn.execute(
+            """
+            SELECT 1 FROM import_rows r
+            JOIN import_batches b ON b.id = r.batch_id AND b.book_id = r.book_id
+            WHERE b.book_id = ? AND b.account_id = ?
+              AND r.review_state NOT IN ('MATCHED', 'POSTED', 'IGNORED')
+            LIMIT 1
+            """,
+            (account.book_id, account.id),
+        ).fetchone()
+        if pending is not None:
+            return "ha righe importate ancora da riconciliare"
         child = conn.execute(
             "SELECT 1 FROM accounts WHERE book_id=? AND parent_id=? AND archived=0 LIMIT 1",
             (account.book_id, account.id),

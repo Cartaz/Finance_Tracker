@@ -548,34 +548,21 @@ class ReconciliationService:
         tracking_start_time: str | None,
     ) -> tuple[str, int | None]:
         if external_id is not None:
-            # Bank identities belong to the account, not to the free-text
-            # source label: "Intesa" and "intesa sanpaolo" are the same bank.
-            links = self._database.connection.execute(
+            # A bank id identifies a movement only within its own source:
+            # generic export ids (row numbers) repeat across files.
+            link = self._database.connection.execute(
                 """
-                SELECT DISTINCT transaction_id, source_name FROM reconciliation_links
-                WHERE book_id=? AND account_id=? AND external_id=?
+                SELECT transaction_id FROM reconciliation_links
+                WHERE book_id=? AND account_id=? AND source_name=? AND external_id=?
                 """,
-                (book_id, account_id, str(external_id)),
-            ).fetchall()
-            # Generic export ids (row numbers) repeat across files: an identity
-            # only counts when it points at a transaction with this date/amount.
-            compatible = [
-                int(link["transaction_id"])
-                for link in links
+                (book_id, account_id, source_name, str(external_id)),
+            ).fetchone()
+            if link is not None:
+                linked_id = int(link["transaction_id"])
                 if self._transaction_is_compatible(
-                    book_id,
-                    account_id,
-                    int(link["transaction_id"]),
-                    transaction_date,
-                    amount_minor,
-                )
-            ]
-            if len(set(compatible)) > 1:
-                return "AMBIGUOUS", None
-            if compatible:
-                return "MATCHED", compatible[0]
-            if any(str(link["source_name"]) == source_name for link in links):
-                # Same bank, same id, different date/amount: a real conflict.
+                    book_id, account_id, linked_id, transaction_date, amount_minor
+                ):
+                    return "MATCHED", linked_id
                 return "AMBIGUOUS", None
 
         if tracking_start_date is not None:
@@ -591,17 +578,24 @@ class ReconciliationService:
                 return "TRACKING_AMBIGUOUS", None
 
         # Two indexed lookups (an OR would defeat both indexes): the same
-        # movement for this account under any label, or the same bank id
-        # within the same source.
+        # movement for this account under any source label (unless both rows
+        # carry different bank ids), or the same bank id within the source.
         duplicate = self._database.connection.execute(
             """
             SELECT 1
             FROM import_rows r
             JOIN import_batches b ON b.id=r.batch_id
             WHERE r.book_id=? AND r.fingerprint=? AND b.account_id=?
+              AND (r.external_id IS NULL OR ? IS NULL OR r.external_id = ?)
             LIMIT 1
             """,
-            (book_id, fingerprint, account_id),
+            (
+                book_id,
+                fingerprint,
+                account_id,
+                None if external_id is None else str(external_id),
+                None if external_id is None else str(external_id),
+            ),
         ).fetchone()
         if duplicate is None and external_id is not None:
             duplicate = self._database.connection.execute(

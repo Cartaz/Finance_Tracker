@@ -305,12 +305,14 @@ class LedgerService:
         transaction_ids: list[int],
         *,
         connection: sqlite3.Connection | None = None,
+        check_postability: bool = True,
     ) -> dict[int, str]:
         """Blocker code (see REVERSAL_BLOCKERS) for each non-reversible transaction.
 
-        A reversal must not contradict another workflow that owns the
-        transaction: loan installments, scheduled occurrences and reconciled
-        bank rows keep their own records of it.
+        Ownership blocks first: loan installments, scheduled occurrences and
+        reconciled bank rows keep their own records of a transaction. With
+        ``check_postability`` the reversal on the original date is also run
+        through the canonical entry and tracking-boundary rules, in bulk.
         """
         if not transaction_ids:
             return {}
@@ -318,18 +320,22 @@ class LedgerService:
         placeholders = ",".join("?" for _ in transaction_ids)
         rows = conn.execute(
             f"""
-            SELECT t.id,
+            SELECT t.id, t.kind, t.transaction_date, t.transaction_time,
                    t.kind = 'REVERSAL' AS reversal,
                    EXISTS (SELECT 1 FROM transactions r
                            WHERE r.reverses_transaction_id = t.id) AS reversed,
-                   EXISTS (SELECT 1 FROM loan_payments p WHERE p.transaction_id = t.id)
+                   EXISTS (SELECT 1 FROM loan_payments p
+                           WHERE p.book_id = t.book_id AND p.transaction_id = t.id)
                    OR EXISTS (SELECT 1 FROM loans l
-                              WHERE l.origination_transaction_id = t.id) AS loan,
+                              WHERE l.book_id = t.book_id
+                                AND l.origination_transaction_id = t.id) AS loan,
                    EXISTS (SELECT 1 FROM scheduled_occurrences o
-                           WHERE o.transaction_id = t.id) AS scheduled,
-                   EXISTS (SELECT 1 FROM reconciliation_links k WHERE k.transaction_id = t.id)
+                           WHERE o.book_id = t.book_id AND o.transaction_id = t.id) AS scheduled,
+                   EXISTS (SELECT 1 FROM reconciliation_links k
+                           WHERE k.book_id = t.book_id AND k.transaction_id = t.id)
                    OR EXISTS (SELECT 1 FROM import_rows i
-                              WHERE i.matched_transaction_id = t.id
+                              WHERE i.book_id = t.book_id
+                                AND i.matched_transaction_id = t.id
                                 AND i.review_state IN ('MATCHED', 'POSTED')) AS reconciled
             FROM transactions t
             WHERE t.book_id = ? AND t.id IN ({placeholders})
@@ -337,22 +343,62 @@ class LedgerService:
             (book_id, *transaction_ids),
         ).fetchall()
         blockers: dict[int, str] = {}
+        candidates = []
         for row in rows:
             for code in ("REVERSAL", "REVERSED", "LOAN", "SCHEDULED", "RECONCILED"):
                 if row[code.lower()]:
                     blockers[int(row["id"])] = code
                     break
             else:
-                # Dry-run the canonical posting rules for the reversal itself.
-                original = self.get_transaction(book_id, int(row["id"]), connection=conn)
-                draft = self._reversal_draft(
-                    original, original.transaction_date, original.transaction_time
-                )
-                try:
-                    self._validate_draft(draft, conn)
-                except ValidationError:
-                    blockers[int(row["id"])] = "INVALID"
+                candidates.append(row)
+        if check_postability and candidates:
+            for transaction_id in self._unpostable_reversals(conn, book_id, candidates):
+                blockers[transaction_id] = "INVALID"
         return blockers
+
+    def _unpostable_reversals(self, conn, book_id: int, candidates) -> set[int]:
+        """Ids whose reversal on the original date breaks entry/boundary rules."""
+        ids = [int(row["id"]) for row in candidates]
+        placeholders = ",".join("?" for _ in ids)
+        entries = conn.execute(
+            f"""
+            SELECT e.transaction_id, e.account_id, e.value_minor, e.quantity_minor,
+                   a.id, a.book_id, a.type, a.currency_code, a.tracking_start_date,
+                   a.tracking_start_time, a.placeholder, a.archived
+            FROM entries e
+            JOIN accounts a ON a.id = e.account_id AND a.book_id = e.book_id
+            WHERE e.book_id = ? AND e.transaction_id IN ({placeholders})
+            """,
+            (book_id, *ids),
+        ).fetchall()
+        by_transaction: dict[int, list] = {}
+        for entry in entries:
+            by_transaction.setdefault(int(entry["transaction_id"]), []).append(entry)
+        invalid: set[int] = set()
+        for row in candidates:
+            draft = TransactionDraft(
+                book_id=book_id,
+                kind="REVERSAL",
+                transaction_date=str(row["transaction_date"]),
+                transaction_time=row["transaction_time"],
+                currency_code="",
+                entries=(),
+            )
+            try:
+                for entry in by_transaction.get(int(row["id"]), []):
+                    quantity = entry["quantity_minor"]
+                    self._validate_entry_semantics(
+                        EntryDraft(
+                            int(entry["account_id"]),
+                            -int(entry["value_minor"]),
+                            None if quantity is None else -int(quantity),
+                        ),
+                        entry,
+                    )
+                    self._validate_tracking_boundary(draft, entry, "REVERSAL")
+            except ValidationError:
+                invalid.add(int(row["id"]))
+        return invalid
 
     def create_reversal(
         self,
@@ -383,9 +429,10 @@ class LedgerService:
         conn: sqlite3.Connection,
     ) -> int:
         original = self.get_transaction(book_id, transaction_id, connection=conn)
-        blocker = self.reversal_blockers(book_id, [transaction_id], connection=conn).get(
-            transaction_id
-        )
+        # Ownership only: the draft itself is validated at the requested date.
+        blocker = self.reversal_blockers(
+            book_id, [transaction_id], connection=conn, check_postability=False
+        ).get(transaction_id)
         if blocker is not None:
             raise LedgerValidationError(
                 f"storno non consentito: {REVERSAL_BLOCKERS[blocker]}"

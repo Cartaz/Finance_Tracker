@@ -427,7 +427,8 @@ def test_duplicates_and_identities_follow_the_account_not_the_source_label(tmp_p
     )
     second = stage("intesa sanpaolo")
     states = [row["review_state"] for row in second]
-    assert states == ["MATCHED", "DUPLICATE_REVIEW"]
+    # Another label never auto-matches; both rows surface as duplicates for review.
+    assert states == ["DUPLICATE_REVIEW", "DUPLICATE_REVIEW"]
     database.close()
 
 
@@ -483,3 +484,15 @@ def test_generic_ids_from_another_export_do_not_collide(ledger_env) -> None:
         book_id=ledger_env.book_id, row_id=current["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
     )
     assert posted["state"] == "POSTED"
+
+
+def test_identical_movements_with_distinct_bank_ids_are_not_duplicates(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,description,external_id\n2026-03-01,-1.20,CAFFE,A1\n2026-03-01,-1.20,CAFFE,A2\n",
+    )
+    assert result["summary"] == {"REVIEW_REQUIRED": 2}

@@ -22,11 +22,12 @@ DataRow {
     detail: `${modelData.transaction_date} · ${app.kindLabels[modelData.kind] || modelData.kind}`
         + (modelData.reversalBlocker === "REVERSED" ? " · stornata" : "")
     value: app.transactionAmount(modelData)
+    showActions: withActions && modelData.reversible
     valueColor: modelData.reversalBlocker === "REVERSED" ? Theme.muted : Theme.primary
 
     ActionButton {
         visible: row.withActions && row.modelData.reversible
-        objectName: "reverse-" + row.modelData.id
+        objectName: row.withActions ? "reverse-" + row.modelData.id : ""
         text: "Storna"
         primary: false
         compact: true

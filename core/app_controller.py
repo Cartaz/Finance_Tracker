@@ -608,7 +608,9 @@ class AppController:
     def rename_account(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
         account = self._accounts.get_account(book.id, self._positive_id(payload.get("accountId")))
-        name = str(payload.get("name", ""))
+        name = payload.get("name")
+        if not isinstance(name, str):
+            raise ValidationError("name must be text")
         if account.type in {"EXPENSE", "INCOME"}:
             self._categories.rename_category(book.id, account.id, name)
         else:

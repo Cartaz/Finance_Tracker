@@ -167,3 +167,64 @@ def test_restore_refuses_a_child_under_an_archived_parent(app) -> None:
     controller.set_account_archived({"accountId": ids["food"], "archived": True})
     with pytest.raises(ValidationError, match="voce padre è archiviata"):
         controller.set_account_archived({"accountId": child, "archived": False})
+
+
+def test_reversal_is_validated_at_the_requested_date(app) -> None:
+    controller, ids = app
+    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    reversal = controller._ledger.create_reversal(  # noqa: SLF001 - explicit later date
+        book_id=controller.initial_state()["book"]["id"],
+        transaction_id=opening["id"],
+        transaction_date="2026-02-01",
+    )
+    assert reversal.transaction_date == "2026-02-01"
+
+
+def test_system_accounts_and_pending_imports_block_archiving(app, tmp_path) -> None:
+    controller, ids = app
+    book_id = controller.initial_state()["book"]["id"]
+    equity = next(
+        a for a in controller._accounts.list_accounts(book_id) if a.type == "EQUITY"  # noqa: SLF001
+    )
+    with pytest.raises(ValidationError, match="conto di sistema"):
+        controller.set_account_archived({"accountId": equity.id, "archived": True})
+    with pytest.raises(ValidationError, match="cannot be renamed"):
+        controller.rename_account({"accountId": equity.id, "name": "Mine"})
+    with pytest.raises(ValidationError, match="name must be text"):
+        controller.rename_account({"accountId": ids["cash"], "name": None})
+
+    csv_path = tmp_path / "cash.csv"
+    csv_path.write_text("date,amount\n2026-03-01,-5\n", encoding="utf-8")
+    controller.csv_import_task({"accountId": ids["cash"], "sourceName": "Cash"})(csv_path)
+    with pytest.raises(ValidationError, match="da riconciliare"):
+        controller.set_account_archived({"accountId": ids["cash"], "archived": True})
+
+
+def test_snapshot_query_count_does_not_grow_with_transactions(app) -> None:
+    controller, ids = app
+    database = controller._database  # noqa: SLF001
+
+    def statements() -> int:
+        count = 0
+
+        def trace(_sql: str) -> None:
+            nonlocal count
+            count += 1
+
+        database.connection.set_trace_callback(trace)
+        try:
+            controller.snapshot()
+        finally:
+            database.connection.set_trace_callback(None)
+        return count
+
+    for _ in range(5):
+        controller.create_expense(
+            {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "1", "date": "2026-03-01"}
+        )
+    few = statements()
+    for _ in range(60):
+        controller.create_expense(
+            {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "1", "date": "2026-03-01"}
+        )
+    assert statements() == few

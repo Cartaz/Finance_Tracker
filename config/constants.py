@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 APP_SLUG = "finance-tracker"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 DEFAULT_BOOK_CURRENCY = "EUR"
 DEFAULT_RECONCILIATION_REVIEW_MODE = "FULL_REVIEW"
 

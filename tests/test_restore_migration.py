@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from config.constants import SCHEMA_VERSION
 from core.backup_service import BackupService
 from core.database import Database
 from core.migrations import apply_migrations
@@ -41,7 +42,7 @@ def test_restore_preparation_migrates_older_backup_only_in_staging(tmp_path) -> 
             try:
                 assert staged_check.execute(
                     "SELECT MAX(version) FROM schema_migrations"
-                ).fetchone()[0] == 9
+                ).fetchone()[0] == SCHEMA_VERSION
                 columns = {
                     row[1]
                     for row in staged_check.execute("PRAGMA table_info(loans)").fetchall()

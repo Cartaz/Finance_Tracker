@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "core"
 
@@ -95,3 +97,39 @@ def test_database_schema_is_owned_by_migrations_module() -> None:
     migrations = (CORE / "migrations.py").read_text(encoding="utf-8")
     assert "_SCHEMA_V" not in database
     assert "MIGRATIONS" in migrations
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "spentMinor",
+        "remainingMinor",
+        "totalBudgetMinor",
+        "totalSpentMinor",
+        "totalRemainingMinor",
+        "usageBps",
+        "baseAmountMinor",
+        "inflowMinor",
+        "outflowMinor",
+        "totalInflowMinor",
+        "totalOutflowMinor",
+        "totalNetMinor",
+    ],
+)
+def test_report_and_budget_fields_cross_the_ui_boundary_exactly(field) -> None:
+    from core.transport import TransportSerializer
+
+    beyond_js = 2**53 + 1
+    assert TransportSerializer.serialize({"items": [{field: beyond_js}]}) == {
+        "items": [{field: str(beyond_js)}]
+    }
+    # The vocabulary is explicit: a look-alike suffix is not serialized as money.
+    assert TransportSerializer.serialize({"pageMinor": beyond_js}) == {"pageMinor": beyond_js}
+
+
+def test_strategic_review_is_part_of_definition_of_done() -> None:
+    directive = (ROOT / "STRATEGIC_PROGRAMMING.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Mandatory milestone strategic review" in directive
+    assert "Green tests without the review are not milestone completion" in directive
+    assert "A milestone with green tests but without its strategic review is incomplete" in agents

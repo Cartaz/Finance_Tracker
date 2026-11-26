@@ -482,6 +482,13 @@ CREATE INDEX idx_loan_rate_revisions_lookup
     ON loan_rate_revisions(book_id, loan_id, effective_date);
 """
 
+_SCHEMA_V10 = """
+CREATE INDEX IF NOT EXISTS idx_import_rows_matched_transaction
+    ON import_rows(book_id, matched_transaction_id) WHERE matched_transaction_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_reconciliation_links_transaction
+    ON reconciliation_links(book_id, transaction_id);
+"""
+
 MIGRATIONS = (
     Migration(1, "Initial foundation schema", _SCHEMA_V1, seed_currencies=True),
     Migration(2, "Ledger core schema", _SCHEMA_V2),
@@ -492,6 +499,7 @@ MIGRATIONS = (
     Migration(7, "Monthly category budgets", _SCHEMA_V7),
     Migration(8, "Fixed-rate loan contracts and ledger-linked payments", _SCHEMA_V8),
     Migration(9, "Generalized loan policies, variable rates and custom payments", _SCHEMA_V9),
+    Migration(10, "Indexes for transaction ownership lookups", _SCHEMA_V10),
 )
 
 

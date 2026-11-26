@@ -24,7 +24,9 @@ KWD = CurrencySpec("KWD", 3)
         # Not a possible thousands group: an ordinary decimal.
         ("0,500", 50),
         ("1234,500", 123450),
-        ("12,3000", 1230),
+        ("1234,5000", 123450),
+        ("1 500", 150000),
+        ("12 345 678,90", 1234567890),
         ("1.234,56", 123456),
         ("1,234.56", 123456),
         ("-42,73", -4273),
@@ -54,6 +56,13 @@ def test_parse_eur(raw: str, expected: int) -> None:
         "-1.500",
         "1.50.0",
         "0.500.000",
+        # Trailing zeros are not dropped when the digits may be a group.
+        "12,3000",
+        "1.500 000",
+        "2.500000",
+        # Spaces only separate groups of three digits.
+        "1 50",
+        "12 3,45",
     ],
 )
 def test_rejects_ambiguous_or_overprecise_eur(raw: str) -> None:
@@ -77,7 +86,7 @@ def test_currency_specific_precision() -> None:
     [
         ("1.500", EUR, "per le migliaia scrivi 1500 (o 1.500,00), per i decimali scrivi 1,50"),
         ("+1,500", EUR, "per le migliaia scrivi +1500 (o +1.500,00), per i decimali scrivi +1,50"),
-        ("-2.000", JPY, "per le migliaia scrivi -2000 (o -2.000), per i decimali scrivi -2"),
+        ("-2.000", JPY, "per le migliaia scrivi -2000, per i decimali scrivi -2"),
     ],
 )
 def test_ambiguous_amount_message_offers_both_readings(raw, currency, expected) -> None:

@@ -515,3 +515,27 @@ def test_csv_ambiguous_amount_is_reported_with_its_row(ledger_env):
             review_mode="FULL_REVIEW",
         )
     assert env.db.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+
+
+def test_csv_errors_cite_the_physical_line(ledger_env):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    with pytest.raises(ReconciliationError, match="row 5: importo ambiguo"):
+        service.import_csv(
+            book_id=env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            csv_text="data;importo\n2026-09-30;-5,00\n;\n\n2026-09-30;-1.500\n",
+            review_mode="FULL_REVIEW",
+        )

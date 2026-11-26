@@ -49,7 +49,7 @@ def build_controller(database: Database, settings: Settings) -> AppController:
         account_setup=AccountSetupService(database, accounts, categories, ledger),
         fx=fx,
         reporting=reporting,
-        reconciliation=ReconciliationService(database, accounts, ledger, payees),
+        reconciliation=build_reconciliation(database),
         reconciliation_factory=build_reconciliation,
         scheduled=scheduled,
         app_state=AppStateService(database, accounts),

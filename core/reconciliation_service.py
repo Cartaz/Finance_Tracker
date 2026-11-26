@@ -132,7 +132,8 @@ class ReconciliationService:
 
         prepared: list[dict[str, object]] = []
         seen_external: set[str] = set()
-        for row_number, raw in enumerate(raw_rows, start=2):
+        for raw in raw_rows:
+            row_number = int(raw["line"])
             transaction_date = self._parse_date(raw["date"], row_number)
             currency = (raw.get("currency") or account.currency_code).strip().upper()
             if currency != account.currency_code:
@@ -801,6 +802,7 @@ class ReconciliationService:
                 continue
             result.append(
                 {
+                    "line": reader.line_num,
                     "date": (raw.get(date_col) or "").strip(),
                     "amount": (raw.get(amount_col) or "").strip(),
                     "currency": (

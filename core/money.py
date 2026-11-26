@@ -8,6 +8,8 @@ from core.errors import CurrencyPrecisionError, MoneyParseError, MoneyRangeError
 
 _SIGN_RE = re.compile(r"^[+-]?")
 _DIGITS_RE = re.compile(r"^\d+$")
+# A space inside an amount must be followed by exactly three digits ("1 500").
+_BAD_SPACE_GROUP_RE = re.compile(r"[ \u00a0]+(?!\d{3}(?:\D|$))")
 MAX_PERSISTED_MINOR = (1 << 63) - 1
 
 
@@ -52,7 +54,10 @@ def normalize_decimal_text(raw: str, *, allow_grouping: bool = False) -> str:
     if not isinstance(raw, str):
         raise MoneyParseError("money input must be text")
 
-    text = raw.strip().replace(" ", "").replace("\u00a0", "")
+    stripped = raw.strip()
+    if _BAD_SPACE_GROUP_RE.search(stripped):
+        raise MoneyParseError("spaces are only allowed between groups of three digits")
+    text = stripped.replace(" ", "").replace("\u00a0", "")
     if not text:
         raise MoneyParseError("empty monetary amount")
 
@@ -127,7 +132,8 @@ def _ambiguity_message(
     sign = canonical[0] if canonical[0] in "+-" else ""
     digits = currency.minor_unit_digits
     zeros = "," + "0" * digits if digits else ""
-    thousands = f"{sign}{integer}{fractional} (o {sign}{integer}.{fractional}{zeros})"
+    grouped = f" (o {sign}{integer}.{fractional}{zeros})" if digits else ""
+    thousands = f"{sign}{integer}{fractional}{grouped}"
     message = f"importo ambiguo {raw.strip()!r}: per le migliaia scrivi {thousands}"
     if not fractional[digits:].strip("0"):
         decimal = f"{sign}{integer}" + (f",{fractional[:digits]}" if digits else "")
@@ -160,7 +166,9 @@ def parse_money(raw: str, currency: CurrencySpec) -> int:
 
     if len(fractional) > currency.minor_unit_digits:
         excess = fractional[currency.minor_unit_digits :]
-        if any(char != "0" for char in excess):
+        if any(char != "0" for char in excess) or (separators == 1 and could_be_thousands):
+            # Trailing zeros are only dropped when the digits cannot be a
+            # thousands group: "1.500000" may well mean 1.500.000.
             raise CurrencyPrecisionError(
                 f"{currency.code} supports at most {currency.minor_unit_digits} decimal places"
             )

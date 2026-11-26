@@ -37,7 +37,7 @@ from ui.shell import QuickShell
 
 
 class QmlHarness:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, settings: Settings | None = None) -> None:
         self.app = QApplication.instance() or QApplication([])
         self.messages: list[str] = []
         self._previous_handler = qInstallMessageHandler(self._capture)
@@ -45,7 +45,7 @@ class QmlHarness:
         self.database.migrate()
         self.controller = AppController(
             self.database,
-            Settings(),
+            settings or Settings(),
             AccountService(self.database),
             LedgerService(self.database),
             BookService(self.database),
@@ -276,6 +276,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     ui.set_text("accountName", "After backup")
     ui.set_text("trackingDate", "2026-01-01")
     ui.click("accountSubmit", "Conto creato")
+    ui.find("transactionsPage").setProperty("payeeId", "5")
     started = ui.bridge.startManagedRestore(backup_name)
     assert started["ok"] is True
     assert ui.bridge.busy is True
@@ -288,6 +289,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     names = [a["name"] for a in ui.controller.snapshot()["accounts"]]
     assert "After backup" not in names
     assert ui.list_count("accountsList") == 3
+    assert ui.find("transactionsPage").property("payeeId") == ""
     assert ui.qml_warnings() == []
 
 
@@ -303,3 +305,37 @@ def test_backend_errors_are_reported_without_mutation(ui):
     assert "sign" in message
     assert ui.list_count("transactionsList") == 1
     assert ui.qml_warnings() == []
+
+
+def test_csv_review_mode_defaults_to_the_configured_setting(tmp_path):
+    harness = QmlHarness(tmp_path, Settings(reconciliation_review_mode="ASSISTED_REVIEW"))
+    try:
+        _setup_book(harness)
+        harness.navigate("tools")
+        assert harness.find("importReviewMode").property("value") == "ASSISTED_REVIEW"
+        assert harness.qml_warnings() == []
+    finally:
+        harness.close()
+
+
+def test_failed_startup_shows_a_retry_state(tmp_path, monkeypatch):
+    original = AppController.initial_state
+    calls = {"count": 0}
+
+    def flaky(self):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("database temporarily unavailable")
+        return original(self)
+
+    monkeypatch.setattr(AppController, "initial_state", flaky)
+    harness = QmlHarness(tmp_path)
+    try:
+        assert harness.find("bootError").property("visible") is True
+        assert harness.root.property("ready") is False
+        harness.click("bootRetry")
+        assert harness.find("bootError").property("visible") is False
+        assert harness.root.property("ready") is True
+        assert harness.qml_warnings() == []
+    finally:
+        harness.close()

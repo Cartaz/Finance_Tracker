@@ -75,6 +75,25 @@ class ReconciliationService:
         csv_text: str,
         review_mode: str,
     ) -> dict[str, object]:
+        if isinstance(csv_text, str) and len(csv_text.encode("utf-8")) > _MAX_CSV_BYTES:
+            raise ReconciliationError("CSV content exceeds 10 MB")
+        return self._stage_csv_text(
+            book_id=book_id,
+            account_id=account_id,
+            source_name=source_name,
+            csv_text=csv_text,
+            review_mode=review_mode,
+        )
+
+    def _stage_csv_text(
+        self,
+        *,
+        book_id: int,
+        account_id: int,
+        source_name: str,
+        csv_text: str,
+        review_mode: str,
+    ) -> dict[str, object]:
         account = self._accounts.get_account(book_id, account_id)
         if account.type not in {"ASSET", "LIABILITY"} or account.currency_code is None:
             raise ReconciliationError("imports require a balance account")
@@ -95,8 +114,6 @@ class ReconciliationService:
             )
         if not isinstance(csv_text, str) or not csv_text.strip():
             raise ReconciliationError("CSV content is empty")
-        if len(csv_text.encode("utf-8")) > _MAX_CSV_BYTES:
-            raise ReconciliationError("CSV content exceeds 10 MB")
 
         raw_rows = self._parse_csv(csv_text)
         if not raw_rows:
@@ -212,7 +229,8 @@ class ReconciliationService:
             raw = csv_path.read_bytes()
         except OSError as exc:
             raise ReconciliationError("CSV file cannot be read") from exc
-        return self.import_csv(
+        # The byte limit applies to the file as stored, not to its UTF-8 form.
+        return self._stage_csv_text(
             book_id=book_id,
             account_id=account_id,
             source_name=source_name,

@@ -40,6 +40,10 @@ class Bridge(QObject):
         super().__init__()
         self._controller = controller
         self._backup_tasks = backup_tasks
+        # Minor-unit digits are static metadata. Caching them keeps money
+        # formatting from opening SQLite read snapshots on the GUI connection,
+        # in particular while a background worker owns the database.
+        self._currency_digits: dict[str, int] = {}
         if self._backup_tasks is not None:
             self._backup_tasks.finished.connect(self._on_task_finished)
             self._backup_tasks.maintenanceChanged.connect(self._on_maintenance_changed)
@@ -128,11 +132,25 @@ class Bridge(QObject):
         if not currency:
             return "—"
         try:
-            digits = self._controller.currency_digits(currency)
-            return format_money(minor, currency, digits)
+            return format_money(minor, currency, self._digits_for(currency))
         except (FinanceTrackerError, TypeError, ValueError):
             log.warning("cannot format money value for currency %r", currency)
             return "—"
+
+    def _digits_for(self, currency: str) -> int:
+        digits = self._currency_digits.get(currency)
+        if digits is None:
+            if self.maintenance:
+                raise BackupError("currency metadata unavailable during maintenance")
+            digits = self._controller.currency_digits(currency)
+            self._currency_digits[currency] = digits
+        return digits
+
+    def _remember_currencies(self, result: dict) -> dict:
+        if result.get("ok"):
+            for item in result["data"].get("currencies", []):
+                self._currency_digits[str(item["code"])] = int(item["minorUnitDigits"])
+        return result
 
     @Slot("QVariant", result=str)
     def formatPercentBps(self, bps) -> str:
@@ -189,7 +207,7 @@ class Bridge(QObject):
 
     @Slot(result="QVariant")
     def getInitialState(self):
-        return self._call(self._controller.initial_state)
+        return self._remember_currencies(self._call(self._controller.initial_state))
 
     @Slot(result="QVariant")
     def getSnapshot(self):

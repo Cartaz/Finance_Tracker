@@ -7,6 +7,8 @@ import ".."
 PageScaffold {
     id: page
     property var history: null
+    readonly property string historyCurrency: history ? history.currency : ""
+    readonly property string historyBaseCurrency: history ? history.baseCurrency : ""
     readonly property var balanceItems: app.balanceAccounts(false)
     readonly property var categoryItems: app.accounts()
         .filter(item => item.type === "EXPENSE" || item.type === "INCOME")
@@ -76,6 +78,10 @@ PageScaffold {
         })
     }
 
+    Connections {
+        target: page.app
+        function onSessionReset() { page.history = null }
+    }
     Component.onCompleted: {
         trackingDate.text = app.today()
         historyStart.text = app.monthStart()
@@ -208,8 +214,9 @@ PageScaffold {
                     }
                 }
                 Label {
+                    textFormat: Text.PlainText
                     visible: !!page.history
-                    text: page.history ? `${page.history.name} · ${page.history.currency}` : ""
+                    text: page.history ? `${page.history.name} · ${page.historyCurrency}` : ""
                     color: Theme.primary
                     font.bold: true
                 }
@@ -220,8 +227,8 @@ PageScaffold {
                     delegate: DataRow {
                         required property var modelData
                         title: modelData.date
-                        detail: page.app.money(modelData.balanceMinor, page.history.currency)
-                        value: page.app.money(modelData.baseValueMinor, page.history.baseCurrency)
+                        detail: page.app.money(modelData.balanceMinor, page.historyCurrency)
+                        value: page.app.money(modelData.baseValueMinor, page.historyBaseCurrency)
                     }
                 }
             }

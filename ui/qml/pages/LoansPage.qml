@@ -13,6 +13,7 @@ PageScaffold {
     property var plan: null
     property var payments: []
     property var revisions: []
+    readonly property string planCurrency: plan ? plan.currency : ""
     readonly property var target: capabilities.targets.find(item => String(item.liabilityAccountId) === liability.value)
     readonly property var modeLabels: ({ NEW_DISBURSEMENT: "Nuova erogazione", EXISTING_BALANCE: "Saldo già presente" })
     readonly property var rateLabels: ({ FIXED: "Fisso", VARIABLE: "Variabile" })
@@ -142,6 +143,13 @@ PageScaffold {
         }, "Tasso variabile aggiornato")
     }
 
+    Connections {
+        target: page.app
+        function onSessionReset() {
+            page.loans = []
+            page.clearDetail()
+        }
+    }
     Component.onCompleted: {
         startDate.text = app.today()
         firstDueDate.text = app.monthsFromToday(1)
@@ -294,11 +302,11 @@ PageScaffold {
                         delegate: DataRow {
                             required property var modelData
                             title: `#${modelData.installmentNumber} · ${modelData.dueDate}`
-                            subtitle: `Capitale ${page.app.money(modelData.principalMinor, page.plan.currency)} · Interessi ${page.app.money(modelData.interestMinor, page.plan.currency)} · ${page.app.bps(modelData.annualRateBps)}`
-                            value: page.app.money(modelData.paymentMinor, page.plan.currency)
+                            subtitle: `Capitale ${page.app.money(modelData.principalMinor, page.planCurrency)} · Interessi ${page.app.money(modelData.interestMinor, page.planCurrency)} · ${page.app.bps(modelData.annualRateBps)}`
+                            value: page.app.money(modelData.paymentMinor, page.planCurrency)
                         }
                     }
-                    Note { text: page.plan ? "Interessi residui previsti: " + page.app.money(page.plan.totalInterestMinor, page.plan.currency) : "" }
+                    Note { text: page.plan ? "Interessi residui previsti: " + page.app.money(page.plan.totalInterestMinor, page.planCurrency) : "" }
 
                     Label { text: "Storia tassi"; color: Theme.primary; font.bold: true }
                     BoundedList {
@@ -320,8 +328,8 @@ PageScaffold {
                         delegate: DataRow {
                             required property var modelData
                             title: `#${modelData.installmentNumber} · ${modelData.dueDate}`
-                            subtitle: `${modelData.paymentKind} · capitale ${page.app.money(modelData.principalMinor, page.plan ? page.plan.currency : "")} · interessi ${page.app.money(modelData.interestMinor, page.plan ? page.plan.currency : "")} · ${page.app.bps(modelData.annualRateBps)}`
-                            value: page.app.money(modelData.paymentMinor, page.plan ? page.plan.currency : "")
+                            subtitle: `${modelData.paymentKind} · capitale ${page.app.money(modelData.principalMinor, page.planCurrency)} · interessi ${page.app.money(modelData.interestMinor, page.planCurrency)} · ${page.app.bps(modelData.annualRateBps)}`
+                            value: page.app.money(modelData.paymentMinor, page.planCurrency)
                         }
                     }
                 }

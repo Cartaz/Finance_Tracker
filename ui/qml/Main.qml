@@ -16,6 +16,7 @@ ApplicationWindow {
     property int revision: 0
     property int currentIndex: 0
     property string statusText: "Backend…"
+    property string bootError: ""
     readonly property bool hasBook: initial !== null && !initial.needsSetup && snapshot !== null
     readonly property string baseCurrency: snapshot && snapshot.book ? snapshot.book.currency : ""
     readonly property var views: [
@@ -95,6 +96,7 @@ ApplicationWindow {
     }
     function boot() {
         ready = false
+        bootError = ""
         const state = call("getInitialState")
         currencies = state.currencies
         initial = state
@@ -194,10 +196,15 @@ ApplicationWindow {
         return (items || []).map(item => `${item.currency} · ${item.date}`).join(" · ")
     }
 
-    Component.onCompleted: {
-        if (!attempt(boot))
-            statusText = "Backend non disponibile"
+    function start() {
+        try {
+            boot()
+        } catch (error) {
+            bootError = error.message
+        }
     }
+
+    Component.onCompleted: start()
 
     onClosing: function(close) {
         if (root.backend.busy) {
@@ -214,7 +221,8 @@ ApplicationWindow {
             } else if (result.requiresReload) {
                 const safety = result.data && result.data.safetyBackup ? ` Backup di sicurezza: ${result.data.safetyBackup}.` : ""
                 root.sessionReset()
-                if (root.attempt(root.boot))
+                root.start()
+                if (root.ready)
                     root.toast(`Ripristino completato.${safety}`, false)
                 return
             } else if (result.operation === "CSV_IMPORT") {
@@ -225,6 +233,22 @@ ApplicationWindow {
                 root.toast("Backup esportato", false)
             }
             root.taskFinished(result)
+        }
+    }
+
+    Card {
+        objectName: "bootError"
+        visible: root.bootError !== ""
+        anchors.centerIn: parent
+        width: 520
+        kicker: "ERRORE"
+        title: "Impossibile caricare i dati"
+        Note { text: root.bootError }
+        Note { text: "I dettagli sono nel file di log. Puoi riprovare senza chiudere l'applicazione." }
+        ActionButton {
+            objectName: "bootRetry"
+            text: "Riprova"
+            onClicked: root.start()
         }
     }
 

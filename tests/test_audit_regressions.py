@@ -393,3 +393,32 @@ def test_invalid_settings_encoding_does_not_break_startup(tmp_path):
     path = tmp_path / "settings.json"
     path.write_bytes(b"\xff\xfeinvalid")
     assert SettingsStore(path).load() == Settings()
+
+
+def test_cp1252_csv_file_limit_applies_to_stored_bytes(ledger_env, tmp_path):
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    description = "è" * 700  # one byte in Windows-1252, two bytes in UTF-8
+    rows = "".join(f"2026-09-30;-5,00;{description} {i}\n" for i in range(9_000))
+    csv_path = tmp_path / "accented.csv"
+    csv_path.write_bytes(("data;importo;descrizione\n" + rows).encode("cp1252"))
+    assert csv_path.stat().st_size < 10_000_000
+    assert len(csv_path.read_bytes().decode("cp1252").encode("utf-8")) > 10_000_000
+    result = service.import_csv_file(
+        book_id=env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        csv_path=csv_path,
+        review_mode="FULL_REVIEW",
+    )
+    assert result["rowCount"] == 9_000

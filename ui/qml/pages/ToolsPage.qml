@@ -74,7 +74,11 @@ PageScaffold {
         }, "Tasso FX salvato")
     }
 
-    Component.onCompleted: fxDate.text = app.today()
+    Component.onCompleted: {
+        fxDate.text = app.today()
+        if (app.initial)
+            reviewMode.select(app.initial.reconciliationReviewMode)
+    }
     Connections {
         target: page.app
         function onSessionReset() {

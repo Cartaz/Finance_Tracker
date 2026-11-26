@@ -90,6 +90,16 @@ PageScaffold {
         for (const field of [expenseDate, incomeDate, transferDate])
             field.text = app.today()
     }
+    Connections {
+        target: page.app
+        // A restored database invalidates identifiers chosen before it.
+        function onSessionReset() {
+            page.payeeId = ""
+            page.payeeSuggestions = []
+            payeeInput.clear()
+            payeePanel.visible = false
+        }
+    }
 
     RowLayout {
         Layout.fillWidth: true

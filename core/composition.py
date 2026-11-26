@@ -21,6 +21,13 @@ from core.reporting_service import ReportingService
 from core.scheduled_transaction_service import ScheduledTransactionService
 
 
+def build_reconciliation(database: Database) -> ReconciliationService:
+    """Reconciliation service over ``database``; also used by the CSV worker."""
+    return ReconciliationService(
+        database, AccountService(database), LedgerService(database), PayeeService(database)
+    )
+
+
 def build_controller(database: Database, settings: Settings) -> AppController:
     """Wire every domain service exactly once, for production and tests alike."""
     accounts = AccountService(database)
@@ -43,6 +50,7 @@ def build_controller(database: Database, settings: Settings) -> AppController:
         fx=fx,
         reporting=reporting,
         reconciliation=ReconciliationService(database, accounts, ledger, payees),
+        reconciliation_factory=build_reconciliation,
         scheduled=scheduled,
         app_state=AppStateService(database, accounts),
         budgets=BudgetService(database, reporting, fx, accounts, categories),

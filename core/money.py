@@ -38,10 +38,17 @@ def _validate_grouped_integer(text: str, separator: str) -> str:
         raise MoneyParseError("invalid thousands grouping")
     if any(len(group) != 3 for group in groups[1:]):
         raise MoneyParseError("invalid thousands grouping")
+    if len(groups) > 1 and groups[0].startswith("0"):
+        raise MoneyParseError("invalid thousands grouping")
     return "".join(groups)
 
 
-def normalize_decimal_text(raw: str) -> str:
+def normalize_decimal_text(raw: str, *, allow_grouping: bool = False) -> str:
+    """Canonical ``[sign]digits[.digits]`` text.
+
+    ``allow_grouping`` accepts one separator kind repeated as thousands
+    grouping ("1.500.000"); it is meant for money, not for FX rates.
+    """
     if not isinstance(raw, str):
         raise MoneyParseError("money input must be text")
 
@@ -68,11 +75,13 @@ def normalize_decimal_text(raw: str) -> str:
             raise MoneyParseError("ambiguous monetary separators")
         integer_digits = _validate_grouped_integer(integer_part, thousands_sep)
         canonical = f"{integer_digits}.{fractional_part}"
-    elif comma_count > 1 or dot_count > 1:
+    elif allow_grouping and (comma_count > 1 or dot_count > 1):
         # One separator kind repeated can only be thousands grouping: 1.500.000
         canonical = _validate_grouped_integer(body, "," if comma_count else ".")
     elif comma_count or dot_count:
         separator = "," if comma_count else "."
+        if body.count(separator) != 1:
+            raise MoneyParseError("ambiguous monetary separators")
         integer_part, fractional_part = body.split(separator, 1)
         if not integer_part or not fractional_part:
             raise MoneyParseError("invalid decimal amount")
@@ -114,17 +123,25 @@ def require_persistable_minor(value: int, currency: CurrencySpec | None = None) 
 def parse_money(raw: str, currency: CurrencySpec) -> int:
     """Parse signed monetary text for sources where the sign is part of the data.
 
-    A single separator followed by exactly three digits ("1.500", "1,500") is
-    a thousands group in Italian and a decimal fraction in English. When the
-    currency has fewer than three decimals it is refused instead of guessed,
-    because reading "1.500" as 1,50 EUR silently loses a factor of 1000.
+    A single separator followed by exactly three digits after a 1-3 digit
+    integer ("1.500", "1,500") is a thousands group in Italian and a decimal
+    fraction in English. When the currency has fewer than three decimals it is
+    refused instead of guessed: reading "1.500" as 1,50 EUR silently loses a
+    factor of 1000. Three-decimal currencies (KWD, BHD, OMR) keep the decimal
+    reading, their normal written form.
     """
-    canonical = normalize_decimal_text(raw)
+    canonical = normalize_decimal_text(raw, allow_grouping=True)
     unsigned = canonical.lstrip("+-")
-    fractional = unsigned.partition(".")[2]
+    integer, _, fractional = unsigned.partition(".")
     separators = sum(raw.count(separator) for separator in ",.")
-    if separators == 1 and len(fractional) == 3 and currency.minor_unit_digits < 3:
-        whole = ("-" if canonical.startswith("-") else "") + unsigned.partition(".")[0]
+    could_be_thousands = 1 <= len(integer) <= 3 and not integer.startswith("0")
+    if (
+        separators == 1
+        and len(fractional) == 3
+        and could_be_thousands
+        and currency.minor_unit_digits < 3
+    ):
+        whole = ("-" if canonical.startswith("-") else "") + integer
         raise MoneyParseError(
             f"importo ambiguo {raw.strip()!r}: scrivi {whole}{fractional} "
             f"oppure {whole}.{fractional},{'0' * currency.minor_unit_digits}"

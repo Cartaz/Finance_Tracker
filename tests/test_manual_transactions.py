@@ -117,7 +117,7 @@ def test_manual_transfer_rejects_currency_mismatch_without_mutation(ledger_env) 
     assert ledger_env.accounts.native_balance(ledger_env.book_id, usd.id) == 0
 
 
-def test_income_records_payee_and_transfer_refuses_one(ledger_env) -> None:
+def test_income_and_transfer_record_an_optional_payee(ledger_env) -> None:
     bank = ledger_env.accounts.create_account(
         book_id=ledger_env.book_id,
         account_type="ASSET",
@@ -161,5 +161,5 @@ def test_income_records_payee_and_transfer_refuses_one(ledger_env) -> None:
             "payeeId": str(employer["id"]),
         }
     )
-    assert transfer["ok"] is False
-    assert ledger_env.accounts.native_balance(ledger_env.book_id, cash.id) == 0
+    assert transfer["ok"] is True
+    assert ledger_env.accounts.native_balance(ledger_env.book_id, cash.id) == 1000

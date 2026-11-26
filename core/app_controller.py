@@ -43,6 +43,7 @@ class AppController:
         fx: FxService,
         reporting: ReportingService,
         reconciliation: ReconciliationService,
+        reconciliation_factory: Callable[[Database], ReconciliationService],
         scheduled: ScheduledTransactionService,
         app_state: AppStateService,
         budgets: BudgetService,
@@ -61,6 +62,7 @@ class AppController:
         self._fx = fx
         self._reporting = reporting
         self._reconciliation = reconciliation
+        self._reconciliation_factory = reconciliation_factory
         self._scheduled = scheduled
         self._app_state = app_state
         self._budgets = budgets
@@ -325,13 +327,7 @@ class AppController:
         def run(csv_path: Path):
             worker_database = Database(path)
             try:
-                accounts = AccountService(worker_database)
-                service = ReconciliationService(
-                    worker_database,
-                    accounts,
-                    LedgerService(worker_database),
-                    PayeeService(worker_database),
-                )
+                service = self._reconciliation_factory(worker_database)
                 return service.import_csv_file(csv_path=csv_path, **arguments)
             finally:
                 worker_database.close()
@@ -574,8 +570,6 @@ class AppController:
 
     def create_transfer(self, payload: dict[str, object]) -> dict[str, object]:
         book = self._require_book()
-        if payload.get("payeeId") not in (None, ""):
-            raise ValidationError("transfers between own accounts have no payee")
         source_id = self._positive_id(payload.get("sourceAccountId"))
         destination_id = self._positive_id(payload.get("destinationAccountId"))
         source = self._accounts.get_account(book.id, source_id)
@@ -584,16 +578,19 @@ class AppController:
         amount = parse_money_magnitude(
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
-        transaction = self._ledger.create_transfer(
-            book_id=book.id,
-            source_account_id=source_id,
-            destination_account_id=destination_id,
-            amount_minor=amount,
-            currency_code=source.currency_code,
-            transaction_date=str(payload.get("date", "")),
-            transaction_time=str(payload["time"]) if payload.get("time") else None,
-            description=str(payload.get("description", "")).strip(),
-        )
+        with self._database.transaction() as conn:
+            transaction = self._ledger.create_transfer(
+                book_id=book.id,
+                source_account_id=source_id,
+                destination_account_id=destination_id,
+                amount_minor=amount,
+                currency_code=source.currency_code,
+                transaction_date=str(payload.get("date", "")),
+                transaction_time=str(payload["time"]) if payload.get("time") else None,
+                description=str(payload.get("description", "")).strip(),
+                connection=conn,
+            )
+            self._assign_optional_payee(conn, book.id, transaction.id, payload)
         return {"id": transaction.id, "state": self.snapshot()}
 
     def _assign_optional_payee(

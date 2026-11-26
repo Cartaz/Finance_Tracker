@@ -20,6 +20,9 @@ KWD = CurrencySpec("KWD", 3)
         ("1.500.000", 150000000),
         ("1,500,000", 150000000),
         ("1.500,00", 150000),
+        # Not a possible thousands group: an ordinary decimal.
+        ("0,500", 50),
+        ("1234,500", 123450),
         ("12,3000", 1230),
         ("1.234,56", 123456),
         ("1,234.56", 123456),
@@ -49,6 +52,7 @@ def test_parse_eur(raw: str, expected: int) -> None:
         "10.000",
         "-1.500",
         "1.50.0",
+        "0.500.000",
     ],
 )
 def test_rejects_ambiguous_or_overprecise_eur(raw: str) -> None:
@@ -77,3 +81,12 @@ def test_decimal_conversion_is_explicit() -> None:
     assert minor_to_decimal(1235, EUR) == Decimal("12.35")
     with pytest.raises(TypeError):
         decimal_to_minor(12.345, EUR)  # type: ignore[arg-type]
+
+
+def test_fx_style_decimals_do_not_accept_thousands_grouping() -> None:
+    from core.money import normalize_decimal_text
+
+    assert normalize_decimal_text("1.085") == "1.085"
+    with pytest.raises(MoneyParseError):
+        normalize_decimal_text("1.450.000")
+    assert normalize_decimal_text("1.450.000", allow_grouping=True) == "1450000"

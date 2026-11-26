@@ -268,5 +268,47 @@ def test_boundary_blocked_reversal_can_use_a_later_date(app) -> None:
     assert opening["reversalBlocker"] == "BOUNDARY"
     controller.reverse_transaction({"transactionId": opening["id"], "date": "2026-02-01"})
     assert _balance(controller, ids["bank"]) == "0"
-    with pytest.raises(ValidationError, match="date must be text"):
+    with pytest.raises(ValidationError, match="indica la data"):
         controller.reverse_transaction({"transactionId": opening["id"], "date": 20260201})
+
+
+def test_custom_reversal_dates_are_limited(app) -> None:
+    controller, ids = app
+    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    with pytest.raises(ValidationError, match="indica la data"):
+        controller.reverse_transaction({"transactionId": opening["id"], "date": " "})
+    with pytest.raises(LedgerValidationError, match="cannot precede"):
+        controller.reverse_transaction({"transactionId": opening["id"], "date": "2025-12-31"})
+    expense = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "5", "date": "2026-03-20"}
+    )["id"]
+    with pytest.raises(ValidationError, match="solo quando"):
+        controller.reverse_transaction({"transactionId": expense, "date": "2026-03-01"})
+
+
+def test_archived_accounts_take_precedence_over_the_boundary(app) -> None:
+    from tests.conftest import force_legacy_archive
+
+    controller, ids = app
+    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    force_legacy_archive(controller._database, ids["bank"])  # noqa: SLF001
+    assert _row(controller, opening["id"])["reversalBlocker"] == "INVALID"
+
+
+def test_reversal_pairs_split_across_periods_still_count(app) -> None:
+    controller, ids = app
+    bar = controller.create_payee("Bar")
+    expense = controller.create_expense(
+        {"sourceAccountId": ids["bank"], "categoryAccountId": ids["food"], "amount": "50",
+         "date": "2026-03-20", "payeeId": str(bar["id"])}
+    )["id"]
+    controller._ledger.create_reversal(  # noqa: SLF001 - reversal in the next month
+        book_id=controller.initial_state()["book"]["id"], transaction_id=expense, transaction_date="2026-04-02"
+    )
+
+    def merchants(start, end):
+        return controller.dashboard({"startDate": start, "endDate": end, "asOfDate": end})["merchants"]
+
+    assert [(m["name"], m["amountMinor"], m["transactionCount"]) for m in merchants("2026-03-01", "2026-03-31")] == [("Bar", "5000", 1)]
+    assert [(m["name"], m["amountMinor"], m["transactionCount"]) for m in merchants("2026-04-01", "2026-04-30")] == [("Bar", "-5000", 1)]
+    assert merchants("2026-03-01", "2026-04-30") == []

@@ -498,7 +498,9 @@ class ReportingService:
         account_type: str | None = None,
     ):
         self._fx.base_currency(book_id)
-        params: list[object] = [book_id, start_date, end_date]
+        params: list[object] = [
+            start_date, end_date, start_date, end_date, book_id, start_date, end_date
+        ]
         type_clause = ""
         if account_type is not None:
             type_clause = " AND a.type = ?"
@@ -509,11 +511,20 @@ class ReportingService:
                    a.name AS account_name, a.type AS account_type,
                    t.transaction_date, t.currency_code, t.payee_id,
                    p.name AS payee_name,
-                   -- A reversal pair nets to zero and is not a real purchase.
-                   (t.kind <> 'REVERSAL' AND NOT EXISTS (
-                       SELECT 1 FROM transactions r
-                       WHERE r.book_id = t.book_id AND r.reverses_transaction_id = t.id
-                   )) AS counted
+                   -- A reversal pair inside the period nets to zero and is not
+                   -- a real purchase; a half outside the period still counts.
+                   NOT (
+                       (t.kind = 'REVERSAL' AND EXISTS (
+                           SELECT 1 FROM transactions o
+                           WHERE o.book_id = t.book_id AND o.id = t.reverses_transaction_id
+                             AND o.transaction_date BETWEEN ? AND ?
+                       ))
+                       OR EXISTS (
+                           SELECT 1 FROM transactions r
+                           WHERE r.book_id = t.book_id AND r.reverses_transaction_id = t.id
+                             AND r.transaction_date BETWEEN ? AND ?
+                       )
+                   ) AS counted
             FROM entries e
             JOIN accounts a ON a.id = e.account_id AND a.book_id = e.book_id
             JOIN transactions t ON t.id = e.transaction_id AND t.book_id = e.book_id

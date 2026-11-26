@@ -194,6 +194,7 @@ class ReconciliationService:
             summary: dict[str, int] = {}
             for item in prepared:
                 state, matched_transaction_id = self._initial_state(
+                    batch_id=batch_id,
                     book_id=book_id,
                     account_id=account_id,
                     source_name=source,
@@ -277,7 +278,8 @@ class ReconciliationService:
         movement; rows then fall back to fingerprint duplicate detection.
         """
         ids = [(row.get("external_id") or "").strip() for row in raw_rows]
-        if not ids or not all(item.isascii() and item.isdigit() for item in ids):
+        # One row cannot reveal a counter; keep its id as a real identity.
+        if len(ids) < 2 or not all(item.isascii() and item.isdigit() for item in ids):
             return False
         values = [int(item) for item in ids]
         return values[0] in (0, 1) and all(
@@ -560,6 +562,7 @@ class ReconciliationService:
     def _initial_state(
         self,
         *,
+        batch_id: int,
         book_id: int,
         account_id: int,
         source_name: str,
@@ -602,14 +605,16 @@ class ReconciliationService:
                 return "TRACKING_AMBIGUOUS", None
 
         # Two indexed lookups (an OR would defeat both indexes): the same
-        # movement for this account under any source label (unless both rows
-        # carry different bank ids), or the same bank id within the source.
+        # movement already staged for this account by an earlier import under
+        # any source label (unless both rows carry different bank ids), or the
+        # same bank id within the source. Identical rows of one file are real.
         duplicate = self._database.connection.execute(
             """
             SELECT 1
             FROM import_rows r
             JOIN import_batches b ON b.id=r.batch_id
             WHERE r.book_id=? AND r.fingerprint=? AND b.account_id=?
+              AND r.batch_id <> ?
               AND (r.external_id IS NULL OR ? IS NULL OR r.external_id = ?)
             LIMIT 1
             """,
@@ -617,6 +622,7 @@ class ReconciliationService:
                 book_id,
                 fingerprint,
                 account_id,
+                batch_id,
                 None if external_id is None else str(external_id),
                 None if external_id is None else str(external_id),
             ),

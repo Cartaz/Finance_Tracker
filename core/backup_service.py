@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,9 +17,10 @@ log = logging.getLogger(__name__)
 
 _BACKUP_SUFFIX = ".sqlite3"
 _BACKUP_PREFIX = "finance-tracker-"
-# Managed local backups kept after each new verified one (exports elsewhere
-# are never touched).
+# Managed local backups kept after each new verified one. Only files carrying
+# the exact managed timestamp are ever pruned; exports are never touched.
 MANAGED_BACKUP_RETENTION = 30
+_MANAGED_NAME_RE = re.compile(r"^finance-tracker-\d{8}T\d{6}\.\d{6}Z\.sqlite3$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +109,7 @@ class BackupService:
             (
                 path
                 for path in self._backup_dir.glob(f"{_BACKUP_PREFIX}*{_BACKUP_SUFFIX}")
-                if path.is_file()
+                if path.is_file() and _MANAGED_NAME_RE.fullmatch(path.name)
             ),
             key=lambda path: path.name,
             reverse=True,

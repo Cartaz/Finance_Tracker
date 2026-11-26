@@ -639,13 +639,18 @@ class AppController:
         original = self._ledger.get_transaction(
             book.id, self._positive_id(payload.get("transactionId"))
         )
-        requested = payload.get("date")
-        if requested in (None, ""):
+        if "date" not in payload:
             transaction_date, transaction_time = original.transaction_date, original.transaction_time
-        elif isinstance(requested, str):
-            transaction_date, transaction_time = requested, None
         else:
-            raise ValidationError("date must be text")
+            requested = payload.get("date")
+            if not isinstance(requested, str) or not requested.strip():
+                raise ValidationError("indica la data dello storno")
+            blocker = self._ledger.reversal_blockers(book.id, [original.id]).get(original.id)
+            if blocker != "BOUNDARY":
+                raise ValidationError(
+                    "una data diversa è consentita solo quando lo storno non può usare quella originale"
+                )
+            transaction_date, transaction_time = requested.strip(), None
         reversal = self._ledger.create_reversal(
             book_id=book.id,
             transaction_id=original.id,

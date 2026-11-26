@@ -544,3 +544,24 @@ def test_a_suggestion_that_no_longer_exists_is_shown_as_unmatched(ledger_env) ->
         book_id=ledger_env.book_id, transaction_id=expense.id, transaction_date="2026-03-09"
     )
     assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "UNMATCHED"
+
+
+def test_counter_ids_do_not_turn_identical_rows_of_one_file_into_duplicates(ledger_env) -> None:
+    bank, _, _, _, service = _setup(ledger_env)
+    single = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,id\n2026-03-02,-4,1\n",
+    )
+    # A single row cannot reveal a counter: its id stays a bank identity.
+    assert service.batch_rows(ledger_env.book_id, int(single["batchId"]))[0]["external_id"] == "1"
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="FULL_REVIEW",
+        csv_text="date,amount,description,id\n2026-03-01,-1.20,CAFFE,1\n2026-03-01,-1.20,CAFFE,2\n",
+    )
+    assert result["summary"] == {"REVIEW_REQUIRED": 2}

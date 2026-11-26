@@ -76,9 +76,17 @@ class QmlHarness:
             self.app.processEvents()
 
     def find(self, name: str) -> QObject:
-        found = self.root.findChild(QObject, name) or self._find_item(
-            self.root.contentItem(), name
-        )
+        # With a real GPU render loop, ListView delegates appear on the next
+        # frame after polish; give the scene graph a moment to catch up.
+        deadline = time.monotonic() + 3.0
+        while True:
+            found = self.root.findChild(QObject, name) or self._find_item(
+                self.root.contentItem(), name
+            )
+            if found is not None or time.monotonic() > deadline:
+                break
+            self.app.processEvents()
+            time.sleep(0.01)
         assert found is not None, f"QML object not found: {name}"
         return found
 

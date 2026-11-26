@@ -385,8 +385,10 @@ class LedgerService:
                 currency_code="",
                 entries=(),
             )
+            entries = by_transaction.get(int(row["id"]), [])
             try:
-                for entry in by_transaction.get(int(row["id"]), []):
+                # Account state first: a later date cannot fix an archived account.
+                for entry in entries:
                     quantity = entry["quantity_minor"]
                     self._validate_entry_semantics(
                         EntryDraft(
@@ -396,11 +398,14 @@ class LedgerService:
                         ),
                         entry,
                     )
-                    self._validate_tracking_boundary(draft, entry, "REVERSAL")
-            except (TrackingBoundaryError, TrackingBoundaryAmbiguousError):
-                invalid[int(row["id"])] = "BOUNDARY"
             except ValidationError:
                 invalid[int(row["id"])] = "INVALID"
+                continue
+            try:
+                for entry in entries:
+                    self._validate_tracking_boundary(draft, entry, "REVERSAL")
+            except ValidationError:
+                invalid[int(row["id"])] = "BOUNDARY"
         return invalid
 
     def create_reversal(
@@ -440,6 +445,8 @@ class LedgerService:
             raise LedgerValidationError(
                 f"storno non consentito: {REVERSAL_BLOCKERS[blocker]}"
             )
+        if self._validate_date(transaction_date) < original.transaction_date:
+            raise LedgerValidationError("a reversal cannot precede the transaction it reverses")
         reversal_id = self._create_transaction(
             self._reversal_draft(original, transaction_date, transaction_time), conn
         )

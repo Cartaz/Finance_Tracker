@@ -16,6 +16,9 @@ log = logging.getLogger(__name__)
 
 _BACKUP_SUFFIX = ".sqlite3"
 _BACKUP_PREFIX = "finance-tracker-"
+# Managed local backups kept after each new verified one (exports elsewhere
+# are never touched).
+MANAGED_BACKUP_RETENTION = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +88,38 @@ class BackupService:
         self._backup_live_database(destination)
         return self.inspect(destination).payload()
 
-    def create_managed_backup(self) -> dict[str, object]:
+    def create_managed_backup(self, *, prune: bool = True) -> dict[str, object]:
         self._backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
         destination = self._backup_dir / f"{_BACKUP_PREFIX}{stamp}{_BACKUP_SUFFIX}"
-        return self.backup_to(destination)
+        created = self.backup_to(destination)
+        if prune:
+            self._prune_managed_backups(keep=destination)
+        return created
+
+    def _prune_managed_backups(self, *, keep: Path) -> None:
+        """Keep the newest MANAGED_BACKUP_RETENTION managed backups.
+
+        Runs only after a new snapshot was verified, never removes that
+        snapshot, and only considers files named like managed backups.
+        """
+        candidates = sorted(
+            (
+                path
+                for path in self._backup_dir.glob(f"{_BACKUP_PREFIX}*{_BACKUP_SUFFIX}")
+                if path.is_file()
+            ),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for path in candidates[MANAGED_BACKUP_RETENTION:]:
+            if path.resolve() == keep.resolve():
+                continue
+            try:
+                path.unlink()
+                log.info("Removed old managed backup %s", path.name)
+            except OSError:
+                log.exception("Could not remove old managed backup %s", path)
 
     def export_backup(self, destination: Path) -> dict[str, object]:
         destination = destination.expanduser().resolve()
@@ -132,7 +162,8 @@ class BackupService:
         if source == self._database.path.expanduser().resolve():
             raise BackupError("cannot restore the live database onto itself")
         source_schema = self._verify_sqlite_file(source)
-        safety = self.create_managed_backup()
+        # No pruning here: the restore source may itself be the oldest backup.
+        safety = self.create_managed_backup(prune=False)
         staging = (
             self._database.path.parent
             / f".{self._database.path.name}.restore-{uuid4().hex}.tmp"

@@ -496,3 +496,51 @@ def test_identical_movements_with_distinct_bank_ids_are_not_duplicates(ledger_en
         csv_text="date,amount,description,external_id\n2026-03-01,-1.20,CAFFE,A1\n2026-03-01,-1.20,CAFFE,A2\n",
     )
     assert result["summary"] == {"REVIEW_REQUIRED": 2}
+
+
+def test_row_counter_ids_are_not_bank_identities(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+
+    def stage(csv_text):
+        result = service.import_csv(
+            book_id=ledger_env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            review_mode="FULL_REVIEW",
+            csv_text=csv_text,
+        )
+        return service.batch_rows(ledger_env.book_id, int(result["batchId"]))
+
+    january = stage("date,amount,id\n2026-01-03,-12,1\n2026-01-04,-8,2\n")
+    assert [row["external_id"] for row in january] == [None, None]
+    service.post_row(
+        book_id=ledger_env.book_id, row_id=january[0]["id"], posting_kind="EXPENSE", counter_account_id=groceries.id
+    )
+    february = stage("date,amount,id\n2026-02-05,-30,1\n2026-02-06,-9,2\n")
+    assert [row["review_state"] for row in february] == ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+    real = stage("date,amount,id\n2026-02-07,-1,TX-9\n")
+    assert real[0]["external_id"] == "TX-9"
+
+
+def test_a_suggestion_that_no_longer_exists_is_shown_as_unmatched(ledger_env) -> None:
+    bank, groceries, _, _, service = _setup(ledger_env)
+    expense = ledger_env.ledger.create_expense(
+        book_id=ledger_env.book_id,
+        source_account_id=bank.id,
+        expense_account_id=groceries.id,
+        amount_minor=700,
+        currency_code="EUR",
+        transaction_date="2026-03-09",
+    )
+    result = service.import_csv(
+        book_id=ledger_env.book_id,
+        account_id=bank.id,
+        source_name="Bank",
+        review_mode="ASSISTED_REVIEW",
+        csv_text="date,amount\n2026-03-09,-7\n",
+    )
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "SUGGESTED"
+    ledger_env.ledger.create_reversal(
+        book_id=ledger_env.book_id, transaction_id=expense.id, transaction_date="2026-03-09"
+    )
+    assert service.batch_rows(ledger_env.book_id, int(result["batchId"]))[0]["review_state"] == "UNMATCHED"

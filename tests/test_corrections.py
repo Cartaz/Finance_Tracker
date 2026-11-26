@@ -155,7 +155,10 @@ def test_reversal_keeps_the_payee_so_merchant_reports_net_out(app) -> None:
     merchants = controller.dashboard(
         {"startDate": "2026-03-01", "endDate": "2026-03-31", "asOfDate": "2026-03-31"}
     )["merchants"]
-    assert all(item["amountMinor"] == "0" for item in merchants), merchants
+    # A fully reversed purchase is neither spending nor a visit.
+    assert merchants == []
+    suggestion = controller.suggest_payees("Bar")[0]
+    assert suggestion["usageCount"] == 0
 
 
 def test_restore_refuses_a_child_under_an_archived_parent(app) -> None:
@@ -257,3 +260,13 @@ def test_paused_schedules_and_open_budgets_block_archiving(app) -> None:
     force_legacy_archive(controller._database, rent)  # noqa: SLF001
     with pytest.raises(ScheduledTransactionError):
         controller.set_scheduled_active({"scheduleId": schedule["id"], "active": True})
+
+
+def test_boundary_blocked_reversal_can_use_a_later_date(app) -> None:
+    controller, ids = app
+    opening = next(t for t in controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    assert opening["reversalBlocker"] == "BOUNDARY"
+    controller.reverse_transaction({"transactionId": opening["id"], "date": "2026-02-01"})
+    assert _balance(controller, ids["bank"]) == "0"
+    with pytest.raises(ValidationError, match="date must be text"):
+        controller.reverse_transaction({"transactionId": opening["id"], "date": 20260201})

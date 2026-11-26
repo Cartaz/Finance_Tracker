@@ -130,6 +130,7 @@ class ReconciliationService:
         if len(raw_rows) > _MAX_CSV_ROWS:
             raise ReconciliationError("CSV import is limited to 10000 rows")
 
+        ignore_external_ids = self._ids_are_row_counters(raw_rows)
         prepared: list[dict[str, object]] = []
         seen_external: set[str] = set()
         for raw in raw_rows:
@@ -152,7 +153,9 @@ class ReconciliationService:
                     f"row {row_number}: zero amount is not importable"
                 )
             description = (raw.get("description") or "").strip()
-            external_id = (raw.get("external_id") or "").strip() or None
+            external_id = (
+                None if ignore_external_ids else (raw.get("external_id") or "").strip() or None
+            )
             if external_id is not None:
                 if external_id in seen_external:
                     raise ReconciliationAmbiguousError(
@@ -267,6 +270,21 @@ class ReconciliationService:
         return len(matches) >= 2 and covered >= 0.8 * high_bytes
 
     @staticmethod
+    def _ids_are_row_counters(raw_rows: list[dict[str, str]]) -> bool:
+        """True when the id column just numbers the rows (0/1, 2, 3, ...).
+
+        Such ids restart in every export, so they cannot identify a bank
+        movement; rows then fall back to fingerprint duplicate detection.
+        """
+        ids = [(row.get("external_id") or "").strip() for row in raw_rows]
+        if not ids or not all(item.isascii() and item.isdigit() for item in ids):
+            return False
+        values = [int(item) for item in ids]
+        return values[0] in (0, 1) and all(
+            later == earlier + 1 for earlier, later in zip(values, values[1:])
+        )
+
+    @staticmethod
     def _decode_csv(raw: bytes) -> str:
         """Decode UTF-8, or Windows-1252 only when the file is clearly not UTF-8.
 
@@ -331,15 +349,23 @@ class ReconciliationService:
             """,
             (book_id, batch_id, -1 if limit is None else limit, offset),
         ).fetchall()
-        return [
-            {
+        return [self._live_row(row, book_id, source_account_id, accounts) for row in rows]
+
+    def _live_row(self, row, book_id: int, source_account_id: int, accounts) -> dict[str, object]:
+        candidates = self._candidate_details(
+            book_id,
+            source_account_id,
+            str(row["transaction_date"]),
+            int(row["amount_minor"]),
+        )
+        state = str(row["review_state"])
+        if state == "SUGGESTED" and not candidates:
+            # The suggested transaction was reversed or linked elsewhere since.
+            state = "UNMATCHED"
+        return {
                 **dict(row),
-                "candidates": self._candidate_details(
-                    book_id,
-                    source_account_id,
-                    str(row["transaction_date"]),
-                    int(row["amount_minor"]),
-                ),
+                "review_state": state,
+                "candidates": candidates,
                 "postingCapabilities": self._posting_capabilities(
                     source_account_id=source_account_id,
                     currency_code=str(row["currency_code"]),
@@ -347,8 +373,6 @@ class ReconciliationService:
                     accounts=accounts,
                 ),
             }
-            for row in rows
-        ]
 
     def link_existing(
         self,

@@ -630,16 +630,27 @@ class AppController:
         return {"id": account.id, "state": self.snapshot()}
 
     def reverse_transaction(self, payload: dict[str, object]) -> dict[str, object]:
-        """Correct a posting by reversing it on its own date and time."""
+        """Correct a posting by reversing it, on its own date unless one is given.
+
+        A later date is needed when the original sits on an untimed tracking
+        start (blocker BOUNDARY); the ledger validates whatever date is used.
+        """
         book = self._require_book()
         original = self._ledger.get_transaction(
             book.id, self._positive_id(payload.get("transactionId"))
         )
+        requested = payload.get("date")
+        if requested in (None, ""):
+            transaction_date, transaction_time = original.transaction_date, original.transaction_time
+        elif isinstance(requested, str):
+            transaction_date, transaction_time = requested, None
+        else:
+            raise ValidationError("date must be text")
         reversal = self._ledger.create_reversal(
             book_id=book.id,
             transaction_id=original.id,
-            transaction_date=original.transaction_date,
-            transaction_time=original.transaction_time,
+            transaction_date=transaction_date,
+            transaction_time=transaction_time,
         )
         return {"id": reversal.id, "state": self.snapshot()}
 

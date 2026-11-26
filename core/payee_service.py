@@ -278,7 +278,13 @@ class PayeeService:
                    COUNT(t.id) AS usage_count,
                    MAX(t.transaction_date || COALESCE('T' || t.transaction_time, '')) AS last_used
             FROM payees p
-            LEFT JOIN transactions t ON t.book_id = p.book_id AND t.payee_id = p.id
+            LEFT JOIN transactions t
+              ON t.book_id = p.book_id AND t.payee_id = p.id
+             AND t.kind <> 'REVERSAL'
+             AND NOT EXISTS (
+                 SELECT 1 FROM transactions r
+                 WHERE r.book_id = t.book_id AND r.reverses_transaction_id = t.id
+             )
             WHERE p.book_id = ? AND p.archived = 0
             GROUP BY p.id
             """,

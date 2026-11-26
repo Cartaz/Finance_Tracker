@@ -279,7 +279,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     ui.set_text("accountName", "After backup")
     ui.set_text("trackingDate", "2026-01-01")
     ui.click("accountSubmit", "Conto creato")
-    ui.find("transactionsPage").setProperty("payeeId", "5")
+    ui.find("expensePayee").setProperty("payeeId", "5")
     ui.choose("accountCurrency", "USD")
     started = ui.bridge.startManagedRestore(backup_name)
     assert started["ok"] is True
@@ -293,7 +293,7 @@ def test_budget_schedule_loan_forecast_fx_and_restore(ui, tmp_path):
     names = [a["name"] for a in ui.controller.snapshot()["accounts"]]
     assert "After backup" not in names
     assert ui.list_count("accountsList") == 3
-    assert ui.find("transactionsPage").property("payeeId") == ""
+    assert ui.find("expensePayee").property("payeeId") == ""
     assert ui.find("accountCurrency").property("value") == "EUR"
     assert ui.qml_warnings() == []
 
@@ -465,4 +465,28 @@ def test_corrections_from_the_interface(ui):
         option["text"].split(" · ")[0]
         for option in ui.find("expenseAccount").property("options").toVariant()
     ]
+    assert ui.qml_warnings() == []
+
+
+def test_income_payee_and_dated_reversal_from_the_interface(ui):
+    _setup_book(ui)
+    _create_structure(ui)
+    ui.navigate("transactions")
+    ui.tab("transactionTabs", 1)
+    ui.set_text("incomePayeeInput", "ACME")
+    QMetaObject.invokeMethod(ui.find("incomePayee"), "create")
+    ui.set_text("incomeAmount", "100")
+    ui.set_text("incomeDate", "2026-09-30")
+    ui.click("incomeSubmit", "Entrata registrata")
+    income = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "INCOME")
+    assert income["payee_name"] == "ACME"
+
+    opening = next(t for t in ui.controller.snapshot()["transactions"] if t["kind"] == "OPENING_BALANCE")
+    ui.click(f"reverse-{opening['id']}")
+    ui.set_text("promptField", "2026-02-01")
+    QMetaObject.invokeMethod(ui.find("promptDialog"), "accept")
+    ui.pump()
+    assert ui.toast() == ("Transazione stornata", False)
+    balances = {a["name"]: a["balanceMinor"] for a in ui.controller.snapshot()["accounts"]}
+    assert balances["Bank"] == "10000"
     assert ui.qml_warnings() == []

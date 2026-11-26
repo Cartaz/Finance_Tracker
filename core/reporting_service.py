@@ -152,7 +152,8 @@ class ReportingService:
             else:
                 economic = converted if category_type == "EXPENSE" else -converted
                 item["amount"] = int(item["amount"]) + economic
-            item["transactions"].add(int(row["transaction_id"]))
+            if row["counted"]:
+                item["transactions"].add(int(row["transaction_id"]))
 
         result = [
             {
@@ -165,6 +166,7 @@ class ReportingService:
                 "missingFx": self._missing_payload(item["missing"]),
             }
             for item in grouped.values()
+            if item["transactions"] or item["amount"] or not item["complete"]
         ]
         result.sort(
             key=lambda item: (
@@ -206,7 +208,8 @@ class ReportingService:
                 item["complete"] = False
             else:
                 item["amount"] = int(item["amount"]) + int(converted)
-            item["transactions"].add(int(flow["transactionId"]))
+            if flow["counted"]:
+                item["transactions"].add(int(flow["transactionId"]))
 
         result = [
             {
@@ -218,6 +221,7 @@ class ReportingService:
                 "missingFx": self._missing_payload(item["missing"]),
             }
             for item in grouped.values()
+            if item["transactions"] or item["amount"] or not item["complete"]
         ]
         result.sort(
             key=lambda item: (
@@ -504,7 +508,12 @@ class ReportingService:
             SELECT e.id AS entry_id, e.transaction_id, e.account_id, e.value_minor,
                    a.name AS account_name, a.type AS account_type,
                    t.transaction_date, t.currency_code, t.payee_id,
-                   p.name AS payee_name
+                   p.name AS payee_name,
+                   -- A reversal pair nets to zero and is not a real purchase.
+                   (t.kind <> 'REVERSAL' AND NOT EXISTS (
+                       SELECT 1 FROM transactions r
+                       WHERE r.book_id = t.book_id AND r.reverses_transaction_id = t.id
+                   )) AS counted
             FROM entries e
             JOIN accounts a ON a.id = e.account_id AND a.book_id = e.book_id
             JOIN transactions t ON t.id = e.transaction_id AND t.book_id = e.book_id
@@ -528,6 +537,7 @@ class ReportingService:
                     "accountType": str(row["account_type"]),
                     "transactionDate": str(row["transaction_date"]),
                     "currency": str(row["currency_code"]),
+                    "counted": bool(row["counted"]),
                     "payeeId": None
                     if row["payee_id"] is None
                     else int(row["payee_id"]),

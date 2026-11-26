@@ -5,8 +5,6 @@ import ".."
 
 PageScaffold {
     id: page
-    property string payeeId: ""
-    property var payeeSuggestions: []
 
     function reload() {
         const postable = app.accountOptions(app.balanceAccounts(true))
@@ -34,26 +32,27 @@ PageScaffold {
                 time: expenseTime.text,
                 description: expenseDescription.text
             }
-            if (page.payeeId !== "")
-                payload.payeeId = page.payeeId
+            if (expensePayee.payeeId !== "")
+                payload.payeeId = expensePayee.payeeId
             const result = app.call("createExpense", payload)
-            resetFields([expenseAmount, expenseTime, expenseDescription, payeeInput])
-            page.payeeId = ""
-            page.payeeSuggestions = []
+            resetFields([expenseAmount, expenseTime, expenseDescription, expensePayee])
             app.changed(result.state)
         }, "Spesa registrata")
     }
     function submitIncome() {
         app.attempt(() => {
-            const result = app.call("createIncome", {
+            const payload = {
                 destinationAccountId: incomeAccount.value,
                 incomeAccountId: incomeCategory.value,
                 amount: incomeAmount.text,
                 date: incomeDate.text,
                 time: incomeTime.text,
                 description: incomeDescription.text
-            })
-            resetFields([incomeAmount, incomeTime, incomeDescription])
+            }
+            if (incomePayee.payeeId !== "")
+                payload.payeeId = incomePayee.payeeId
+            const result = app.call("createIncome", payload)
+            resetFields([incomeAmount, incomeTime, incomeDescription, incomePayee])
             app.changed(result.state)
         }, "Entrata registrata")
     }
@@ -71,21 +70,6 @@ PageScaffold {
             app.changed(result.state)
         }, "Giroconto registrato")
     }
-    function suggestPayees(query) {
-        page.payeeId = ""
-        page.payeeSuggestions = query.trim() === "" ? [] : app.call("suggestPayees", query)
-        payeePanel.visible = query.trim() !== ""
-    }
-    function choosePayee(id, name) {
-        page.payeeId = String(id)
-        payeeInput.text = name
-        payeePanel.visible = false
-    }
-    function createPayee() {
-        const item = app.call("createPayee", payeeInput.text)
-        choosePayee(item.id, item.name)
-    }
-
     Component.onCompleted: {
         for (const field of [expenseDate, incomeDate, transferDate])
             field.text = app.today()
@@ -94,10 +78,8 @@ PageScaffold {
         target: page.app
         // A restored database invalidates identifiers chosen before it.
         function onSessionReset() {
-            page.payeeId = ""
-            page.payeeSuggestions = []
-            payeeInput.clear()
-            payeePanel.visible = false
+            expensePayee.clear()
+            incomePayee.clear()
         }
     }
 
@@ -128,43 +110,11 @@ PageScaffold {
                         onActivated: page.refreshCounters()
                     }
                     ChoiceField { id: expenseCategory; objectName: "expenseCategory"; label: "Categoria" }
-                    InputField {
-                        id: payeeInput
-                        objectName: "payeeInput"
-                        label: "Merchant"
-                        placeholderText: "Inizia a scrivere…"
-                        onEdited: page.app.attempt(() => page.suggestPayees(payeeInput.text))
-                    }
-                    Item {
-                        id: payeePanel
-                        visible: false
-                        Layout.fillWidth: true
-                        implicitHeight: payeeColumn.implicitHeight + 20
-                        InsetSurface { anchors.fill: parent; radius: Theme.radiusSM }
-                        ColumnLayout {
-                            id: payeeColumn
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 8
-                            Repeater {
-                                model: page.payeeSuggestions
-                                ActionButton {
-                                    required property var modelData
-                                    primary: false
-                                    compact: true
-                                    Layout.fillWidth: true
-                                    text: `${modelData.name}  ·  ${modelData.usageCount}×`
-                                    onClicked: page.choosePayee(modelData.id, modelData.name)
-                                }
-                            }
-                            ActionButton {
-                                primary: false
-                                compact: true
-                                Layout.fillWidth: true
-                                text: `+ Usa “${payeeInput.text}”`
-                                onClicked: page.app.attempt(() => page.createPayee())
-                            }
-                        }
+                    PayeeField {
+                        id: expensePayee
+                        objectName: "expensePayee"
+                        app: page.app
+                        inputName: "payeeInput"
                     }
                     InputField { id: expenseAmount; objectName: "expenseAmount"; label: "Importo"; placeholderText: "12,30" }
                     DateField { id: expenseDate; objectName: "expenseDate"; label: "Data" }
@@ -187,6 +137,13 @@ PageScaffold {
                         onActivated: page.refreshCounters()
                     }
                     ChoiceField { id: incomeCategory; objectName: "incomeCategory"; label: "Categoria di entrata" }
+                    PayeeField {
+                        id: incomePayee
+                        objectName: "incomePayee"
+                        app: page.app
+                        label: "Pagatore"
+                        inputName: "incomePayeeInput"
+                    }
                     InputField { id: incomeAmount; objectName: "incomeAmount"; label: "Importo"; placeholderText: "1800,00" }
                     DateField { id: incomeDate; objectName: "incomeDate"; label: "Data" }
                     TimeField { id: incomeTime; label: "Ora opzionale" }

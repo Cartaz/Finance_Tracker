@@ -40,19 +40,10 @@ def test_format_percent_bps(bps, expected) -> None:
 
 def test_bridge_formats_with_backend_currency_precision(ledger_env) -> None:
     from config.settings import Settings
-    from core.app_controller import AppController
-    from core.book_service import BookService
-    from core.payee_service import PayeeService
+    from core.composition import build_controller
     from ui.bridge import Bridge
 
-    controller = AppController(
-        ledger_env.db,
-        Settings(),
-        ledger_env.accounts,
-        ledger_env.ledger,
-        BookService(ledger_env.db),
-        PayeeService(ledger_env.db),
-    )
+    controller = build_controller(ledger_env.db, Settings())
     bridge = Bridge(controller)
     assert bridge.formatMoney("123456", "EUR") == "1.234,56 EUR"
     assert bridge.formatMoney("123456", "JPY") == "123.456 JPY"

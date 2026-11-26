@@ -10,6 +10,7 @@ from core.app_controller import AppController
 from core.app_state_service import AppStateService
 from core.backup_service import BackupService
 from core.book_service import BookService
+from core.composition import build_controller
 from core.errors import BackupError, ValidationError
 from core.payee_service import PayeeService
 from core.transport import TransportSerializer
@@ -33,14 +34,7 @@ def test_malformed_setting_types_use_defaults(tmp_path, raw):
 
 def _bridge(env):
     return Bridge(
-        AppController(
-            env.db,
-            Settings(),
-            env.accounts,
-            env.ledger,
-            BookService(env.db),
-            PayeeService(env.db),
-        )
+        build_controller(env.db, Settings())
     )
 
 
@@ -485,3 +479,63 @@ def test_cp1252_pairs_that_look_like_utf8_are_still_accepted():
 
     raw = "data;importo;descrizione\n2026-09-30;-5,00;CAFFÈ\u00a0BAR PIÙ «centro»\n".encode("cp1252")
     assert ReconciliationService._decode_csv(raw).endswith("CAFFÈ\u00a0BAR PIÙ «centro»\n")
+
+
+@pytest.mark.parametrize("raw", ["01/02/26", "1-2-26", "2026/02/01"])
+def test_csv_dates_require_an_explicit_four_digit_year(raw):
+    from core.errors import ReconciliationError
+    from core.reconciliation_service import ReconciliationService
+
+    with pytest.raises(ReconciliationError, match="row 7: invalid date"):
+        ReconciliationService._parse_date(raw, 7)
+    assert ReconciliationService._parse_date("01/02/2026", 7) == "2026-02-01"
+    assert ReconciliationService._parse_date("01 / 02 / 2026", 7) == "2026-02-01"
+
+
+def test_csv_ambiguous_amount_is_reported_with_its_row(ledger_env):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    with pytest.raises(ReconciliationError, match="row 3: importo ambiguo"):
+        service.import_csv(
+            book_id=env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            csv_text="data;importo\n2026-09-30;-5,00\n2026-09-30;-1.500\n",
+            review_mode="FULL_REVIEW",
+        )
+    assert env.db.connection.execute("SELECT COUNT(*) FROM import_rows").fetchone()[0] == 0
+
+
+def test_csv_errors_cite_the_physical_line(ledger_env):
+    from core.errors import ReconciliationError
+    from core.payee_service import PayeeService
+    from core.reconciliation_service import ReconciliationService
+
+    env = ledger_env
+    bank = env.accounts.create_account(
+        book_id=env.book_id,
+        account_type="ASSET",
+        name="Bank",
+        currency_code="EUR",
+        tracking_start_date="2026-01-01",
+    )
+    service = ReconciliationService(env.db, env.accounts, env.ledger, PayeeService(env.db))
+    with pytest.raises(ReconciliationError, match="row 5: importo ambiguo"):
+        service.import_csv(
+            book_id=env.book_id,
+            account_id=bank.id,
+            source_name="Bank",
+            csv_text="data;importo\n2026-09-30;-5,00\n;\n\n2026-09-30;-1.500\n",
+            review_mode="FULL_REVIEW",
+        )

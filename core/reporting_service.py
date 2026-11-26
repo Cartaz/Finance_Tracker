@@ -308,7 +308,8 @@ class ReportingService:
                 """
                 SELECT COALESCE(SUM(e.quantity_minor), 0)
                 FROM entries e
-                JOIN transactions t ON t.id = e.transaction_id AND t.book_id = e.book_id
+                CROSS JOIN transactions t
+                    ON t.id = e.transaction_id AND t.book_id = e.book_id
                 WHERE e.book_id = ? AND e.account_id = ? AND t.transaction_date < ?
                 """,
                 (book_id, account_id, start),
@@ -318,7 +319,8 @@ class ReportingService:
             """
             SELECT t.transaction_date, SUM(e.quantity_minor) AS quantity_delta
             FROM entries e
-            JOIN transactions t ON t.id = e.transaction_id AND t.book_id = e.book_id
+            CROSS JOIN transactions t
+                ON t.id = e.transaction_id AND t.book_id = e.book_id
             WHERE e.book_id = ? AND e.account_id = ?
               AND t.transaction_date BETWEEN ? AND ?
             GROUP BY t.transaction_date
@@ -393,7 +395,10 @@ class ReportingService:
                    COALESCE((
                        SELECT SUM(e.quantity_minor)
                        FROM entries e
-                       JOIN transactions t
+                       -- CROSS JOIN keeps entries as the outer loop (indexed by
+                       -- account); the planner otherwise scans every dated
+                       -- transaction per entry, which is quadratic.
+                       CROSS JOIN transactions t
                          ON t.id = e.transaction_id AND t.book_id = e.book_id
                        WHERE e.book_id = a.book_id AND e.account_id = a.id
                          AND t.transaction_date <= ?

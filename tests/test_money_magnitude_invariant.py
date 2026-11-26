@@ -4,18 +4,15 @@ import pytest
 
 from config.settings import Settings
 from core.account_service import AccountService
-from core.app_controller import AppController
-from core.book_service import BookService
+from core.composition import build_controller
 from core.database import Database
 from core.errors import MoneyParseError, MoneyRangeError
-from core.ledger_service import LedgerService
 from core.money import (
     MAX_PERSISTED_MINOR,
     CurrencySpec,
     parse_money,
     parse_money_magnitude,
 )
-from core.payee_service import PayeeService
 from ui.bridge import Bridge
 
 EUR = CurrencySpec("EUR", 2)
@@ -56,10 +53,7 @@ def _bridge_env(tmp_path):
     db.open()
     db.migrate()
     accounts = AccountService(db)
-    ledger = LedgerService(db)
-    books = BookService(db)
-    payees = PayeeService(db)
-    controller = AppController(db, Settings(), accounts, ledger, books, payees)
+    controller = build_controller(db, Settings())
     controller.setup({"userName": "User", "bookName": "Book", "currency": "EUR"})
     return db, accounts, controller, Bridge(controller)
 

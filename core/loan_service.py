@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass
 from datetime import date
 
 from core.account_service import Account, AccountService
+from core.calendar_math import shift_months
 from core.database import Database
 from core.errors import LoanError
 from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
@@ -620,7 +620,7 @@ class LoanService:
             due = self._due_date(loan.first_due_date, installment_number)
             rate = self._rate_for_due(loan, due)
             remaining = loan.term_months - installment_number + 1
-            fixed = self._french_fixed_payment(loan, outstanding, remaining, rate)
+            fixed = self._french_fixed_payment(loan)
             terms = AmortizationPolicy.installment(
                 amortization_type=loan.amortization_type,
                 outstanding_minor=outstanding,
@@ -673,13 +673,8 @@ class LoanService:
             )
         raise LoanError("loan has no payable installment remaining")
 
-    def _french_fixed_payment(
-        self,
-        loan: LoanRecord,
-        outstanding_minor: int,
-        remaining_installments: int,
-        rate_bps: int,
-    ) -> int | None:
+    def _french_fixed_payment(self, loan: LoanRecord) -> int | None:
+        """Contractual French payment, when the contract keeps one fixed."""
         if loan.amortization_type != "FRENCH":
             return None
         if loan.rate_type == "VARIABLE":
@@ -869,11 +864,7 @@ class LoanService:
     @staticmethod
     def _due_date(first_due_date: str, installment_number: int) -> date:
         anchor = date.fromisoformat(first_due_date)
-        month_index = anchor.year * 12 + anchor.month - 1 + installment_number - 1
-        year, zero_month = divmod(month_index, 12)
-        month = zero_month + 1
-        day = min(anchor.day, calendar.monthrange(year, month)[1])
-        return date(year, month, day)
+        return shift_months(anchor, installment_number - 1, anchor.day)
 
     @staticmethod
     def _parse_date(value: str, field: str) -> date:

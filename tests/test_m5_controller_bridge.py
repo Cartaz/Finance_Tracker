@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from config.settings import Settings
 from core.account_service import AccountService
-from core.app_controller import AppController
-from core.book_service import BookService
+from core.composition import build_controller
 from core.database import Database
-from core.fx_service import FxService
 from core.ledger_service import LedgerService
-from core.payee_service import PayeeService
-from core.reporting_service import ReportingService
 from ui.bridge import Bridge
 
 
@@ -18,20 +14,7 @@ def _controller(tmp_path):
     db.migrate()
     accounts = AccountService(db)
     ledger = LedgerService(db)
-    books = BookService(db)
-    payees = PayeeService(db)
-    fx = FxService(db)
-    reporting = ReportingService(db, fx, accounts)
-    controller = AppController(
-        db,
-        Settings(),
-        accounts,
-        ledger,
-        books,
-        payees,
-        fx,
-        reporting,
-    )
+    controller = build_controller(db, Settings())
     return db, accounts, ledger, controller
 
 

@@ -197,6 +197,12 @@ class BackupTaskManager(QObject):
         self.maintenanceChanged.emit(active)
 
     def _background_error(self, exc: object) -> dict[str, object]:
+        if isinstance(exc, (TypeError, ValueError)):
+            log.warning(
+                "background task rejected by %s",
+                type(exc).__name__,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
         if isinstance(exc, (FinanceTrackerError, TypeError, ValueError)):
             payload = self._error_payload(exc)
             return {"ok": False, "error": payload["error"]}

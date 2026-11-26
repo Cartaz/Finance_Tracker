@@ -133,9 +133,7 @@ By default:
 ~/.local/share/finance-tracker/
 ├── finance.db
 ├── backups/
-├── imports/
-├── loan-documents/
-└── logs/
+└── logs/            # rotated: finance-tracker.log (+3 × 2 MB)
 
 ~/.config/finance-tracker/settings.json
 ```

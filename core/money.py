@@ -8,6 +8,8 @@ from core.errors import CurrencyPrecisionError, MoneyParseError, MoneyRangeError
 
 _SIGN_RE = re.compile(r"^[+-]?")
 _DIGITS_RE = re.compile(r"^\d+$")
+# A space inside an amount must be followed by exactly three digits ("1 500").
+_BAD_SPACE_GROUP_RE = re.compile(r"[ \u00a0]+(?!\d{3}(?:\D|$))")
 MAX_PERSISTED_MINOR = (1 << 63) - 1
 
 
@@ -24,14 +26,6 @@ class CurrencySpec:
         object.__setattr__(self, "code", self.code.upper())
 
 
-def _collapse_adjacent_identical_separators(text: str) -> str:
-    previous = None
-    while previous != text:
-        previous = text
-        text = text.replace(",,", ",").replace("..", ".")
-    return text
-
-
 def _split_sign(text: str) -> tuple[str, str]:
     if text.startswith(("+", "-")):
         return text[0], text[1:]
@@ -46,14 +40,24 @@ def _validate_grouped_integer(text: str, separator: str) -> str:
         raise MoneyParseError("invalid thousands grouping")
     if any(len(group) != 3 for group in groups[1:]):
         raise MoneyParseError("invalid thousands grouping")
+    if len(groups) > 1 and groups[0].startswith("0"):
+        raise MoneyParseError("invalid thousands grouping")
     return "".join(groups)
 
 
-def normalize_decimal_text(raw: str) -> str:
+def normalize_decimal_text(raw: str, *, allow_grouping: bool = False) -> str:
+    """Canonical ``[sign]digits[.digits]`` text.
+
+    ``allow_grouping`` accepts one separator kind repeated as thousands
+    grouping ("1.500.000"); it is meant for money, not for FX rates.
+    """
     if not isinstance(raw, str):
         raise MoneyParseError("money input must be text")
 
-    text = raw.strip().replace(" ", "").replace("\u00a0", "")
+    stripped = raw.strip()
+    if _BAD_SPACE_GROUP_RE.search(stripped):
+        raise MoneyParseError("spaces are only allowed between groups of three digits")
+    text = stripped.replace(" ", "").replace("\u00a0", "")
     if not text:
         raise MoneyParseError("empty monetary amount")
 
@@ -61,7 +65,8 @@ def normalize_decimal_text(raw: str) -> str:
     if not body or any(char not in "0123456789,." for char in body):
         raise MoneyParseError("monetary amount contains unsupported characters")
 
-    body = _collapse_adjacent_identical_separators(body)
+    if ",," in body or ".." in body or ",." in body or ".," in body:
+        raise MoneyParseError("monetary amount contains repeated separators")
     comma_count = body.count(",")
     dot_count = body.count(".")
 
@@ -75,6 +80,9 @@ def normalize_decimal_text(raw: str) -> str:
             raise MoneyParseError("ambiguous monetary separators")
         integer_digits = _validate_grouped_integer(integer_part, thousands_sep)
         canonical = f"{integer_digits}.{fractional_part}"
+    elif allow_grouping and (comma_count > 1 or dot_count > 1):
+        # One separator kind repeated can only be thousands grouping: 1.500.000
+        canonical = _validate_grouped_integer(body, "," if comma_count else ".")
     elif comma_count or dot_count:
         separator = "," if comma_count else "."
         if body.count(separator) != 1:
@@ -117,15 +125,50 @@ def require_persistable_minor(value: int, currency: CurrencySpec | None = None) 
     )
 
 
+def _ambiguity_message(
+    raw: str, canonical: str, integer: str, fractional: str, currency: CurrencySpec
+) -> str:
+    """Offer both readings of an ambiguous amount, never just one."""
+    sign = canonical[0] if canonical[0] in "+-" else ""
+    digits = currency.minor_unit_digits
+    zeros = "," + "0" * digits if digits else ""
+    grouped = f" (o {sign}{integer}.{fractional}{zeros})" if digits else ""
+    thousands = f"{sign}{integer}{fractional}{grouped}"
+    message = f"importo ambiguo {raw.strip()!r}: per le migliaia scrivi {thousands}"
+    if not fractional[digits:].strip("0"):
+        decimal = f"{sign}{integer}" + (f",{fractional[:digits]}" if digits else "")
+        message += f", per i decimali scrivi {decimal}"
+    return message
+
+
 def parse_money(raw: str, currency: CurrencySpec) -> int:
-    """Parse signed monetary text for sources where the sign is part of the data."""
-    canonical = normalize_decimal_text(raw)
+    """Parse signed monetary text for sources where the sign is part of the data.
+
+    A single separator followed by exactly three digits after a 1-3 digit
+    integer ("1.500", "1,500") is a thousands group in Italian and a decimal
+    fraction in English. When the currency has fewer than three decimals it is
+    refused instead of guessed: reading "1.500" as 1,50 EUR silently loses a
+    factor of 1000. Three-decimal currencies (KWD, BHD, OMR) keep the decimal
+    reading, their normal written form.
+    """
+    canonical = normalize_decimal_text(raw, allow_grouping=True)
     unsigned = canonical.lstrip("+-")
-    fractional = unsigned.partition(".")[2]
+    integer, _, fractional = unsigned.partition(".")
+    separators = sum(raw.count(separator) for separator in ",.")
+    could_be_thousands = 1 <= len(integer) <= 3 and not integer.startswith("0")
+    if (
+        separators == 1
+        and len(fractional) == 3
+        and could_be_thousands
+        and currency.minor_unit_digits < 3
+    ):
+        raise MoneyParseError(_ambiguity_message(raw, canonical, integer, fractional, currency))
 
     if len(fractional) > currency.minor_unit_digits:
         excess = fractional[currency.minor_unit_digits :]
-        if any(char != "0" for char in excess):
+        if any(char != "0" for char in excess) or (separators == 1 and could_be_thousands):
+            # Trailing zeros are only dropped when the digits cannot be a
+            # thousands group: "1.500000" may well mean 1.500.000.
             raise CurrencyPrecisionError(
                 f"{currency.code} supports at most {currency.minor_unit_digits} decimal places"
             )

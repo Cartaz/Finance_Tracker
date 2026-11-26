@@ -7,9 +7,10 @@ import pytest
 
 from config.settings import Settings
 from core.account_service import AccountService
-from core.app_controller import AppController
+from core.backup_service import BackupService
 from core.book_service import BookService
 from core.category_service import CategoryService
+from core.composition import build_controller
 from core.database import Database
 from core.errors import FinanceTrackerError
 from core.fx_service import FxService
@@ -34,16 +35,7 @@ def test_pre_m6_whole_system_stress(tmp_path) -> None:
     categories = CategoryService(db, accounts)
     fx = FxService(db)
     reporting = ReportingService(db, fx, accounts, categories)
-    controller = AppController(
-        db,
-        Settings(),
-        accounts,
-        ledger,
-        books,
-        payees,
-        fx,
-        reporting,
-    )
+    controller = build_controller(db, Settings())
     bridge = Bridge(controller)
 
     try:
@@ -452,7 +444,7 @@ def test_pre_m6_whole_system_stress(tmp_path) -> None:
         db.integrity_check()
         assert not db.connection.execute("PRAGMA foreign_key_check").fetchall()
         backup_path = tmp_path / "backup" / "general-stress-backup.db"
-        db.backup_to(backup_path)
+        BackupService(db, backup_path.parent).backup_to(backup_path)
         restored = Database(backup_path)
         restored.open()
         try:

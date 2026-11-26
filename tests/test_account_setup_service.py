@@ -6,12 +6,9 @@ from config.settings import Settings
 from core.account_setup_service import AccountSetupService
 from core.app_controller import AppController
 from core.app_state_service import AppStateService
-from core.book_service import BookService
 from core.category_service import CategoryService
+from core.composition import build_controller
 from core.errors import ValidationError
-from core.fx_service import FxService
-from core.payee_service import PayeeService
-from core.reporting_service import ReportingService
 from ui.bridge import Bridge
 
 
@@ -26,17 +23,7 @@ def _service(ledger_env, ledger=None) -> AccountSetupService:
 
 
 def _controller(ledger_env) -> AppController:
-    fx = FxService(ledger_env.db)
-    return AppController(
-        ledger_env.db,
-        Settings(),
-        ledger_env.accounts,
-        ledger_env.ledger,
-        BookService(ledger_env.db),
-        PayeeService(ledger_env.db),
-        fx,
-        ReportingService(ledger_env.db, fx, ledger_env.accounts),
-    )
+    return build_controller(ledger_env.db, Settings())
 
 
 def test_opening_balances_are_atomic_ledger_entries_and_equity_is_hidden(

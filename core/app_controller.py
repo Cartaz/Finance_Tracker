@@ -31,60 +31,43 @@ class AppController:
 
     def __init__(
         self,
+        *,
         database: Database,
         settings: Settings,
-        account_service: AccountService,
-        ledger_service: LedgerService,
-        book_service: BookService,
-        payee_service: PayeeService,
-        fx_service: FxService | None = None,
-        reporting_service: ReportingService | None = None,
-        reconciliation_service: ReconciliationService | None = None,
-        scheduled_service: ScheduledTransactionService | None = None,
-        app_state_service: AppStateService | None = None,
-        budget_service: BudgetService | None = None,
-        forecast_service: ForecastService | None = None,
-        loan_service: LoanService | None = None,
+        accounts: AccountService,
+        ledger: LedgerService,
+        books: BookService,
+        payees: PayeeService,
+        categories: CategoryService,
+        account_setup: AccountSetupService,
+        fx: FxService,
+        reporting: ReportingService,
+        reconciliation: ReconciliationService,
+        reconciliation_factory: Callable[[Database], ReconciliationService],
+        scheduled: ScheduledTransactionService,
+        app_state: AppStateService,
+        budgets: BudgetService,
+        loans: LoanService,
+        forecast: ForecastService,
     ) -> None:
+        """Services are wired once by core.composition.build_controller."""
         self._database = database
         self._settings = settings
-        self._accounts = account_service
-        self._ledger = ledger_service
-        self._books = book_service
-        self._payees = payee_service
-        self._fx = fx_service or FxService(database)
-        self._reporting = reporting_service or ReportingService(
-            database, self._fx, account_service
-        )
-        self._reconciliation = reconciliation_service or ReconciliationService(
-            database, account_service, ledger_service, payee_service
-        )
-        self._scheduled = scheduled_service or ScheduledTransactionService(
-            database, account_service, ledger_service, payee_service
-        )
-        self._categories = CategoryService(database, account_service)
-        self._account_setup = AccountSetupService(
-            database,
-            account_service,
-            self._categories,
-            ledger_service,
-        )
-        self._app_state = app_state_service or AppStateService(
-            database, account_service
-        )
-        self._budgets = budget_service or BudgetService(
-            database,
-            self._reporting,
-            self._fx,
-            account_service,
-            self._categories,
-        )
-        self._loans = loan_service or LoanService(
-            database, account_service, ledger_service
-        )
-        self._forecast = forecast_service or ForecastService(
-            self._scheduled, self._fx, self._loans
-        )
+        self._accounts = accounts
+        self._ledger = ledger
+        self._books = books
+        self._payees = payees
+        self._categories = categories
+        self._account_setup = account_setup
+        self._fx = fx
+        self._reporting = reporting
+        self._reconciliation = reconciliation
+        self._reconciliation_factory = reconciliation_factory
+        self._scheduled = scheduled
+        self._app_state = app_state
+        self._budgets = budgets
+        self._loans = loans
+        self._forecast = forecast
 
     def initial_state(self) -> dict[str, object]:
         book = self._books.current_book()
@@ -344,13 +327,7 @@ class AppController:
         def run(csv_path: Path):
             worker_database = Database(path)
             try:
-                accounts = AccountService(worker_database)
-                service = ReconciliationService(
-                    worker_database,
-                    accounts,
-                    LedgerService(worker_database),
-                    PayeeService(worker_database),
-                )
+                service = self._reconciliation_factory(worker_database)
                 return service.import_csv_file(csv_path=csv_path, **arguments)
             finally:
                 worker_database.close()
@@ -559,14 +536,7 @@ class AppController:
                 description=str(payload.get("description", "")).strip(),
                 connection=conn,
             )
-            payee_id = payload.get("payeeId")
-            if payee_id is not None:
-                self._payees.assign_transaction(
-                    book_id=book.id,
-                    transaction_id=transaction.id,
-                    payee_id=self._positive_id(payee_id),
-                    connection=conn,
-                )
+            self._assign_optional_payee(conn, book.id, transaction.id, payload)
         return {"id": transaction.id, "state": self.snapshot()}
 
     def create_income(self, payload: dict[str, object]) -> dict[str, object]:
@@ -583,16 +553,19 @@ class AppController:
             payload.get("amount", ""),
             self._database.currency(destination.currency_code),
         )
-        transaction = self._ledger.create_income(
-            book_id=book.id,
-            destination_account_id=destination_id,
-            income_account_id=income_id,
-            amount_minor=amount,
-            currency_code=destination.currency_code,
-            transaction_date=str(payload.get("date", "")),
-            transaction_time=str(payload["time"]) if payload.get("time") else None,
-            description=str(payload.get("description", "")).strip(),
-        )
+        with self._database.transaction() as conn:
+            transaction = self._ledger.create_income(
+                book_id=book.id,
+                destination_account_id=destination_id,
+                income_account_id=income_id,
+                amount_minor=amount,
+                currency_code=destination.currency_code,
+                transaction_date=str(payload.get("date", "")),
+                transaction_time=str(payload["time"]) if payload.get("time") else None,
+                description=str(payload.get("description", "")).strip(),
+                connection=conn,
+            )
+            self._assign_optional_payee(conn, book.id, transaction.id, payload)
         return {"id": transaction.id, "state": self.snapshot()}
 
     def create_transfer(self, payload: dict[str, object]) -> dict[str, object]:
@@ -605,17 +578,33 @@ class AppController:
         amount = parse_money_magnitude(
             payload.get("amount", ""), self._database.currency(source.currency_code)
         )
-        transaction = self._ledger.create_transfer(
-            book_id=book.id,
-            source_account_id=source_id,
-            destination_account_id=destination_id,
-            amount_minor=amount,
-            currency_code=source.currency_code,
-            transaction_date=str(payload.get("date", "")),
-            transaction_time=str(payload["time"]) if payload.get("time") else None,
-            description=str(payload.get("description", "")).strip(),
-        )
+        with self._database.transaction() as conn:
+            transaction = self._ledger.create_transfer(
+                book_id=book.id,
+                source_account_id=source_id,
+                destination_account_id=destination_id,
+                amount_minor=amount,
+                currency_code=source.currency_code,
+                transaction_date=str(payload.get("date", "")),
+                transaction_time=str(payload["time"]) if payload.get("time") else None,
+                description=str(payload.get("description", "")).strip(),
+                connection=conn,
+            )
+            self._assign_optional_payee(conn, book.id, transaction.id, payload)
         return {"id": transaction.id, "state": self.snapshot()}
+
+    def _assign_optional_payee(
+        self, conn, book_id: int, transaction_id: int, payload: dict[str, object]
+    ) -> None:
+        payee_id = payload.get("payeeId")
+        if payee_id in (None, ""):
+            return
+        self._payees.assign_transaction(
+            book_id=book_id,
+            transaction_id=transaction_id,
+            payee_id=self._positive_id(payee_id),
+            connection=conn,
+        )
 
     def suggest_payees(self, query: str) -> list[dict[str, object]]:
         book = self._require_book()

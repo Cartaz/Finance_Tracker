@@ -11,7 +11,13 @@ from pathlib import Path
 
 from core.account_service import AccountService
 from core.database import Database
-from core.errors import ReconciliationAmbiguousError, ReconciliationError
+from core.errors import (
+    CurrencyPrecisionError,
+    MoneyParseError,
+    MoneyRangeError,
+    ReconciliationAmbiguousError,
+    ReconciliationError,
+)
 from core.ledger_service import LedgerService
 from core.money import parse_money
 from core.payee_service import PayeeService
@@ -126,7 +132,8 @@ class ReconciliationService:
 
         prepared: list[dict[str, object]] = []
         seen_external: set[str] = set()
-        for row_number, raw in enumerate(raw_rows, start=2):
+        for raw in raw_rows:
+            row_number = int(raw["line"])
             transaction_date = self._parse_date(raw["date"], row_number)
             currency = (raw.get("currency") or account.currency_code).strip().upper()
             if currency != account.currency_code:
@@ -134,7 +141,12 @@ class ReconciliationService:
                     f"row {row_number}: booked currency {currency} does not match "
                     f"account currency {account.currency_code}"
                 )
-            amount_minor = parse_money(raw["amount"], self._database.currency(currency))
+            try:
+                amount_minor = parse_money(
+                    raw["amount"], self._database.currency(currency)
+                )
+            except (MoneyParseError, CurrencyPrecisionError, MoneyRangeError) as exc:
+                raise ReconciliationError(f"row {row_number}: {exc}") from exc
             if amount_minor == 0:
                 raise ReconciliationError(
                     f"row {row_number}: zero amount is not importable"
@@ -786,10 +798,11 @@ class ReconciliationService:
                 raise ReconciliationError(
                     f"row {reader.line_num}: column count does not match header"
                 )
-            if raw is None or not any((value or "").strip() for value in raw.values()):
+            if not any((value or "").strip() for value in raw.values()):
                 continue
             result.append(
                 {
+                    "line": reader.line_num,
                     "date": (raw.get(date_col) or "").strip(),
                     "amount": (raw.get(amount_col) or "").strip(),
                     "currency": (
@@ -842,15 +855,19 @@ class ReconciliationService:
         except ValueError:
             pass
         for separator in ("/", "-"):
-            parts = raw.split(separator)
-            if len(parts) != 3:
+            parts = [part.strip() for part in raw.split(separator)]
+            # Day-first dates need an explicit four-digit year; "01/02/26"
+            # would otherwise become the year 26.
+            if len(parts) != 3 or len(parts[2]) != 4:
                 continue
             try:
                 day, month, year = (int(part) for part in parts)
                 return date(year, month, day).isoformat()
             except ValueError:
                 continue
-        raise ReconciliationError(f"row {row_number}: invalid date")
+        raise ReconciliationError(
+            f"row {row_number}: invalid date (use YYYY-MM-DD or DD/MM/YYYY)"
+        )
 
     @staticmethod
     def _normalize_source(value: str) -> str:

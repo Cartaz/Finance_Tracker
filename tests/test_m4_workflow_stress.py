@@ -5,13 +5,9 @@ import random
 import pytest
 
 from config.settings import Settings
-from core.account_service import AccountService
-from core.app_controller import AppController
-from core.book_service import BookService
+from core.composition import build_controller
 from core.database import Database
 from core.errors import FinanceTrackerError
-from core.ledger_service import LedgerService
-from core.payee_service import PayeeService
 
 
 def test_m4_workflow_stress(tmp_path) -> None:
@@ -19,11 +15,7 @@ def test_m4_workflow_stress(tmp_path) -> None:
     db = Database(tmp_path / "m4.db")
     db.open()
     db.migrate()
-    accounts = AccountService(db)
-    ledger = LedgerService(db)
-    books = BookService(db)
-    payees = PayeeService(db)
-    controller = AppController(db, Settings(), accounts, ledger, books, payees)
+    controller = build_controller(db, Settings())
     try:
         assert controller.initial_state()["needsSetup"] is True
         controller.setup({"userName": "User", "bookName": "Personal", "currency": "EUR"})

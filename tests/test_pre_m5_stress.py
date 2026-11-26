@@ -7,13 +7,12 @@ from datetime import date, timedelta
 import pytest
 
 from config.settings import Settings
-from core.account_service import AccountService
-from core.app_controller import AppController
-from core.book_service import BookService
+from core.backup_service import BackupService
 from core.category_service import CategoryService
+from core.composition import build_controller
 from core.database import Database
 from core.errors import FinanceTrackerError
-from core.ledger_service import EntryDraft, LedgerService, TransactionDraft
+from core.ledger_service import EntryDraft, TransactionDraft
 from core.money import CurrencySpec, minor_to_decimal, parse_money
 from core.payee_service import PayeeService
 
@@ -30,7 +29,7 @@ def test_m0_m1_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
         negative = index % 7 == 0
         sign = "-" if negative else ""
         if spec.minor_unit_digits:
-            separator = ",," if index % 11 == 0 else ("," if index % 2 else ".")
+            separator = "," if index % 2 else "."
             raw = f" {sign}{whole}{separator}{fraction:0{spec.minor_unit_digits}d} "
         else:
             raw = f" {sign}{whole} "
@@ -41,7 +40,20 @@ def test_m0_m1_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
         assert parsed == expected
         assert minor_to_decimal(parsed, spec) * scale == parsed
 
-    invalid_inputs = ("", "abc", "1,2,3", "1.2.3", "1,23€", "--1", ".", "1,", ",1", "1_00")
+    invalid_inputs = (
+        "",
+        "abc",
+        "1,2,3",
+        "1.2.3",
+        "1,23€",
+        "--1",
+        ".",
+        "1,",
+        ",1",
+        "1_00",
+        "1,,23",
+        "1.500",
+    )
     eur = CurrencySpec("EUR", 2)
     for index in range(1000):
         with pytest.raises(FinanceTrackerError):
@@ -60,7 +72,7 @@ def test_m0_m1_thousand_case_money_database_and_backup_stress(tmp_path) -> None:
         assert db.connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1000
         db.integrity_check()
         backup_path = tmp_path / "backup" / "foundation-backup.db"
-        db.backup_to(backup_path)
+        BackupService(db, backup_path.parent).backup_to(backup_path)
         restored = Database(backup_path)
         restored.open()
         try:
@@ -283,7 +295,7 @@ def test_m2_thousand_valid_and_invalid_ledger_cases(ledger_env, tmp_path) -> Non
         assert accounts.native_balance(book, balance_account.id) == expected
     db.integrity_check()
     backup = tmp_path / "m2-backup.db"
-    db.backup_to(backup)
+    BackupService(db, backup.parent).backup_to(backup)
     verify = sqlite3.connect(backup)
     try:
         assert verify.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -429,11 +441,7 @@ def test_m4_thousand_valid_and_invalid_controller_workflow_cases(tmp_path) -> No
     db = Database(tmp_path / "m4-thousand.db")
     db.open()
     db.migrate()
-    accounts = AccountService(db)
-    ledger = LedgerService(db)
-    books = BookService(db)
-    payees = PayeeService(db)
-    controller = AppController(db, Settings(), accounts, ledger, books, payees)
+    controller = build_controller(db, Settings())
     try:
         assert controller.initial_state()["needsSetup"] is True
         controller.setup({"userName": "Stress User", "bookName": "Stress Book", "currency": "EUR"})

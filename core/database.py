@@ -8,7 +8,7 @@ from pathlib import Path
 from config.constants import DATABASE_PATH, SCHEMA_VERSION
 from core.currency_registry import CurrencyRegistry
 from core.errors import DatabaseIntegrityError
-from core.migration_catalog import apply_migrations
+from core.migrations import apply_migrations
 from core.money import CurrencySpec
 
 
@@ -16,6 +16,7 @@ class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
         self.path = path
         self._connection: sqlite3.Connection | None = None
+        self._currency_cache: dict[str, CurrencySpec] = {}
 
     def open(self) -> sqlite3.Connection:
         if self._connection is not None:
@@ -82,8 +83,17 @@ class Database:
         return row is not None
 
     def currency(self, code: str) -> CurrencySpec:
-        """Compatibility facade; currency semantics live in CurrencyRegistry."""
-        return CurrencyRegistry(self.connection).get(code)
+        """Currency metadata, cached per open connection (it never changes at runtime).
+
+        Currency semantics live in CurrencyRegistry; the cache is dropped on
+        close so a restored database is always read afresh.
+        """
+        key = code.strip().upper() if isinstance(code, str) else code
+        cached = self._currency_cache.get(key) if isinstance(key, str) else None
+        if cached is None:
+            cached = CurrencyRegistry(self.connection).get(code)
+            self._currency_cache[cached.code] = cached
+        return cached
 
     def integrity_check(self) -> None:
         result = self.connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -102,13 +112,8 @@ class Database:
         if row is not None and int(row[0]) != 0:
             raise DatabaseIntegrityError("SQLite WAL checkpoint could not complete")
 
-    def backup_to(self, destination: Path) -> None:
-        """Compatibility facade; backup semantics live in BackupService."""
-        from core.backup_service import BackupService
-
-        BackupService(self).backup_to(destination)
-
     def close(self) -> None:
+        self._currency_cache.clear()
         if self._connection is not None:
             self._connection.close()
             self._connection = None
